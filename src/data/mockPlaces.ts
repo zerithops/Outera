@@ -1,4 +1,8 @@
 import { Place } from '../types/outera';
+import cafeRooftopImg from '../assets/images/outera_cafe_rooftop_1793001411664.jpg';
+import clayPotteryImg from '../assets/images/outera_clay_pottery_1793001411514.jpg';
+import boulderClimbImg from '../assets/images/outera_boulder_climb_1793001412663.jpg';
+import vinylLoungeImg from '../assets/images/outera_vinyl_lounge_1793001412552.jpg';
 
 export const INITIAL_PLACES: Place[] = [
   {
@@ -32,7 +36,7 @@ export const INITIAL_PLACES: Place[] = [
     groupFit: ['Friends', 'Date', 'Solo'],
     environment: 'Rooftop',
     tags: ['Under ৳500', 'Good for friends', 'Open now', 'Rooftop vibe', 'Game master on-site'],
-    images: ['/src/assets/images/outera_cafe_rooftop_1793001411664.jpg'],
+    images: [cafeRooftopImg],
     whyPick:
       "You're within 1 km, it's open late, it fits a casual ৳300 budget, and 94% of visitors said they'd return with their group.",
     highlights: ['No table cover charge', 'Over 120 strategy games', 'Fast WiFi and outdoor plugs'],
@@ -88,7 +92,7 @@ export const INITIAL_PLACES: Place[] = [
     groupFit: ['Solo', 'Date', 'Friends'],
     environment: 'Indoor',
     tags: ['Quiet', 'Solo', 'Creative therapy', 'Under ৳500', 'Open now'],
-    images: ['/src/assets/images/outera_clay_pottery_1793001411514.jpg'],
+    images: [clayPotteryImg],
     whyPick:
       'Perfect low-noise solo escape when you want to create something with your hands instead of scrolling.',
     highlights: ['All tools included', 'Beginner friendly clay wheel', 'Natural daylight setting'],
@@ -138,7 +142,7 @@ export const INITIAL_PLACES: Place[] = [
     groupFit: ['Friends', 'Solo'],
     environment: 'Indoor',
     tags: ['Under ৳500', 'Good for friends', 'High energy', 'Open now', 'Active'],
-    images: ['/src/assets/images/outera_boulder_climb_1793001412663.jpg'],
+    images: [boulderClimbImg],
     whyPick:
       'High-energy social workout where you meet other active people, right in your budget range.',
     highlights: ['Grade V0 to V7 routes', 'Shoe rentals on spot', 'Lockers & shower stalls'],
@@ -188,7 +192,7 @@ export const INITIAL_PLACES: Place[] = [
     groupFit: ['Solo', 'Date'],
     environment: 'Indoor',
     tags: ['Quiet', 'Solo', 'Under ৳500', 'Open now', 'Audiophile'],
-    images: ['/src/assets/images/outera_vinyl_lounge_1793001412552.jpg'],
+    images: [vinylLoungeImg],
     whyPick:
       'Unmatched moody warmth, zero loud chatter policy, and stellar sound quality for under ৳400.',
     highlights: ['Strict quiet lounge etiquette', 'Curated analog turntable setup', 'Specialty cold brews'],
@@ -237,7 +241,7 @@ export const INITIAL_PLACES: Place[] = [
     groupFit: ['Friends', 'Solo', 'Family'],
     environment: 'Outdoor',
     tags: ['Under ৳300', 'Good for friends', 'Outdoor', 'Open now', 'Free entry'],
-    images: ['/src/assets/images/outera_cafe_rooftop_1793001411664.jpg'],
+    images: [cafeRooftopImg],
     whyPick:
       'Virtually zero cost, open-air breeze, spontaneous acoustic music, and great people watching.',
     highlights: ['Scenic waterfront steps', 'Legendary roadside cha & chotpoti', 'Pedestrian-only trail'],
@@ -287,7 +291,7 @@ export const INITIAL_PLACES: Place[] = [
     groupFit: ['Solo'],
     environment: 'Indoor',
     tags: ['Quiet', 'Solo', 'Under ৳300', 'Open now', 'Deep work'],
-    images: ['/src/assets/images/outera_vinyl_lounge_1793001412552.jpg'],
+    images: [vinylLoungeImg],
     whyPick:
       'Zero background chatter, rock-solid internet, and hourly passes starting under ৳150 with free coffee.',
     highlights: ['300 Mbps fiber line', 'Individual desk task lighting', 'Silent booth policy'],
@@ -337,7 +341,7 @@ export const INITIAL_PLACES: Place[] = [
     groupFit: ['Friends'],
     environment: 'Indoor',
     tags: ['Late night', 'Under ৳500', 'Good for friends', 'High energy', 'Open now'],
-    images: ['/src/assets/images/outera_boulder_climb_1793001412663.jpg'],
+    images: [boulderClimbImg],
     whyPick:
       'Open until 2:00 AM, high energy fun with friends, and way healthier than sitting in late night traffic.',
     highlights: ['UV glowing court lines', 'Late night slots until 2 AM', 'Equipment included in fee'],
@@ -387,7 +391,7 @@ export const INITIAL_PLACES: Place[] = [
     groupFit: ['Friends', 'Solo', 'Date'],
     environment: 'Indoor',
     tags: ['Creative', 'Under ৳500', 'Unique finds', 'Open now'],
-    images: ['/src/assets/images/outera_clay_pottery_1793001411514.jpg'],
+    images: [clayPotteryImg],
     whyPick:
       'Zero mass-market mall boredom. Every garment and art print here has a unique story.',
     highlights: ['Weekly thrift drops on Saturdays', 'Local artist riso prints', 'Try-on booth with polaroids'],
@@ -437,7 +441,7 @@ export const INITIAL_PLACES: Place[] = [
     groupFit: ['Friends', 'Family', 'Solo'],
     environment: 'Outdoor',
     tags: ['Under ৳300', 'Historic', 'Street food', 'Open now', 'Good for friends'],
-    images: ['/src/assets/images/outera_cafe_rooftop_1793001411664.jpg'],
+    images: [cafeRooftopImg],
     whyPick:
       'Authentic street culture, incredibly rich flavors, and a full evening feast for under ৳200.',
     highlights: ['Crispy fresh morning kachori', 'Conch shell artisan carving demonstrations', 'Historic architecture'],
@@ -487,7 +491,7 @@ export const INITIAL_PLACES: Place[] = [
     groupFit: ['Solo', 'Friends', 'Date'],
     environment: 'Rooftop',
     tags: ['Under ৳500', 'Live music', 'Rooftop vibe', 'Open now', 'Good for friends'],
-    images: ['/src/assets/images/outera_vinyl_lounge_1793001412552.jpg'],
+    images: [vinylLoungeImg],
     whyPick:
       'Real intimate rooftop music without club pretension or inflated cover charges.',
     highlights: ['BYO cushion seating', 'Local independent musicians', 'Organic herbal teas'],

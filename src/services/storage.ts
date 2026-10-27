@@ -41,9 +41,18 @@ export const DEFAULT_COLLECTIONS: SavedCollection[] = [
   },
 ];
 
-export function getSavedPlaceIds(): string[] {
+function isStorageAvailable(): boolean {
   try {
-    const raw = localStorage.getItem(STORAGE_KEYS.SAVED_PLACES);
+    return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
+  } catch {
+    return false;
+  }
+}
+
+export function getSavedPlaceIds(): string[] {
+  if (!isStorageAvailable()) return ['place-1', 'place-4'];
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEYS.SAVED_PLACES);
     if (!raw) return ['place-1', 'place-4']; // Default saved spots to showcase immediately
     return JSON.parse(raw);
   } catch {
@@ -59,17 +68,20 @@ export function toggleSavePlace(placeId: string): string[] {
   } else {
     updated = [placeId, ...current];
   }
-  try {
-    localStorage.setItem(STORAGE_KEYS.SAVED_PLACES, JSON.stringify(updated));
-  } catch (err) {
-    console.warn('Failed to save place id to localStorage', err);
+  if (isStorageAvailable()) {
+    try {
+      window.localStorage.setItem(STORAGE_KEYS.SAVED_PLACES, JSON.stringify(updated));
+    } catch (err) {
+      console.warn('Failed to save place id to localStorage', err);
+    }
   }
   return updated;
 }
 
 export function getSavedCollections(): SavedCollection[] {
+  if (!isStorageAvailable()) return DEFAULT_COLLECTIONS;
   try {
-    const raw = localStorage.getItem(STORAGE_KEYS.COLLECTIONS);
+    const raw = window.localStorage.getItem(STORAGE_KEYS.COLLECTIONS);
     if (!raw) return DEFAULT_COLLECTIONS;
     return JSON.parse(raw);
   } catch {
@@ -87,17 +99,20 @@ export function saveCollection(collection: SavedCollection): SavedCollection[] {
   } else {
     updated = [collection, ...current];
   }
-  try {
-    localStorage.setItem(STORAGE_KEYS.COLLECTIONS, JSON.stringify(updated));
-  } catch (e) {
-    console.warn(e);
+  if (isStorageAvailable()) {
+    try {
+      window.localStorage.setItem(STORAGE_KEYS.COLLECTIONS, JSON.stringify(updated));
+    } catch (e) {
+      console.warn(e);
+    }
   }
   return updated;
 }
 
 export function getUserExperienceReports(): ExperienceReport[] {
+  if (!isStorageAvailable()) return [];
   try {
-    const raw = localStorage.getItem(STORAGE_KEYS.USER_REPORTS);
+    const raw = window.localStorage.getItem(STORAGE_KEYS.USER_REPORTS);
     if (!raw) return [];
     return JSON.parse(raw);
   } catch {
@@ -108,17 +123,20 @@ export function getUserExperienceReports(): ExperienceReport[] {
 export function addExperienceReport(report: ExperienceReport): ExperienceReport[] {
   const current = getUserExperienceReports();
   const updated = [report, ...current];
-  try {
-    localStorage.setItem(STORAGE_KEYS.USER_REPORTS, JSON.stringify(updated));
-  } catch (e) {
-    console.warn(e);
+  if (isStorageAvailable()) {
+    try {
+      window.localStorage.setItem(STORAGE_KEYS.USER_REPORTS, JSON.stringify(updated));
+    } catch (e) {
+      console.warn(e);
+    }
   }
   return updated;
 }
 
 export function getUserProfile(): UserProfile {
+  if (!isStorageAvailable()) return DEFAULT_PROFILE;
   try {
-    const raw = localStorage.getItem(STORAGE_KEYS.USER_PROFILE);
+    const raw = window.localStorage.getItem(STORAGE_KEYS.USER_PROFILE);
     if (!raw) return DEFAULT_PROFILE;
     return { ...DEFAULT_PROFILE, ...JSON.parse(raw) };
   } catch {
@@ -129,10 +147,12 @@ export function getUserProfile(): UserProfile {
 export function saveUserProfile(profile: Partial<UserProfile>): UserProfile {
   const current = getUserProfile();
   const updated = { ...current, ...profile };
-  try {
-    localStorage.setItem(STORAGE_KEYS.USER_PROFILE, JSON.stringify(updated));
-  } catch (e) {
-    console.warn(e);
+  if (isStorageAvailable()) {
+    try {
+      window.localStorage.setItem(STORAGE_KEYS.USER_PROFILE, JSON.stringify(updated));
+    } catch (e) {
+      console.warn(e);
+    }
   }
   return updated;
 }

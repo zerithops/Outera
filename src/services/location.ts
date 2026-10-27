@@ -75,7 +75,7 @@ export async function requestBrowserLocation(): Promise<{
   location?: UserLocation;
   error?: 'denied' | 'unavailable' | 'timeout' | 'unsupported';
 }> {
-  if (!navigator.geolocation) {
+  if (typeof window === 'undefined' || typeof navigator === 'undefined' || !navigator.geolocation) {
     return { success: false, error: 'unsupported' };
   }
 
