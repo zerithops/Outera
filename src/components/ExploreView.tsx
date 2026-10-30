@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
-import { Search, MapPin, SlidersHorizontal, LayoutGrid, Map as MapIcon, X } from 'lucide-react';
+import { Search, MapPin, SlidersHorizontal, LayoutGrid, Map as MapIcon, X, Clock } from 'lucide-react';
 import { FilterState, UserLocation } from '../types/outera';
 import { PlaceWithDistance } from '../services/discoveryEngine';
 import { PlaceCard } from './PlaceCard';
 import { FilterBar } from './FilterBar';
 import { DiscoveryMap } from './DiscoveryMap';
 import { formatDistance } from '../services/location';
+import { useSearchHistory } from '../hooks/useSearchHistory';
 
 interface ExploreViewProps {
   places: PlaceWithDistance[];
@@ -30,6 +31,13 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
 }) => {
   const [viewMode, setViewMode] = useState<'grid' | 'map'>('grid');
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+
+  // Hook that automatically records user's searches into Supabase search_history
+  const { recentSearches } = useSearchHistory(
+    filters.searchQuery,
+    currentLocation.neighborhoodName,
+    places.length
+  );
 
   return (
     <div className="w-full px-4 sm:px-6 py-4 space-y-5">
@@ -86,23 +94,44 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
       </div>
 
       {/* Search Input Bar */}
-      <div className="relative">
-        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
-        <input
-          type="text"
-          value={filters.searchQuery}
-          onChange={(e) => onChangeFilters({ ...filters, searchQuery: e.target.value })}
-          placeholder="Search by spot name, vibe, pottery, rooftop, bouldering..."
-          className="w-full h-11 pl-10 pr-10 rounded-xl bg-white/[0.04] border border-white/[0.08] text-xs sm:text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-[#ccff00] transition-colors"
-        />
-        {filters.searchQuery && (
-          <button
-            type="button"
-            onClick={() => onChangeFilters({ ...filters, searchQuery: '' })}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white p-1"
-          >
-            <X className="w-4 h-4" />
-          </button>
+      <div className="space-y-2">
+        <div className="relative">
+          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
+          <input
+            type="text"
+            value={filters.searchQuery}
+            onChange={(e) => onChangeFilters({ ...filters, searchQuery: e.target.value })}
+            placeholder="Search by spot name, vibe, pottery, rooftop, bouldering..."
+            className="w-full h-11 pl-10 pr-10 rounded-xl bg-white/[0.04] border border-white/[0.08] text-xs sm:text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-[#ccff00] transition-colors"
+          />
+          {filters.searchQuery && (
+            <button
+              type="button"
+              onClick={() => onChangeFilters({ ...filters, searchQuery: '' })}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white p-1"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+
+        {/* Supabase Recent Searches */}
+        {!filters.searchQuery && recentSearches.length > 0 && (
+          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-0.5">
+            <span className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold flex items-center gap-1 shrink-0">
+              <Clock className="w-3 h-3 text-[#ccff00]" /> Recent:
+            </span>
+            {recentSearches.slice(0, 4).map((query) => (
+              <button
+                key={query}
+                type="button"
+                onClick={() => onChangeFilters({ ...filters, searchQuery: query })}
+                className="px-2.5 py-1 rounded-lg bg-white/[0.03] hover:bg-white/[0.08] border border-white/[0.06] text-xs text-zinc-300 hover:text-white transition-colors shrink-0"
+              >
+                {query}
+              </button>
+            ))}
+          </div>
         )}
       </div>
 

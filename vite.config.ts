@@ -9,6 +9,16 @@ const __dirname = path.dirname(__filename);
 
 export default defineConfig(() => {
   return {
+    envPrefix: ['VITE_', 'NEXT_PUBLIC_'],
+    define: {
+      'process.env.NEXT_PUBLIC_SUPABASE_URL': JSON.stringify(
+        process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://znyglvfsbxyjsctphigm.supabase.co'
+      ),
+      'process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY': JSON.stringify(
+        process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+          'sb_publishable_1lRtsi9_-0131cjmSg76BQ_w8wzpFF3'
+      ),
+    },
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {

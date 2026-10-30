@@ -11,11 +11,14 @@ import {
   Compass,
   Check,
   Calendar,
+  Heart,
+  Building2,
 } from 'lucide-react';
 import { PlaceWithDistance } from '../services/discoveryEngine';
 import { formatDistance } from '../services/location';
 import { isPlaceVisitedByUser, toggleVisitedPlace } from '../services/storage';
 import { ExperienceVerificationItem } from './ExperienceVerificationItem';
+import { toggleWantToTryInSupabase, submitBusinessClaim } from '../services/supabase';
 
 interface PlaceDetailsModalProps {
   place: PlaceWithDistance | null;
@@ -38,6 +41,12 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
 }) => {
   const [copied, setCopied] = useState(false);
   const [activeTab, setActiveTab] = useState<'overview' | 'experiences'>('overview');
+  const [wantToTry, setWantToTry] = useState(false);
+  const [showClaimModal, setShowClaimModal] = useState(false);
+  const [claimPhone, setClaimPhone] = useState('');
+  const [claimEmail, setClaimEmail] = useState('');
+  const [claimRole, setClaimRole] = useState('Owner / Manager');
+  const [claimSuccess, setClaimSuccess] = useState(false);
 
   if (!isOpen || !place) return null;
 
@@ -46,6 +55,29 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
   const handleToggleVisited = () => {
     toggleVisitedPlace(place.id);
     if (onPlaceUpdated) onPlaceUpdated();
+  };
+
+  const handleToggleWantToTry = () => {
+    const next = !wantToTry;
+    setWantToTry(next);
+    toggleWantToTryInSupabase(place.id);
+  };
+
+  const handleClaimSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!claimPhone) return;
+    await submitBusinessClaim({
+      placeId: place.id,
+      businessName: place.name,
+      contactPhone: claimPhone,
+      contactEmail: claimEmail,
+      role: claimRole,
+    });
+    setClaimSuccess(true);
+    setTimeout(() => {
+      setShowClaimModal(false);
+      setClaimSuccess(false);
+    }, 1500);
   };
 
   const handleShare = async () => {
@@ -421,14 +453,26 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
               <span>Get Directions</span>
             </button>
           </div>
+
+          {/* Business Claim / Verification Link */}
+          <div className="pt-1 pb-3 text-center">
+            <button
+              type="button"
+              onClick={() => setShowClaimModal(true)}
+              className="text-[11px] text-zinc-500 hover:text-zinc-300 transition-colors inline-flex items-center gap-1.5"
+            >
+              <Building2 className="w-3.5 h-3.5" />
+              <span>Manage this place? Claim business profile</span>
+            </button>
+          </div>
         </div>
 
         {/* Sticky Mobile Bottom CTA Bar */}
-        <div className="sticky bottom-0 z-20 bg-[#101216]/95 backdrop-blur-md p-4 border-t border-white/[0.08] flex items-center gap-3">
+        <div className="sticky bottom-0 z-20 bg-[#101216]/95 backdrop-blur-md p-4 border-t border-white/[0.08] flex items-center gap-2.5">
           <button
             type="button"
             onClick={() => onToggleSave(place.id)}
-            className={`h-12 px-4 rounded-xl border flex items-center justify-center text-xs font-bold transition-all ${
+            className={`h-12 px-3.5 rounded-xl border flex items-center justify-center text-xs font-bold transition-all ${
               isSaved
                 ? 'bg-[#ccff00]/10 border-[#ccff00]/40 text-[#ccff00]'
                 : 'bg-white/[0.05] border-white/[0.1] text-zinc-300 hover:text-white'
@@ -440,12 +484,96 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
 
           <button
             type="button"
+            onClick={handleToggleWantToTry}
+            className={`h-12 px-3.5 rounded-xl border flex items-center justify-center text-xs font-bold transition-all ${
+              wantToTry
+                ? 'bg-rose-500/10 border-rose-500/40 text-rose-400'
+                : 'bg-white/[0.05] border-white/[0.1] text-zinc-300 hover:text-white'
+            }`}
+          >
+            <Heart className={`w-4 h-4 mr-1.5 ${wantToTry ? 'fill-current text-rose-400' : ''}`} />
+            <span>{wantToTry ? 'On Bucketlist' : 'Want to Try'}</span>
+          </button>
+
+          <button
+            type="button"
             onClick={openGoogleMaps}
             className="flex-1 h-12 rounded-xl bg-[#ccff00] text-black font-extrabold text-xs tracking-wider uppercase flex items-center justify-center gap-2 hover:bg-[#d4ff1a] active:scale-[0.98] transition-all electric-glow-sm"
           >
-            <span>Let's Go Right Now</span>
+            <span>Let's Go</span>
           </button>
         </div>
+
+        {/* Business Claim Modal */}
+        {showClaimModal && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="w-full max-w-sm bg-[#111317] border border-white/[0.1] rounded-2xl p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Building2 className="w-4 h-4 text-[#ccff00]" />
+                  <h3 className="text-sm font-bold text-white">Claim {place.name}</h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowClaimModal(false)}
+                  className="text-zinc-400 hover:text-white text-xs font-mono"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <p className="text-xs text-zinc-400 leading-relaxed">
+                Connect your business to OUTERA to update hours, post upcoming events, and respond to community observations.
+              </p>
+
+              {claimSuccess ? (
+                <div className="p-3 rounded-xl bg-[#ccff00]/15 border border-[#ccff00]/30 text-xs font-bold text-[#ccff00] text-center">
+                  Claim registered! Our scouts will verify your spot.
+                </div>
+              ) : (
+                <form onSubmit={handleClaimSubmit} className="space-y-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-zinc-400 mb-1">
+                      Phone Number (WhatsApp or Mobile)
+                    </label>
+                    <input
+                      type="tel"
+                      required
+                      value={claimPhone}
+                      onChange={(e) => setClaimPhone(e.target.value)}
+                      placeholder="+880 1..."
+                      className="w-full h-10 px-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#ccff00]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-zinc-400 mb-1">
+                      Business Email
+                    </label>
+                    <input
+                      type="email"
+                      value={claimEmail}
+                      onChange={(e) => setClaimEmail(e.target.value)}
+                      placeholder="owner@spot.com"
+                      className="w-full h-10 px-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#ccff00]"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="w-full h-10 rounded-xl bg-[#ccff00] text-black font-extrabold text-xs uppercase tracking-wider transition-all"
+                  >
+                    Submit Business Claim
+                  </button>
+                </form>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -8,6 +8,20 @@ import {
   VerificationResponseOption,
 } from '../types/outera';
 import { INITIAL_PLACES } from '../data/mockPlaces';
+import {
+  savePlaceToSupabase,
+  unsavePlaceFromSupabase,
+  recordVisitInSupabase,
+  removeVisitInSupabase,
+  createExperienceReportInSupabase,
+  recordVerificationInSupabase,
+  submitReportToSupabase,
+  upsertProfile,
+  logActivity,
+  fetchUserSavedPlaces,
+  fetchUserVisits,
+  fetchProfile,
+} from './supabase';
 
 const STORAGE_KEYS = {
   SAVED_PLACES: 'outera_saved_places',
@@ -75,11 +89,19 @@ export function getSavedPlaceIds(): string[] {
 export function toggleSavePlace(placeId: string): string[] {
   const current = getSavedPlaceIds();
   let updated: string[];
-  if (current.includes(placeId)) {
+  const isCurrentlySaved = current.includes(placeId);
+
+  if (isCurrentlySaved) {
     updated = current.filter((id) => id !== placeId);
+    // Sync removal with Supabase
+    unsavePlaceFromSupabase(placeId);
   } else {
     updated = [placeId, ...current];
+    // Sync addition with Supabase
+    savePlaceToSupabase(placeId);
+    logActivity('save', placeId);
   }
+
   if (isStorageAvailable()) {
     try {
       window.localStorage.setItem(STORAGE_KEYS.SAVED_PLACES, JSON.stringify(updated));
@@ -106,13 +128,18 @@ export function toggleVisitedPlace(placeId: string): { visitedIds: string[]; isN
   const current = getVisitedPlaceIds();
   let updated: string[];
   let isNowVisited: boolean;
+
   if (current.includes(placeId)) {
     updated = current.filter((id) => id !== placeId);
     isNowVisited = false;
+    removeVisitInSupabase(placeId);
   } else {
     updated = [placeId, ...current];
     isNowVisited = true;
+    recordVisitInSupabase(placeId);
+    logActivity('visit', placeId);
   }
+
   if (isStorageAvailable()) {
     try {
       window.localStorage.setItem(STORAGE_KEYS.VISITED_PLACES, JSON.stringify(updated));
@@ -181,6 +208,14 @@ export function addExperienceReport(report: ExperienceReport): ExperienceReport[
       console.warn(e);
     }
   }
+
+  // Sync to Supabase experiences table
+  createExperienceReportInSupabase(report.placeId, report);
+  logActivity('review', report.placeId, 'Shared community experience', {
+    spend: report.approxSpendTaka,
+    wouldGoAgain: report.wouldGoAgain,
+  });
+
   return updated;
 }
 
@@ -222,6 +257,14 @@ export function submitVerificationAction(
       console.warn(e);
     }
   }
+
+  // Sync to Supabase experience_verifications table
+  recordVerificationInSupabase(reportId, placeId, response, differenceReason, userVisited);
+  logActivity('verify', placeId, `Community verification: ${response}`, {
+    differenceReason,
+    isVerifiedVisitor: userVisited,
+  });
+
   return updated;
 }
 
@@ -247,6 +290,10 @@ export function submitModerationReport(report: Omit<ModerationReport, 'id' | 'cr
       console.warn(e);
     }
   }
+
+  // Sync to Supabase reports table
+  submitReportToSupabase(report);
+
   return newReport;
 }
 
@@ -272,6 +319,15 @@ export function saveUserProfile(profile: Partial<UserProfile>): UserProfile {
       console.warn(e);
     }
   }
+
+  // Sync to Supabase profiles table
+  upsertProfile({
+    name: updated.name,
+    handle: updated.handle,
+    vibe_preference: updated.vibePreference,
+    budget_preference: updated.budgetPreference,
+  });
+
   return updated;
 }
 

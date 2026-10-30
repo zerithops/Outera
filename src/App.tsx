@@ -22,6 +22,12 @@ import {
   toggleSavePlace,
   addExperienceReport,
 } from './services/storage';
+import {
+  fetchPlacesFromSupabase,
+  fetchUserSavedPlaces,
+  fetchUserVisits,
+  subscribeToAuthChanges,
+} from './services/supabase';
 import { Navbar } from './components/Navbar';
 import { BottomNav, NavTab } from './components/BottomNav';
 import { HeroSection } from './components/HeroSection';
@@ -69,6 +75,54 @@ export default function App() {
   // Active division view for Location Hub
   const [activeHubDivision, setActiveHubDivision] = useState<'all' | DivisionName>('all');
   const [showLocationHub, setShowLocationHub] = useState(false);
+
+  // Sync Supabase places and authenticated user data
+  useEffect(() => {
+    let isMounted = true;
+
+    // Load places from Supabase if table exists with records
+    fetchPlacesFromSupabase().then((supabasePlaces) => {
+      if (isMounted && supabasePlaces && supabasePlaces.length > 0) {
+        // Merge Supabase places with local augmented places
+        setPlaces((prev) => {
+          const remoteIds = new Set(supabasePlaces.map((p) => p.id));
+          const remainingLocal = prev.filter((p) => !remoteIds.has(p.id));
+          return [...supabasePlaces, ...remainingLocal];
+        });
+      }
+    });
+
+    // Check if user is signed in to sync their saved places & visits
+    const syncUserData = async () => {
+      try {
+        const [supabaseSaved, supabaseVisits] = await Promise.all([
+          fetchUserSavedPlaces(),
+          fetchUserVisits(),
+        ]);
+        if (isMounted) {
+          if (supabaseSaved.length > 0) {
+            setSavedPlaceIds((prev) => Array.from(new Set([...prev, ...supabaseSaved])));
+          }
+        }
+      } catch (err) {
+        console.warn('Sync user data notice:', err);
+      }
+    };
+
+    syncUserData();
+
+    // Subscribe to auth state changes
+    const unsubscribeAuth = subscribeToAuthChanges((user) => {
+      if (user) {
+        syncUserData();
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      unsubscribeAuth();
+    };
+  }, []);
 
   // Handle URL hashtag routes for /bangladesh, /dhaka, /chattogram, /sylhet, /coxs-bazar, /location/*
   useEffect(() => {
