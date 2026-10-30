@@ -4,6 +4,7 @@ import { FilterState, UserLocation } from '../types/outera';
 import { PlaceWithDistance } from '../services/discoveryEngine';
 import { PlaceCard } from './PlaceCard';
 import { FilterBar } from './FilterBar';
+import { DiscoveryMap } from './DiscoveryMap';
 import { formatDistance } from '../services/location';
 
 interface ExploreViewProps {
@@ -156,87 +157,14 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
           </div>
         )
       ) : (
-        /* Map Radar View */
-        <div className="w-full rounded-2xl bg-[#111317] border border-white/[0.08] p-5 sm:p-6 overflow-hidden">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="text-sm font-bold text-white">Interactive Radar Map</h2>
-              <p className="text-xs text-zinc-400">
-                Pointers around {currentLocation.neighborhoodName}
-              </p>
-            </div>
-            <span className="text-xs font-mono text-[#ccff00] font-bold">
-              {places.length} Active Pins
-            </span>
-          </div>
-
-          {/* Stylized Dark Radar Map Simulation */}
-          <div className="relative aspect-[4/3] sm:aspect-[16/8] w-full rounded-xl bg-zinc-950 border border-white/[0.08] flex items-center justify-center overflow-hidden">
-            {/* Grid radar rings */}
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <div className="w-24 h-24 sm:w-40 sm:h-40 rounded-full border border-white/[0.08]" />
-              <div className="w-48 h-48 sm:w-80 sm:h-80 rounded-full border border-white/[0.05]" />
-              <div className="w-72 h-72 sm:w-[480px] sm:h-[480px] rounded-full border border-white/[0.03]" />
-              <div className="absolute w-full h-[1px] bg-white/[0.04]" />
-              <div className="absolute h-full w-[1px] bg-white/[0.04]" />
-            </div>
-
-            {/* Center User Location Pin */}
-            <div className="relative z-10 flex flex-col items-center">
-              <div className="w-4 h-4 rounded-full bg-[#ccff00] border-2 border-black animate-pulse shadow-lg shadow-[#ccff00]/40" />
-              <span className="mt-1 text-[10px] font-bold text-[#ccff00] bg-black/80 px-2 py-0.5 rounded-full border border-[#ccff00]/30">
-                You ({currentLocation.neighborhoodName})
-              </span>
-            </div>
-
-            {/* Distributed place pins on radar */}
-            {places.slice(0, 8).map((place, idx) => {
-              // Calculate semi-circular coordinates offset
-              const angle = (idx / 8) * Math.PI * 2 + 0.4;
-              const radius = Math.min(140, Math.max(45, place.distanceKm * 28));
-              const x = Math.cos(angle) * radius;
-              const y = Math.sin(angle) * radius;
-
-              return (
-                <button
-                  key={place.id}
-                  type="button"
-                  onClick={() => onSelectPlace(place)}
-                  style={{
-                    transform: `translate(${x}px, ${y}px)`,
-                  }}
-                  className="absolute z-10 group/pin p-1.5 rounded-full bg-[#181b20] hover:bg-[#ccff00] border border-white/20 hover:border-[#ccff00] text-white hover:text-black transition-all shadow-md active:scale-95"
-                  title={`${place.name} · ${formatDistance(place.distanceKm)}`}
-                >
-                  <MapPin className="w-3.5 h-3.5" />
-                  <span className="sr-only">{place.name}</span>
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Quick list below radar */}
-          <div className="mt-4 space-y-2">
-            <p className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Tap A Pin Or Spot Below</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {places.slice(0, 4).map((place) => (
-                <div
-                  key={place.id}
-                  onClick={() => onSelectPlace(place)}
-                  className="p-3 rounded-xl bg-white/[0.02] hover:bg-white/[0.06] border border-white/[0.05] cursor-pointer flex items-center justify-between transition-colors"
-                >
-                  <div className="truncate pr-2">
-                    <p className="text-xs font-bold text-white truncate">{place.name}</p>
-                    <p className="text-[11px] text-zinc-400">{place.category} · {place.priceLevel.label}</p>
-                  </div>
-                  <span className="text-xs font-mono text-[#ccff00] font-semibold shrink-0">
-                    {formatDistance(place.distanceKm)}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+        /* Upgraded Interactive Community Discovery Map */
+        <DiscoveryMap
+          places={places}
+          currentLocation={currentLocation}
+          selectedLayer={filters.mapLayer || 'all'}
+          onChangeLayer={(layer) => onChangeFilters({ ...filters, mapLayer: layer })}
+          onSelectPlace={onSelectPlace}
+        />
       )}
     </div>
   );

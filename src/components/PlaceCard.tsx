@@ -53,6 +53,25 @@ export const PlaceCard: React.FC<PlaceCardProps> = ({
         {/* Measured dark scrim for legibility */}
         <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-transparent pointer-events-none" />
 
+        {/* Top Left Marker Status */}
+        <div className="absolute top-3 left-3 z-10 flex items-center gap-1.5">
+          {place.isTrending && (
+            <span className="text-[10px] font-bold text-black bg-[#ccff00] px-2 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1 shadow-md">
+              <span>⚡ Trending</span>
+            </span>
+          )}
+          {place.isHiddenGem && (
+            <span className="text-[10px] font-bold text-white bg-cyan-900/80 backdrop-blur-md px-2 py-0.5 rounded-full uppercase tracking-wider border border-cyan-400/40">
+              💎 Hidden Gem
+            </span>
+          )}
+          {place.isEvent && (
+            <span className="text-[10px] font-bold text-white bg-purple-900/80 backdrop-blur-md px-2 py-0.5 rounded-full uppercase tracking-wider border border-purple-400/40">
+              🎟️ Event
+            </span>
+          )}
+        </div>
+
         {/* Top Floating Actions: Save button */}
         <div className="absolute top-3 right-3 z-10">
           <button
@@ -77,9 +96,11 @@ export const PlaceCard: React.FC<PlaceCardProps> = ({
             <span className="text-[#ccff00] font-semibold">{place.openingHours.openNow ? 'Open Now' : 'Closed'}</span>
           </div>
 
-          <div className="flex items-center gap-1 text-xs font-semibold text-white">
+          <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
             <span className="text-[#ccff00] font-mono tabular-nums">{place.communityScore}%</span>
-            <span className="text-white/70 text-[11px]">worth it</span>
+            <span className="text-[10px] text-zinc-300 px-1.5 py-0.2 rounded bg-black/60 border border-white/10">
+              {place.communityConfidence} Conf
+            </span>
           </div>
         </div>
       </div>
@@ -99,7 +120,7 @@ export const PlaceCard: React.FC<PlaceCardProps> = ({
           <span aria-hidden="true" className="text-zinc-600">·</span>
           <span>{place.priceLevel.label}</span>
           <span aria-hidden="true" className="text-zinc-600">·</span>
-          <span>{place.neighborhood}</span>
+          <span>{place.district}</span>
         </div>
 
         <p className="text-xs text-zinc-300 mt-2.5 line-clamp-2 leading-relaxed">

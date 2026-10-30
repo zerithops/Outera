@@ -11,7 +11,7 @@ export function filterAndRankPlaces(
   userCoords: Coordinates,
   filters: FilterState
 ): PlaceWithDistance[] {
-  // First calculate distance and check baseline filter matches
+  // Calculate distance for all places
   const processed = places.map((place) => {
     const distanceKm = calculateDistanceKm(userCoords, place.coordinates);
     return {
@@ -30,9 +30,21 @@ export function filterAndRankPlaces(
       const matchDesc = place.shortDescription.toLowerCase().includes(q);
       const matchTags = place.tags.some((t) => t.toLowerCase().includes(q));
       const matchHood = place.neighborhood.toLowerCase().includes(q);
-      if (!matchName && !matchCat && !matchDesc && !matchTags && !matchHood) {
+      const matchDistrict = place.district.toLowerCase().includes(q);
+      const matchDivision = place.division.toLowerCase().includes(q);
+      if (!matchName && !matchCat && !matchDesc && !matchTags && !matchHood && !matchDistrict && !matchDivision) {
         return false;
       }
+    }
+
+    // Division filter
+    if (filters.selectedDivision && filters.selectedDivision !== 'all') {
+      if (place.division !== filters.selectedDivision) return false;
+    }
+
+    // District filter
+    if (filters.selectedDistrict && filters.selectedDistrict !== 'all') {
+      if (place.district !== filters.selectedDistrict) return false;
     }
 
     // Category filter
@@ -47,12 +59,11 @@ export function filterAndRankPlaces(
 
     // Price max filter
     if (filters.priceMax !== null) {
-      // If user wants Under ৳300, minimum or average price should be <= 300
       if (place.priceLevel.min > filters.priceMax) return false;
     }
 
-    // Max distance filter
-    if (filters.maxDistanceKm !== null) {
+    // Max distance filter (only when not explicitly exploring another division)
+    if (filters.maxDistanceKm !== null && filters.selectedDivision === 'all') {
       if (place.distanceKm > filters.maxDistanceKm) return false;
     }
 
@@ -80,25 +91,37 @@ export function filterAndRankPlaces(
       }
     }
 
+    // Map Layer filter
+    if (filters.mapLayer && filters.mapLayer !== 'all') {
+      if (filters.mapLayer === 'Trending' && !place.isTrending && place.markerState !== 'Trending') return false;
+      if (filters.mapLayer === 'Popular' && place.markerState !== 'Popular' && place.communityScore < 90) return false;
+      if (filters.mapLayer === 'HiddenGems' && !place.isHiddenGem && place.markerState !== 'HiddenGem') return false;
+      if (filters.mapLayer === 'Events' && !place.isEvent) return false;
+      if (filters.mapLayer === 'CommunityActivity' && (place.experienceReports?.length || 0) < 1) return false;
+    }
+
     return true;
   });
 
-  // Ranking algorithm: Proximity + Community Score + Open status
+  // Ranking algorithm: Proximity + Community Score + Confidence + Open bonus
   return filtered
     .map((place) => {
-      // Proximity score: closer is exponentially rewarded up to 5km
-      const proximityScore = Math.max(0, 50 - place.distanceKm * 8);
+      // Proximity score: closer is exponentially rewarded up to 20km
+      const proximityScore = Math.max(0, 60 - place.distanceKm * 2);
 
       // Community rating score (0 - 30)
       const communityWeight = (place.communityScore / 100) * 30;
 
+      // Confidence weight: High confidence gives slight boost
+      const confidenceBonus = place.communityConfidence === 'High' ? 10 : place.communityConfidence === 'Mixed' ? 5 : 0;
+
       // Open now bonus
-      const openBonus = place.openingHours.openNow ? 15 : 0;
+      const openBonus = place.openingHours.openNow ? 10 : 0;
 
-      // Low crowd / high buzz bonus depending on score
-      const buzzBonus = Math.min(10, (place.totalReports / 100) * 5);
+      // Trending bonus
+      const trendingBonus = place.isTrending ? 8 : 0;
 
-      const rankScore = proximityScore + communityWeight + openBonus + buzzBonus;
+      const rankScore = proximityScore + communityWeight + confidenceBonus + openBonus + trendingBonus;
       return {
         ...place,
         rankScore,
@@ -128,24 +151,24 @@ export function getSurpriseRecommendation(
 
   // Prefer places that are open now and have high community score
   const sorted = candidates.sort((a, b) => {
-    const aScore = (a.openingHours.openNow ? 20 : 0) + a.communityScore - a.distanceKm * 3;
-    const bScore = (b.openingHours.openNow ? 20 : 0) + b.communityScore - b.distanceKm * 3;
+    const aScore = (a.openingHours.openNow ? 20 : 0) + a.communityScore - a.distanceKm * 0.5;
+    const bScore = (b.openingHours.openNow ? 20 : 0) + b.communityScore - b.distanceKm * 0.5;
     return bScore - aScore;
   });
 
-  // Pick from the top 3 to keep it fresh on "Try Another"
-  const pool = sorted.slice(0, Math.min(4, sorted.length));
+  // Pick from the top 5 to keep it fresh on "Try Another"
+  const pool = sorted.slice(0, Math.min(5, sorted.length));
   const picked = pool[Math.floor(Math.random() * pool.length)] || sorted[0];
 
   // Dynamic reason builder
-  let reason = `You're ${picked.distanceKm < 1 ? 'just a walk away' : `${picked.distanceKm.toFixed(1)} km out`}`;
+  let reason = `You're ${picked.distanceKm < 1 ? 'just a short walk away' : `${picked.distanceKm.toFixed(1)} km out`}`;
   if (picked.openingHours.openNow) {
     reason += ', it is open right now';
   }
   if (picked.priceLevel.min <= 300) {
-    reason += ', easy on the pocket (under ৳500)';
+    reason += ', fits an accessible ৳300–500 budget';
   }
-  reason += `, and ${picked.communityScore}% of community reports say it is completely worth going out for.`;
+  reason += `, and ${picked.communityScore}% of community reports (${picked.communityConfidence} Confidence) say it is genuinely worth going out for.`;
 
   return {
     place: picked,

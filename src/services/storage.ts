@@ -1,10 +1,21 @@
-import { ExperienceReport, Place, SavedCollection } from '../types/outera';
+import {
+  CommunityVerificationAction,
+  DifferenceReason,
+  ExperienceReport,
+  ModerationReport,
+  Place,
+  SavedCollection,
+  VerificationResponseOption,
+} from '../types/outera';
 import { INITIAL_PLACES } from '../data/mockPlaces';
 
 const STORAGE_KEYS = {
   SAVED_PLACES: 'outera_saved_places',
+  VISITED_PLACES: 'outera_visited_places',
   COLLECTIONS: 'outera_collections',
   USER_REPORTS: 'outera_user_reports',
+  VERIFICATIONS: 'outera_verifications',
+  MODERATION_REPORTS: 'outera_moderation_reports',
   USER_PROFILE: 'outera_user_profile',
 };
 
@@ -28,15 +39,15 @@ export const DEFAULT_COLLECTIONS: SavedCollection[] = [
   {
     id: 'col-1',
     name: 'Weekend with the crew',
-    description: 'High energy games, bouldering, and rooftop bites.',
-    placeIds: ['place-1', 'place-3', 'place-7'],
+    description: 'High energy games, sea breezes, and rooftop bites.',
+    placeIds: ['place-1', 'place-11', 'place-10'],
     createdAt: Date.now() - 86400000 * 2,
   },
   {
     id: 'col-2',
-    name: 'Solo recharge spots',
-    description: 'Quiet vinyl lounges and afternoon craft corners.',
-    placeIds: ['place-2', 'place-4', 'place-6'],
+    name: 'Scenic nature escapes',
+    description: 'Serene mountain viewpoints, cloud decks and tea gardens.',
+    placeIds: ['place-12', 'place-13', 'place-14', 'place-15'],
     createdAt: Date.now() - 86400000 * 5,
   },
 ];
@@ -49,14 +60,15 @@ function isStorageAvailable(): boolean {
   }
 }
 
+// ----------------- Saved Places -----------------
 export function getSavedPlaceIds(): string[] {
-  if (!isStorageAvailable()) return ['place-1', 'place-4'];
+  if (!isStorageAvailable()) return ['place-1', 'place-12'];
   try {
     const raw = window.localStorage.getItem(STORAGE_KEYS.SAVED_PLACES);
-    if (!raw) return ['place-1', 'place-4']; // Default saved spots to showcase immediately
+    if (!raw) return ['place-1', 'place-12'];
     return JSON.parse(raw);
   } catch {
-    return ['place-1', 'place-4'];
+    return ['place-1', 'place-12'];
   }
 }
 
@@ -78,6 +90,44 @@ export function toggleSavePlace(placeId: string): string[] {
   return updated;
 }
 
+// ----------------- Visited Places ("I've Been Here") -----------------
+export function getVisitedPlaceIds(): string[] {
+  if (!isStorageAvailable()) return ['place-1', 'place-11'];
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEYS.VISITED_PLACES);
+    if (!raw) return ['place-1', 'place-11']; // Seed demo visits
+    return JSON.parse(raw);
+  } catch {
+    return ['place-1', 'place-11'];
+  }
+}
+
+export function toggleVisitedPlace(placeId: string): { visitedIds: string[]; isNowVisited: boolean } {
+  const current = getVisitedPlaceIds();
+  let updated: string[];
+  let isNowVisited: boolean;
+  if (current.includes(placeId)) {
+    updated = current.filter((id) => id !== placeId);
+    isNowVisited = false;
+  } else {
+    updated = [placeId, ...current];
+    isNowVisited = true;
+  }
+  if (isStorageAvailable()) {
+    try {
+      window.localStorage.setItem(STORAGE_KEYS.VISITED_PLACES, JSON.stringify(updated));
+    } catch (err) {
+      console.warn('Failed to save visited place to localStorage', err);
+    }
+  }
+  return { visitedIds: updated, isNowVisited };
+}
+
+export function isPlaceVisitedByUser(placeId: string): boolean {
+  return getVisitedPlaceIds().includes(placeId);
+}
+
+// ----------------- Collections -----------------
 export function getSavedCollections(): SavedCollection[] {
   if (!isStorageAvailable()) return DEFAULT_COLLECTIONS;
   try {
@@ -109,6 +159,7 @@ export function saveCollection(collection: SavedCollection): SavedCollection[] {
   return updated;
 }
 
+// ----------------- User Experience Reports -----------------
 export function getUserExperienceReports(): ExperienceReport[] {
   if (!isStorageAvailable()) return [];
   try {
@@ -133,6 +184,73 @@ export function addExperienceReport(report: ExperienceReport): ExperienceReport[
   return updated;
 }
 
+// ----------------- Community Verification Actions -----------------
+export function getCommunityVerifications(): CommunityVerificationAction[] {
+  if (!isStorageAvailable()) return [];
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEYS.VERIFICATIONS);
+    if (!raw) return [];
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
+}
+
+export function submitVerificationAction(
+  reportId: string,
+  placeId: string,
+  response: VerificationResponseOption,
+  differenceReason?: DifferenceReason
+): CommunityVerificationAction[] {
+  const current = getCommunityVerifications();
+  const userVisited = isPlaceVisitedByUser(placeId);
+  const newAction: CommunityVerificationAction = {
+    id: `ver-${Date.now()}`,
+    reportId,
+    placeId,
+    response,
+    differenceReason,
+    createdAt: Date.now(),
+    isVerifiedVisitor: userVisited,
+  };
+
+  const updated = [newAction, ...current];
+  if (isStorageAvailable()) {
+    try {
+      window.localStorage.setItem(STORAGE_KEYS.VERIFICATIONS, JSON.stringify(updated));
+    } catch (e) {
+      console.warn(e);
+    }
+  }
+  return updated;
+}
+
+export function getUserVerificationForReport(reportId: string): CommunityVerificationAction | undefined {
+  const all = getCommunityVerifications();
+  return all.find((v) => v.reportId === reportId);
+}
+
+// ----------------- Trust & Safety Moderation -----------------
+export function submitModerationReport(report: Omit<ModerationReport, 'id' | 'createdAt'>): ModerationReport {
+  const newReport: ModerationReport = {
+    ...report,
+    id: `mod-${Date.now()}`,
+    createdAt: Date.now(),
+  };
+
+  if (isStorageAvailable()) {
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEYS.MODERATION_REPORTS);
+      const existing: ModerationReport[] = raw ? JSON.parse(raw) : [];
+      window.localStorage.setItem(STORAGE_KEYS.MODERATION_REPORTS, JSON.stringify([newReport, ...existing]));
+    } catch (e) {
+      console.warn(e);
+    }
+  }
+  return newReport;
+}
+
+// ----------------- User Profile -----------------
 export function getUserProfile(): UserProfile {
   if (!isStorageAvailable()) return DEFAULT_PROFILE;
   try {
@@ -157,44 +275,98 @@ export function saveUserProfile(profile: Partial<UserProfile>): UserProfile {
   return updated;
 }
 
-/**
- * Returns places merged with dynamically submitted community reports
- */
+// ----------------- Augmented Places Aggregation -----------------
 export function getAugmentedPlaces(): Place[] {
   const userReports = getUserExperienceReports();
-  if (userReports.length === 0) return INITIAL_PLACES;
+  const userVerifications = getCommunityVerifications();
+  const visitedPlaceIds = getVisitedPlaceIds();
 
   return INITIAL_PLACES.map((place) => {
-    const matchingReports = userReports.filter((r) => r.placeId === place.id);
-    if (matchingReports.length === 0) return place;
+    // Add locally submitted reports
+    const localPlaceReports = userReports.filter((r) => r.placeId === place.id);
+    const combinedReports = [...localPlaceReports, ...(place.experienceReports || [])];
 
-    // Recalculate stats
-    const yesCount = matchingReports.filter((r) => r.wouldGoAgain === 'Yes').length;
-    const addedReports = matchingReports.length;
-    const newTotal = place.totalReports + addedReports;
+    // Compute updated verification stats on reports
+    const augmentedExperienceReports = combinedReports.map((report) => {
+      const relatedVerifications = userVerifications.filter((v) => v.reportId === report.id);
+      if (relatedVerifications.length === 0) return report;
 
-    // Weight existing percentage with new feedback
-    const baseYes = Math.round((place.communityScore / 100) * place.totalReports);
-    const combinedPct = Math.round(((baseYes + yesCount) / newTotal) * 100);
+      let mostly = report.verification.mostlyCount;
+      let partly = report.verification.partlyCount;
+      let notReally = report.verification.notReallyCount;
+      const diffMap = new Map<DifferenceReason, number>();
 
-    const latestComments = matchingReports
-      .filter((r) => r.comment && r.comment.trim().length > 0)
-      .map((r) => ({
-        text: r.comment!,
-        vibe: r.vibe,
-        wouldGoAgain: r.wouldGoAgain,
-        timeAgo: 'Just now',
-      }));
+      for (const d of report.verification.commonDifferences) {
+        diffMap.set(d.reason, d.count);
+      }
+
+      for (const v of relatedVerifications) {
+        // Stronger weight given to visitors who marked a visit
+        const weight = v.isVerifiedVisitor ? 2 : 1;
+        if (v.response === 'Mostly') mostly += weight;
+        else if (v.response === 'Partly') partly += weight;
+        else if (v.response === 'Not really') notReally += weight;
+
+        if (v.differenceReason) {
+          diffMap.set(v.differenceReason, (diffMap.get(v.differenceReason) || 0) + 1);
+        }
+      }
+
+      const totalResponses = mostly + partly + notReally;
+      const mostlyRatio = totalResponses > 0 ? mostly / totalResponses : 1;
+
+      let confidence: 'High' | 'Mixed' | 'Low' = 'High';
+      if (totalResponses >= 5) {
+        if (mostlyRatio >= 0.75) confidence = 'High';
+        else if (mostlyRatio >= 0.45) confidence = 'Mixed';
+        else confidence = 'Low';
+      }
+
+      const commonDifferences: { reason: DifferenceReason; count: number }[] = [];
+      diffMap.forEach((count, reason) => {
+        commonDifferences.push({ reason, count });
+      });
+
+      return {
+        ...report,
+        verification: {
+          mostlyCount: mostly,
+          partlyCount: partly,
+          notReallyCount: notReally,
+          totalResponses,
+          confidence,
+          commonDifferences: commonDifferences.sort((a, b) => b.count - a.count),
+        },
+      };
+    });
+
+    // Check if user has marked a visit
+    const isUserVisited = visitedPlaceIds.includes(place.id);
+    const effectiveVerifiedCount = place.verifiedVisitorsCount + (isUserVisited ? 1 : 0);
+
+    // Calculate place level community confidence
+    const totalVerifications = augmentedExperienceReports.reduce(
+      (sum, r) => sum + r.verification.totalResponses,
+      0
+    );
+    const mostlyTotal = augmentedExperienceReports.reduce(
+      (sum, r) => sum + r.verification.mostlyCount,
+      0
+    );
+
+    let communityConfidence: 'High' | 'Mixed' | 'Low' = place.communityConfidence;
+    if (totalVerifications > 10) {
+      const agreementRate = mostlyTotal / totalVerifications;
+      if (agreementRate >= 0.8) communityConfidence = 'High';
+      else if (agreementRate >= 0.5) communityConfidence = 'Mixed';
+      else communityConfidence = 'Low';
+    }
 
     return {
       ...place,
-      totalReports: newTotal,
-      communityScore: Math.min(100, Math.max(10, combinedPct)),
-      userReportsBreakdown: {
-        ...place.userReportsBreakdown,
-        worthVisitingPct: Math.min(100, Math.max(10, combinedPct)),
-        recentComments: [...latestComments, ...place.userReportsBreakdown.recentComments],
-      },
+      verifiedVisitorsCount: effectiveVerifiedCount,
+      communityConfidence,
+      experienceReports: augmentedExperienceReports,
     };
   });
 }

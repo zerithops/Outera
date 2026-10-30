@@ -35,12 +35,14 @@ export const Navbar: React.FC<NavbarProps> = ({
       <button
         type="button"
         onClick={onOpenLocationModal}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/[0.04] hover:bg-white/[0.08] active:scale-[0.98] border border-white/[0.06] text-xs text-zinc-300 max-w-[210px] truncate transition-all focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#ccff00]"
-        title="Tap to change or detect location"
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/[0.04] hover:bg-white/[0.08] active:scale-[0.98] border border-white/[0.06] text-xs text-zinc-300 max-w-[230px] truncate transition-all focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#ccff00]"
+        title="Tap to browse any division, district or detect GPS"
         aria-label="Current location"
       >
         <MapPin className="w-3.5 h-3.5 text-[#ccff00] shrink-0" />
-        <span className="truncate font-medium">{currentLocation.neighborhoodName}</span>
+        <span className="truncate font-medium">
+          {currentLocation.neighborhoodName} · {currentLocation.district}
+        </span>
       </button>
 
       {/* Zone 3: Search affordance */}

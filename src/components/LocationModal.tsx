@@ -46,6 +46,8 @@ export const LocationModal: React.FC<LocationModalProps> = ({
     onSelectLocation({
       coords: hood.coords,
       neighborhoodName: hood.name,
+      district: 'Dhaka',
+      division: 'Dhaka',
       isCustomManual: true,
     });
     onClose();

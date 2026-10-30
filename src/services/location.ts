@@ -36,6 +36,8 @@ export const POPULAR_NEIGHBORHOODS: { name: string; city: string; coords: Coordi
 export const DEFAULT_LOCATION: UserLocation = {
   coords: POPULAR_NEIGHBORHOODS[0].coords,
   neighborhoodName: POPULAR_NEIGHBORHOODS[0].name,
+  district: 'Dhaka',
+  division: 'Dhaka',
   isCustomManual: false,
 };
 
@@ -103,6 +105,8 @@ export async function requestBrowserLocation(): Promise<{
           location: {
             coords: userCoords,
             neighborhoodName: minD < 4 ? nearestName : 'Detected Location',
+            district: 'Dhaka',
+            division: 'Dhaka',
             isCustomManual: false,
             accuracyMeters: position.coords.accuracy,
           },

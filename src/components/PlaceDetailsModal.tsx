@@ -4,15 +4,18 @@ import {
   Bookmark,
   Share2,
   Navigation,
-  Clock,
   Sparkles,
   CheckCircle2,
   Users,
   MessageSquarePlus,
   Compass,
+  Check,
+  Calendar,
 } from 'lucide-react';
 import { PlaceWithDistance } from '../services/discoveryEngine';
 import { formatDistance } from '../services/location';
+import { isPlaceVisitedByUser, toggleVisitedPlace } from '../services/storage';
+import { ExperienceVerificationItem } from './ExperienceVerificationItem';
 
 interface PlaceDetailsModalProps {
   place: PlaceWithDistance | null;
@@ -21,6 +24,7 @@ interface PlaceDetailsModalProps {
   isSaved: boolean;
   onToggleSave: (id: string) => void;
   onOpenReportModal: (place: PlaceWithDistance) => void;
+  onPlaceUpdated?: () => void;
 }
 
 export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
@@ -30,11 +34,19 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
   isSaved,
   onToggleSave,
   onOpenReportModal,
+  onPlaceUpdated,
 }) => {
   const [copied, setCopied] = useState(false);
-  const [activeImageIndex] = useState(0);
+  const [activeTab, setActiveTab] = useState<'overview' | 'experiences'>('overview');
 
   if (!isOpen || !place) return null;
+
+  const userHasVisited = isPlaceVisitedByUser(place.id);
+
+  const handleToggleVisited = () => {
+    toggleVisitedPlace(place.id);
+    if (onPlaceUpdated) onPlaceUpdated();
+  };
 
   const handleShare = async () => {
     const shareData = {
@@ -43,7 +55,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
       url: window.location.href,
     };
 
-    if (navigator.share) {
+    if (typeof navigator !== 'undefined' && navigator.share) {
       try {
         await navigator.share(shareData);
       } catch {
@@ -67,6 +79,8 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
     window.open(`https://www.google.com/maps/search/?api=1&query=${query}`, '_blank', 'noopener,noreferrer');
   };
 
+  const reports = place.experienceReports || [];
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-md"
@@ -74,17 +88,17 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
       aria-modal="true"
       aria-labelledby="place-details-title"
     >
-      <div
-        className="w-full sm:max-w-2xl max-h-[92vh] sm:max-h-[88vh] bg-[#101216] border-t sm:border border-white/[0.1] rounded-t-3xl sm:rounded-2xl overflow-y-auto no-scrollbar shadow-2xl flex flex-col animate-in fade-in slide-in-from-bottom-6 duration-200"
-      >
+      <div className="w-full sm:max-w-2xl max-h-[92vh] sm:max-h-[88vh] bg-[#101216] border-t sm:border border-white/[0.1] rounded-t-3xl sm:rounded-2xl overflow-y-auto no-scrollbar shadow-2xl flex flex-col animate-in fade-in slide-in-from-bottom-6 duration-200">
         {/* Sticky Mobile Drag & Close Bar */}
-        <div className="sticky top-0 z-20 bg-[#101216]/90 backdrop-blur-md px-4 py-3 border-b border-white/[0.08] flex items-center justify-between">
+        <div className="sticky top-0 z-20 bg-[#101216]/95 backdrop-blur-md px-4 py-3 border-b border-white/[0.08] flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="text-xs font-semibold uppercase tracking-wider text-[#ccff00]">
               {place.category}
             </span>
             <span className="text-zinc-600">·</span>
             <span className="text-xs text-zinc-400 font-mono">{formatDistance(place.distanceKm)}</span>
+            <span className="text-zinc-600">·</span>
+            <span className="text-xs text-zinc-400 font-medium">{place.district}</span>
           </div>
 
           <div className="flex items-center gap-1.5">
@@ -118,10 +132,10 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
           </div>
         </div>
 
-        {/* Hero Media */}
+        {/* Hero Media Container */}
         <div className="relative aspect-[16/9] w-full bg-zinc-900 overflow-hidden shrink-0">
           <img
-            src={place.images[activeImageIndex] || place.images[0]}
+            src={place.images[0]}
             alt={place.name}
             className="w-full h-full object-cover"
             referrerPolicy="no-referrer"
@@ -139,6 +153,42 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
             <span className="text-zinc-500">·</span>
             <span className="text-zinc-300 font-normal">{place.openingHours.hoursText}</span>
           </div>
+
+          {/* Confidence Badge */}
+          <div className="absolute top-4 left-4 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/75 backdrop-blur-md border border-white/10 text-[11px] font-bold text-white">
+            <span className="text-[#ccff00] font-mono">{place.communityScore}%</span>
+            <span>·</span>
+            <span>{place.communityConfidence} Confidence</span>
+          </div>
+        </div>
+
+        {/* Header Tabs: Overview vs Community Experiences */}
+        <div className="px-5 pt-3 border-b border-white/[0.06] flex items-center gap-4">
+          <button
+            type="button"
+            onClick={() => setActiveTab('overview')}
+            className={`pb-2.5 text-xs font-bold border-b-2 transition-colors ${
+              activeTab === 'overview'
+                ? 'border-[#ccff00] text-white'
+                : 'border-transparent text-zinc-400 hover:text-zinc-200'
+            }`}
+          >
+            Overview & Vibe
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('experiences')}
+            className={`pb-2.5 text-xs font-bold border-b-2 transition-colors flex items-center gap-1.5 ${
+              activeTab === 'experiences'
+                ? 'border-[#ccff00] text-white'
+                : 'border-transparent text-zinc-400 hover:text-zinc-200'
+            }`}
+          >
+            <span>See Community Experiences</span>
+            <span className="px-1.5 py-0.2 rounded-full bg-white/[0.08] text-[10px] font-mono">
+              {reports.length}
+            </span>
+          </button>
         </div>
 
         {/* Content Body */}
@@ -149,133 +199,205 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
             </div>
           )}
 
-          {/* Title & Core Stats */}
+          {/* Title & Core Location Info */}
           <div>
             <h1 id="place-details-title" className="text-xl sm:text-2xl font-black text-white tracking-tight">
               {place.name}
             </h1>
             <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-400 mt-2 font-medium">
-              <span className="text-zinc-200">{place.neighborhood}</span>
+              <span className="text-zinc-200 font-semibold">{place.neighborhood}</span>
+              <span aria-hidden="true" className="text-zinc-600">·</span>
+              <span className="text-zinc-300">{place.district}, {place.division}</span>
               <span aria-hidden="true" className="text-zinc-600">·</span>
               <span className="text-[#ccff00] font-semibold">{place.priceLevel.label}</span>
               <span aria-hidden="true" className="text-zinc-600">·</span>
               <span>{place.environment}</span>
-              <span aria-hidden="true" className="text-zinc-600">·</span>
-              <span>{place.address}</span>
             </div>
           </div>
 
-          {/* Why This Pick / Context Callout */}
-          <div className="p-4 rounded-xl bg-white/[0.03] border border-white/[0.08]">
-            <div className="flex items-center gap-1.5 text-xs font-bold text-[#ccff00] mb-1">
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>WHY OUTERA RECOMMENDS THIS</span>
-            </div>
-            <p className="text-xs text-zinc-300 leading-relaxed font-medium">
-              {place.whyPick}
-            </p>
-          </div>
-
-          {/* Description */}
-          <div>
-            <h2 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-2">About The Spot</h2>
-            <p className="text-xs sm:text-sm text-zinc-300 leading-relaxed">
-              {place.fullDescription}
-            </p>
-          </div>
-
-          {/* Highlights */}
-          {place.highlights && place.highlights.length > 0 && (
+          {/* "I'VE BEEN HERE" Action Banner */}
+          <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/[0.08] flex items-center justify-between gap-4">
             <div>
-              <h2 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-2.5">Key Highlights</h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {place.highlights.map((item) => (
-                  <div
-                    key={item}
-                    className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.06] flex items-center gap-2.5 text-xs text-zinc-200"
-                  >
-                    <CheckCircle2 className="w-4 h-4 text-[#ccff00] shrink-0" />
-                    <span>{item}</span>
-                  </div>
-                ))}
+              <div className="flex items-center gap-1.5">
+                <CheckCircle2 className={`w-4 h-4 ${userHasVisited ? 'text-[#ccff00]' : 'text-zinc-400'}`} />
+                <span className="text-xs font-bold text-white">
+                  {userHasVisited ? "You've marked this place as visited" : "Have you been to this spot?"}
+                </span>
+              </div>
+              <p className="text-[11px] text-zinc-400 mt-0.5">
+                {place.verifiedVisitorsCount} community members have explored here. Marking a visit gives your observations double weight.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleToggleVisited}
+              className={`h-9 px-4 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 border ${
+                userHasVisited
+                  ? 'bg-[#ccff00] text-black border-[#ccff00] shadow-sm'
+                  : 'bg-white/[0.05] text-zinc-200 hover:text-white border-white/[0.1] hover:bg-white/[0.09]'
+              }`}
+            >
+              {userHasVisited ? (
+                <>
+                  <Check className="w-3.5 h-3.5 stroke-[3]" />
+                  <span>Visited</span>
+                </>
+              ) : (
+                <span>I've Been Here</span>
+              )}
+            </button>
+          </div>
+
+          {/* Event Banner if applicable */}
+          {place.isEvent && place.eventInfo && (
+            <div className="p-4 rounded-xl bg-purple-500/10 border border-purple-500/30 flex items-start gap-3">
+              <Calendar className="w-5 h-5 text-purple-400 shrink-0 mt-0.5" />
+              <div className="text-xs space-y-1">
+                <span className="font-bold text-purple-200 block uppercase tracking-wider text-[10px]">
+                  Upcoming Special Event
+                </span>
+                <p className="text-white font-bold">{place.eventInfo.date} · {place.eventInfo.schedule}</p>
+                <p className="text-zinc-300 font-normal">{place.eventInfo.entryPass}</p>
               </div>
             </div>
           )}
 
-          {/* Community Experience Insights (Major Core Feature) */}
-          <div className="p-5 rounded-2xl bg-[#14171d] border border-white/[0.08] space-y-4">
-            <div className="flex items-center justify-between border-b border-white/[0.06] pb-3">
-              <div>
-                <h2 className="text-sm font-bold text-white tracking-tight flex items-center gap-2">
-                  <Users className="w-4 h-4 text-[#ccff00]" />
-                  <span>Community Experience Insights</span>
-                </h2>
-                <p className="text-[11px] text-zinc-400 mt-0.5">
-                  Based on {place.totalReports} visitor reports
+          {activeTab === 'overview' ? (
+            <>
+              {/* Why This Pick / Context Callout */}
+              <div className="p-4 rounded-xl bg-white/[0.03] border border-white/[0.08]">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-[#ccff00] mb-1">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>WHY OUTERA RECOMMENDS THIS</span>
+                </div>
+                <p className="text-xs text-zinc-300 leading-relaxed font-medium">
+                  {place.whyPick}
                 </p>
               </div>
 
-              <div className="text-right">
-                <span className="text-xl font-extrabold text-[#ccff00] font-mono tabular-nums">
-                  {place.communityScore}%
-                </span>
-                <span className="block text-[10px] text-zinc-400 uppercase font-semibold">
-                  Worth Visiting
-                </span>
+              {/* Description */}
+              <div>
+                <h2 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-2">About The Spot</h2>
+                <p className="text-xs sm:text-sm text-zinc-300 leading-relaxed">
+                  {place.fullDescription}
+                </p>
               </div>
-            </div>
 
-            {/* Aggregated Community Metrics Grid */}
-            <div className="grid grid-cols-3 gap-2.5 text-center">
-              <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.05]">
-                <span className="text-[10px] uppercase font-bold text-zinc-400 block mb-1">Crowd</span>
-                <span className="text-xs font-bold text-white">{place.userReportsBreakdown.mostCommonCrowd}</span>
-              </div>
-              <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.05]">
-                <span className="text-[10px] uppercase font-bold text-zinc-400 block mb-1">Vibe</span>
-                <span className="text-xs font-bold text-white">{place.userReportsBreakdown.mostCommonVibe}</span>
-              </div>
-              <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.05]">
-                <span className="text-[10px] uppercase font-bold text-zinc-400 block mb-1">Pricing</span>
-                <span className="text-xs font-bold text-white">{place.userReportsBreakdown.mostCommonPrice}</span>
-              </div>
-            </div>
-
-            {/* Aggregated prose quote */}
-            <div className="text-xs text-zinc-300 italic bg-white/[0.02] p-3 rounded-xl border border-white/[0.04]">
-              “People say this place is: {place.communityScore}% worth visiting,{' '}
-              {place.userReportsBreakdown.mostCommonCrowd.toLowerCase()} crowd, good for{' '}
-              {place.groupFit.join(' and ').toLowerCase()}, and mostly {place.priceLevel.label}.”
-            </div>
-
-            {/* Recent Real Experience Comments */}
-            {place.userReportsBreakdown.recentComments.length > 0 && (
-              <div className="space-y-2 pt-2">
-                <p className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Recent Experiences</p>
-                {place.userReportsBreakdown.recentComments.map((comment, i) => (
-                  <div key={i} className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.04] text-xs">
-                    <p className="text-zinc-200 leading-relaxed font-normal">“{comment.text}”</p>
-                    <div className="flex items-center justify-between text-[11px] text-zinc-400 mt-2 font-medium">
-                      <span>Vibe: {comment.vibe}</span>
-                      <span>{comment.timeAgo}</span>
-                    </div>
+              {/* COMMUNITY CONSENSUS SECTION */}
+              <div className="p-5 rounded-2xl bg-[#14171d] border border-white/[0.08] space-y-4">
+                <div className="flex items-center justify-between border-b border-white/[0.06] pb-3">
+                  <div>
+                    <h2 className="text-xs font-bold uppercase tracking-wider text-[#ccff00]">
+                      COMMUNITY SAYS
+                    </h2>
+                    <p className="text-sm font-extrabold text-white mt-0.5">
+                      Aggregated Community Observations
+                    </p>
                   </div>
-                ))}
+                  <span className="text-xs text-zinc-400 font-medium">
+                    Based on {place.totalReports} experiences
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-center">
+                  <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.05]">
+                    <span className="text-sm block mb-1">💰</span>
+                    <span className="text-[10px] uppercase font-bold text-zinc-400 block mb-0.5">Price</span>
+                    <span className="text-xs font-bold text-white">
+                      {place.priceLevel.min <= 150 ? 'Mostly affordable' : place.priceLevel.min <= 350 ? 'Fair pricing' : 'Moderate'}
+                    </span>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.05]">
+                    <span className="text-sm block mb-1">👥</span>
+                    <span className="text-[10px] uppercase font-bold text-zinc-400 block mb-0.5">Crowd</span>
+                    <span className="text-xs font-bold text-white">Usually {place.crowdLevel.toLowerCase()}</span>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.05]">
+                    <span className="text-sm block mb-1">✨</span>
+                    <span className="text-[10px] uppercase font-bold text-zinc-400 block mb-0.5">Vibe</span>
+                    <span className="text-xs font-bold text-white">{place.primaryVibe}</span>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.05]">
+                    <span className="text-sm block mb-1">🔄</span>
+                    <span className="text-[10px] uppercase font-bold text-zinc-400 block mb-0.5">Would return</span>
+                    <span className="text-xs font-bold text-[#ccff00] font-mono">{place.communityScore}%</span>
+                  </div>
+                </div>
+
+                <p className="text-[11px] text-zinc-400 italic">
+                  *These are aggregated community observations, not absolute facts.
+                </p>
               </div>
-            )}
 
-            {/* Button to submit feedback */}
-            <button
-              type="button"
-              onClick={() => onOpenReportModal(place)}
-              className="w-full h-11 rounded-xl bg-white/[0.05] hover:bg-white/[0.09] active:scale-[0.98] border border-white/[0.1] text-xs font-bold text-white flex items-center justify-center gap-2 transition-all"
-            >
-              <MessageSquarePlus className="w-4 h-4 text-[#ccff00]" />
-              <span>Log Your Experience (30s)</span>
-            </button>
-          </div>
+              {/* Highlights */}
+              {place.highlights && place.highlights.length > 0 && (
+                <div>
+                  <h2 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-2.5">Key Highlights</h2>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {place.highlights.map((item) => (
+                      <div
+                        key={item}
+                        className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.06] flex items-center gap-2.5 text-xs text-zinc-200"
+                      >
+                        <CheckCircle2 className="w-4 h-4 text-[#ccff00] shrink-0" />
+                        <span>{item}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            /* EXPERIENCES & VERIFICATION TAB */
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Users className="w-4 h-4 text-[#ccff00]" />
+                    <span>Community Verified Experiences</span>
+                  </h2>
+                  <p className="text-xs text-zinc-400 mt-0.5">
+                    Peer-verified observations. Did your experience match these?
+                  </p>
+                </div>
 
-          {/* Location & Map Direction Simulation */}
+                <button
+                  type="button"
+                  onClick={() => onOpenReportModal(place)}
+                  className="h-9 px-3 rounded-xl bg-[#ccff00] text-black font-extrabold text-xs uppercase tracking-wider flex items-center gap-1.5"
+                >
+                  <MessageSquarePlus className="w-3.5 h-3.5" />
+                  <span>Log Yours</span>
+                </button>
+              </div>
+
+              {reports.length > 0 ? (
+                <div className="space-y-3">
+                  {reports.map((report) => (
+                    <ExperienceVerificationItem
+                      key={report.id}
+                      report={report}
+                      placeId={place.id}
+                      isUserVerifiedVisitor={userHasVisited}
+                      onVerificationUpdated={() => {
+                        if (onPlaceUpdated) onPlaceUpdated();
+                      }}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="p-6 rounded-2xl bg-white/[0.02] border border-white/[0.05] text-center">
+                  <p className="text-xs text-zinc-400">Be the first to log a community experience for this spot!</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Map Direction Bar */}
           <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/[0.08] space-y-3">
             <div className="flex items-start justify-between">
               <div>
@@ -283,7 +405,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
                   <Navigation className="w-4 h-4 text-[#ccff00]" />
                   <span>{place.address}</span>
                 </p>
-                <p className="text-xs text-zinc-400 mt-0.5">{place.neighborhood}, {place.city}</p>
+                <p className="text-xs text-zinc-400 mt-0.5">{place.neighborhood}, {place.district}</p>
               </div>
               <span className="text-xs font-mono text-[#ccff00] font-semibold">
                 {formatDistance(place.distanceKm)}
@@ -296,7 +418,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
               className="w-full h-11 rounded-xl bg-white/[0.06] hover:bg-white/[0.1] active:scale-[0.98] border border-white/[0.08] text-xs font-bold text-white flex items-center justify-center gap-2 transition-all"
             >
               <Compass className="w-4 h-4 text-[#ccff00]" />
-              <span>Open in Maps & Get Directions</span>
+              <span>Get Directions</span>
             </button>
           </div>
         </div>

@@ -37,12 +37,22 @@ export const CommunityFeedbackModal: React.FC<CommunityFeedbackModalProps> = ({
       id: `report-${Date.now()}`,
       placeId: place.id,
       createdAt: Date.now(),
+      authorName: 'You',
+      authorHandle: '@you',
+      isVerifiedVisitor: true,
       price,
       crowd,
       vibe,
       wouldGoAgain,
       comment: comment.trim() || undefined,
-      authorName: 'You',
+      verification: {
+        mostlyCount: 1,
+        partlyCount: 0,
+        notReallyCount: 0,
+        totalResponses: 1,
+        confidence: 'High',
+        commonDifferences: [],
+      },
     };
 
     onSubmit(newReport);
