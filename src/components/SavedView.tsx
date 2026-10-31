@@ -12,6 +12,8 @@ interface SavedViewProps {
   onSelectPlace: (place: PlaceWithDistance) => void;
   onGoToDiscover: () => void;
   onRefreshCollections: () => void;
+  isAuthenticated?: boolean;
+  onOpenAuthModal?: () => void;
 }
 
 export const SavedView: React.FC<SavedViewProps> = ({
@@ -21,10 +23,34 @@ export const SavedView: React.FC<SavedViewProps> = ({
   onSelectPlace,
   onGoToDiscover,
   onRefreshCollections,
+  isAuthenticated = false,
+  onOpenAuthModal,
 }) => {
   const [activeCollectionId, setActiveCollectionId] = useState<string | 'all'>('all');
   const [newCollectionName, setNewCollectionName] = useState('');
   const [isCreating, setIsCreating] = useState(false);
+
+  if (!isAuthenticated) {
+    return (
+      <div className="w-full px-4 sm:px-6 py-16 max-w-md mx-auto text-center space-y-4">
+        <div className="p-8 rounded-3xl bg-white/[0.02] border border-white/[0.06] space-y-4">
+          <Bookmark className="w-10 h-10 text-[#ccff00] mx-auto" />
+          <h2 className="text-xl font-black text-white tracking-tight">Your Scout Vault</h2>
+          <p className="text-xs text-zinc-400 leading-relaxed">
+            Create an account to save places, build custom outing lists, and sync your discoveries across devices.
+          </p>
+          <button
+            type="button"
+            onClick={onOpenAuthModal}
+            className="h-11 px-6 rounded-xl bg-[#ccff00] text-black font-extrabold text-xs uppercase tracking-wider inline-flex items-center gap-2 hover:bg-[#d8ff33] transition-all"
+          >
+            <span>Join OUTERA</span>
+            <ArrowRight className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const displayedPlaces =
     activeCollectionId === 'all'

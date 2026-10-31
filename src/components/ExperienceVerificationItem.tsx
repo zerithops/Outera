@@ -24,6 +24,8 @@ interface ExperienceVerificationItemProps {
   placeId: string;
   isUserVerifiedVisitor: boolean;
   onVerificationUpdated: () => void;
+  isAuthenticated?: boolean;
+  onRequireAuth?: (action: string) => void;
 }
 
 export const ExperienceVerificationItem: React.FC<ExperienceVerificationItemProps> = ({
@@ -31,6 +33,8 @@ export const ExperienceVerificationItem: React.FC<ExperienceVerificationItemProp
   placeId,
   isUserVerifiedVisitor,
   onVerificationUpdated,
+  isAuthenticated = false,
+  onRequireAuth,
 }) => {
   const existingVote = getUserVerificationForReport(report.id);
   const [selectedResponse, setSelectedResponse] = useState<VerificationResponseOption | null>(
@@ -68,6 +72,10 @@ export const ExperienceVerificationItem: React.FC<ExperienceVerificationItemProp
   ];
 
   const handleResponseClick = (choice: VerificationResponseOption) => {
+    if (!isAuthenticated && onRequireAuth) {
+      onRequireAuth('verify community reviews');
+      return;
+    }
     setSelectedResponse(choice);
     if (choice === 'Mostly') {
       submitVerificationAction(report.id, placeId, 'Mostly');

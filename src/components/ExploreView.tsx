@@ -17,6 +17,7 @@ interface ExploreViewProps {
   onToggleSave: (e: React.MouseEvent, id: string) => void;
   onSelectPlace: (place: PlaceWithDistance) => void;
   onOpenLocationModal: () => void;
+  onSuggestPlace?: () => void;
 }
 
 export const ExploreView: React.FC<ExploreViewProps> = ({
@@ -28,6 +29,7 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
   onToggleSave,
   onSelectPlace,
   onOpenLocationModal,
+  onSuggestPlace,
 }) => {
   const [viewMode, setViewMode] = useState<'grid' | 'map'>('grid');
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
@@ -156,8 +158,7 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
               />
             ))}
           </div>
-        ) : (
-          /* Empty State */
+        ) : filters.searchQuery || filters.selectedCategory !== 'all' || filters.openNowOnly ? (
           <div className="py-16 px-4 rounded-2xl bg-white/[0.02] border border-white/[0.06] text-center max-w-md mx-auto my-6">
             <SlidersHorizontal className="w-10 h-10 text-zinc-500 mx-auto mb-3" />
             <h2 className="text-base font-bold text-white">No spots match your exact filters</h2>
@@ -183,6 +184,23 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
             >
               Reset All Filters
             </button>
+          </div>
+        ) : (
+          <div className="py-16 px-4 rounded-2xl bg-white/[0.02] border border-white/[0.06] text-center max-w-md mx-auto my-6 space-y-3">
+            <MapPin className="w-10 h-10 text-zinc-500 mx-auto mb-2" />
+            <h2 className="text-base font-bold text-white">Nothing around you yet</h2>
+            <p className="text-xs text-zinc-400 leading-relaxed">
+              OUTERA is still growing here. Be the first to add a place in {currentLocation.neighborhoodName}.
+            </p>
+            {onSuggestPlace && (
+              <button
+                type="button"
+                onClick={onSuggestPlace}
+                className="mt-2 px-5 py-2.5 rounded-xl bg-[#ccff00] text-black font-extrabold text-xs uppercase tracking-wider inline-flex items-center gap-2 hover:bg-[#d8ff33] transition-all"
+              >
+                <span>Suggest a place</span>
+              </button>
+            )}
           </div>
         )
       ) : (

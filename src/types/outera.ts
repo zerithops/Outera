@@ -34,7 +34,7 @@ export type MarkerState =
   | 'HiddenGem'
   | 'CommunityReviewed';
 
-export type CommunityConfidenceLevel = 'High' | 'Mixed' | 'Low';
+export type CommunityConfidenceLevel = 'High' | 'Mixed' | 'Low' | 'Insufficient Data';
 
 export type VerificationResponseOption = 'Mostly' | 'Partly' | 'Not really';
 

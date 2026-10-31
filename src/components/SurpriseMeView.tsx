@@ -17,6 +17,7 @@ interface SurpriseMeViewProps {
   isSaved: boolean;
   onToggleSave: (id: string) => void;
   onSelectPlace: (place: PlaceWithDistance) => void;
+  onSuggestPlace?: () => void;
 }
 
 export const SurpriseMeView: React.FC<SurpriseMeViewProps> = ({
@@ -25,6 +26,7 @@ export const SurpriseMeView: React.FC<SurpriseMeViewProps> = ({
   isSaved,
   onToggleSave,
   onSelectPlace,
+  onSuggestPlace,
 }) => {
   const [animating, setAnimating] = useState(false);
   const [currentRecommendation, setCurrentRecommendation] = useState<{
@@ -34,10 +36,18 @@ export const SurpriseMeView: React.FC<SurpriseMeViewProps> = ({
 
   // Generate on mount or location change
   useEffect(() => {
-    rollRecommendation();
-  }, [userLocation.neighborhoodName]);
+    if (places.length > 0) {
+      rollRecommendation();
+    } else {
+      setCurrentRecommendation(null);
+    }
+  }, [userLocation.neighborhoodName, places.length]);
 
   const rollRecommendation = () => {
+    if (places.length === 0) {
+      setCurrentRecommendation(null);
+      return;
+    }
     setAnimating(true);
     setTimeout(() => {
       const rec = getSurpriseRecommendation(
@@ -68,6 +78,30 @@ export const SurpriseMeView: React.FC<SurpriseMeViewProps> = ({
 
   const currentPlace = currentRecommendation?.place;
 
+  if (places.length === 0) {
+    return (
+      <div className="min-h-[80vh] flex flex-col items-center justify-center px-4 py-8 max-w-md mx-auto text-center">
+        <div className="p-8 rounded-3xl bg-white/[0.02] border border-white/[0.06] space-y-4 w-full">
+          <Sparkles className="w-10 h-10 text-[#ccff00] mx-auto" />
+          <h2 className="text-xl font-black text-white tracking-tight">Nothing around you yet</h2>
+          <p className="text-xs text-zinc-400 leading-relaxed max-w-xs mx-auto">
+            OUTERA is still growing here. Be the first to suggest a hangout spot in {userLocation.neighborhoodName}!
+          </p>
+          {onSuggestPlace && (
+            <button
+              type="button"
+              onClick={onSuggestPlace}
+              className="mt-2 h-11 px-6 rounded-xl bg-[#ccff00] text-black font-extrabold text-xs uppercase tracking-wider inline-flex items-center gap-2 hover:bg-[#d8ff33] transition-all"
+            >
+              <span>Suggest a place</span>
+              <ArrowRight className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-[82vh] flex flex-col items-center justify-center px-4 py-8 max-w-lg mx-auto">
       {/* Top Banner Tag */}
@@ -93,7 +127,7 @@ export const SurpriseMeView: React.FC<SurpriseMeViewProps> = ({
             <span className="absolute w-14 h-14 rounded-full border border-[#ccff00]/60 animate-spin" />
             <Sparkles className="w-8 h-8 text-[#ccff00]" />
           </div>
-          <p className="text-sm font-bold text-white mt-6">Filtering through 50+ local spots...</p>
+          <p className="text-sm font-bold text-white mt-6">Scanning discovered spots...</p>
           <p className="text-xs text-zinc-500 mt-1">Checking distance & live community scores</p>
         </div>
       ) : currentPlace ? (

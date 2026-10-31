@@ -1,4 +1,5 @@
 import {
+  CommunityConfidenceLevel,
   CommunityVerificationAction,
   DifferenceReason,
   ExperienceReport,
@@ -7,7 +8,6 @@ import {
   SavedCollection,
   VerificationResponseOption,
 } from '../types/outera';
-import { INITIAL_PLACES } from '../data/mockPlaces';
 import {
   savePlaceToSupabase,
   unsavePlaceFromSupabase,
@@ -42,29 +42,14 @@ export interface UserProfile {
 }
 
 export const DEFAULT_PROFILE: UserProfile = {
-  name: 'Samir Hasan',
-  handle: '@samir.out',
+  name: '',
+  handle: '',
   vibePreference: 'Chill & Social',
   budgetPreference: 'Under ৳500',
-  avatarSeed: 'outera-user-1',
+  avatarSeed: '',
 };
 
-export const DEFAULT_COLLECTIONS: SavedCollection[] = [
-  {
-    id: 'col-1',
-    name: 'Weekend with the crew',
-    description: 'High energy games, sea breezes, and rooftop bites.',
-    placeIds: ['place-1', 'place-11', 'place-10'],
-    createdAt: Date.now() - 86400000 * 2,
-  },
-  {
-    id: 'col-2',
-    name: 'Scenic nature escapes',
-    description: 'Serene mountain viewpoints, cloud decks and tea gardens.',
-    placeIds: ['place-12', 'place-13', 'place-14', 'place-15'],
-    createdAt: Date.now() - 86400000 * 5,
-  },
-];
+export const DEFAULT_COLLECTIONS: SavedCollection[] = [];
 
 function isStorageAvailable(): boolean {
   try {
@@ -76,13 +61,13 @@ function isStorageAvailable(): boolean {
 
 // ----------------- Saved Places -----------------
 export function getSavedPlaceIds(): string[] {
-  if (!isStorageAvailable()) return ['place-1', 'place-12'];
+  if (!isStorageAvailable()) return [];
   try {
     const raw = window.localStorage.getItem(STORAGE_KEYS.SAVED_PLACES);
-    if (!raw) return ['place-1', 'place-12'];
+    if (!raw) return [];
     return JSON.parse(raw);
   } catch {
-    return ['place-1', 'place-12'];
+    return [];
   }
 }
 
@@ -114,13 +99,13 @@ export function toggleSavePlace(placeId: string): string[] {
 
 // ----------------- Visited Places ("I've Been Here") -----------------
 export function getVisitedPlaceIds(): string[] {
-  if (!isStorageAvailable()) return ['place-1', 'place-11'];
+  if (!isStorageAvailable()) return [];
   try {
     const raw = window.localStorage.getItem(STORAGE_KEYS.VISITED_PLACES);
-    if (!raw) return ['place-1', 'place-11']; // Seed demo visits
+    if (!raw) return [];
     return JSON.parse(raw);
   } catch {
-    return ['place-1', 'place-11'];
+    return [];
   }
 }
 
@@ -332,12 +317,16 @@ export function saveUserProfile(profile: Partial<UserProfile>): UserProfile {
 }
 
 // ----------------- Augmented Places Aggregation -----------------
-export function getAugmentedPlaces(): Place[] {
+export function getAugmentedPlaces(basePlaces: Place[] = []): Place[] {
+  if (!basePlaces || basePlaces.length === 0) {
+    return [];
+  }
+
   const userReports = getUserExperienceReports();
   const userVerifications = getCommunityVerifications();
   const visitedPlaceIds = getVisitedPlaceIds();
 
-  return INITIAL_PLACES.map((place) => {
+  return basePlaces.map((place) => {
     // Add locally submitted reports
     const localPlaceReports = userReports.filter((r) => r.placeId === place.id);
     const combinedReports = [...localPlaceReports, ...(place.experienceReports || [])];
@@ -371,11 +360,15 @@ export function getAugmentedPlaces(): Place[] {
       const totalResponses = mostly + partly + notReally;
       const mostlyRatio = totalResponses > 0 ? mostly / totalResponses : 1;
 
-      let confidence: 'High' | 'Mixed' | 'Low' = 'High';
-      if (totalResponses >= 5) {
-        if (mostlyRatio >= 0.75) confidence = 'High';
-        else if (mostlyRatio >= 0.45) confidence = 'Mixed';
-        else confidence = 'Low';
+      let confidence: 'High' | 'Mixed' | 'Low' | 'Insufficient Data' = 'High';
+      if (totalResponses < 3) {
+        confidence = 'Insufficient Data';
+      } else if (mostlyRatio >= 0.75) {
+        confidence = 'High';
+      } else if (mostlyRatio >= 0.45) {
+        confidence = 'Mixed';
+      } else {
+        confidence = 'Low';
       }
 
       const commonDifferences: { reason: DifferenceReason; count: number }[] = [];
@@ -410,7 +403,7 @@ export function getAugmentedPlaces(): Place[] {
       0
     );
 
-    let communityConfidence: 'High' | 'Mixed' | 'Low' = place.communityConfidence;
+    let communityConfidence: CommunityConfidenceLevel = place.communityConfidence;
     if (totalVerifications > 10) {
       const agreementRate = mostlyTotal / totalVerifications;
       if (agreementRate >= 0.8) communityConfidence = 'High';

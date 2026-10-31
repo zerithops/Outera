@@ -34,12 +34,19 @@ export const POPULAR_NEIGHBORHOODS: { name: string; city: string; coords: Coordi
 ];
 
 export const DEFAULT_LOCATION: UserLocation = {
-  coords: POPULAR_NEIGHBORHOODS[0].coords,
-  neighborhoodName: POPULAR_NEIGHBORHOODS[0].name,
-  district: 'Dhaka',
+  coords: { lat: 23.8103, lng: 90.4125 }, // Center of Bangladesh
+  neighborhoodName: 'Choose your area',
+  district: 'Select Location',
   division: 'Dhaka',
   isCustomManual: false,
 };
+
+export function isLocationChosen(location: UserLocation): boolean {
+  return (
+    location.neighborhoodName !== 'Choose your area' &&
+    location.district !== 'Select Location'
+  );
+}
 
 /**
  * Calculates distance in kilometers between two GPS coordinates using Haversine formula

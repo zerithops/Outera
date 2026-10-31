@@ -106,6 +106,203 @@ export async function signOut() {
 }
 
 // -------------------------------------------------------------
+// ENHANCED PRODUCTION AUTH HELPERS
+// -------------------------------------------------------------
+
+export async function isUsernameAvailable(username: string): Promise<boolean> {
+  const clean = username.replace(/^@/, '').trim().toLowerCase();
+  if (!clean || clean.length < 3) return false;
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id')
+      .or(`handle.eq.@${clean},handle.eq.${clean}`)
+      .limit(1);
+
+    if (error) {
+      // If table query fails, fail safely
+      return true;
+    }
+    return !data || data.length === 0;
+  } catch {
+    return true;
+  }
+}
+
+export async function registerUser({
+  email,
+  password,
+  displayName,
+  username,
+}: {
+  email: string;
+  password: string;
+  displayName: string;
+  username: string;
+}): Promise<{
+  success: boolean;
+  user?: SupabaseUser | null;
+  session?: Session | null;
+  requiresEmailVerification?: boolean;
+  error?: string;
+}> {
+  try {
+    const cleanUsername = username.replace(/^@/, '').trim().toLowerCase();
+
+    // Check username availability first
+    const available = await isUsernameAvailable(cleanUsername);
+    if (!available) {
+      return { success: false, error: 'That username is already taken.' };
+    }
+
+    const { data, error } = await supabase.auth.signUp({
+      email: email.trim(),
+      password,
+      options: {
+        data: {
+          name: displayName.trim(),
+          display_name: displayName.trim(),
+          username: cleanUsername,
+          handle: `@${cleanUsername}`,
+        },
+      },
+    });
+
+    if (error) {
+      let friendly = error.message;
+      if (error.message.toLowerCase().includes('password')) {
+        friendly = 'Password must be at least 6 characters.';
+      } else if (
+        error.message.toLowerCase().includes('already registered') ||
+        error.message.toLowerCase().includes('user already exists')
+      ) {
+        friendly = 'An account with this email already exists. Try signing in.';
+      }
+      return { success: false, error: friendly };
+    }
+
+    // Upsert into profiles table
+    if (data.user) {
+      try {
+        await supabase.from('profiles').upsert({
+          id: data.user.id,
+          user_id: data.user.id,
+          name: displayName.trim(),
+          handle: `@${cleanUsername}`,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+      } catch (profileErr) {
+        console.warn('Profile creation note:', profileErr);
+      }
+    }
+
+    return {
+      success: true,
+      user: data.user,
+      session: data.session,
+      requiresEmailVerification: !data.session,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err?.message || 'Could not complete registration. Please try again.',
+    };
+  }
+}
+
+export async function signInUser(
+  email: string,
+  password: string
+): Promise<{
+  success: boolean;
+  user?: SupabaseUser | null;
+  session?: Session | null;
+  error?: string;
+}> {
+  try {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    });
+
+    if (error) {
+      let friendly = 'That email or password is incorrect.';
+      if (
+        error.message.toLowerCase().includes('email not confirmed') ||
+        error.message.toLowerCase().includes('confirm your email')
+      ) {
+        friendly = 'Please verify your email before signing in.';
+      } else if (error.message.toLowerCase().includes('rate limit')) {
+        friendly = 'Too many attempts. Please wait a moment and try again.';
+      }
+      return { success: false, error: friendly };
+    }
+
+    return { success: true, user: data.user, session: data.session };
+  } catch {
+    return { success: false, error: 'That email or password is incorrect.' };
+  }
+}
+
+export async function sendPasswordResetEmail(
+  email: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const trimmed = email.trim();
+    if (!trimmed) {
+      return { success: false, error: 'Please enter a valid email address.' };
+    }
+    const { error } = await supabase.auth.resetPasswordForEmail(trimmed);
+    if (error) {
+      return { success: false, error: error.message };
+    }
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to send reset link.' };
+  }
+}
+
+export async function fetchUserRealStats(userId: string): Promise<{
+  explored: number;
+  shared: number;
+  confirmed: number;
+  saved: number;
+  visited: number;
+  verifications: number;
+}> {
+  if (!userId) {
+    return { explored: 0, shared: 0, confirmed: 0, saved: 0, visited: 0, verifications: 0 };
+  }
+
+  try {
+    const [visitsRes, expRes, verRes, savedRes] = await Promise.all([
+      supabase.from('visits').select('*', { count: 'exact', head: true }).eq('user_id', userId),
+      supabase.from('experiences').select('*', { count: 'exact', head: true }).eq('user_id', userId),
+      supabase.from('experience_verifications').select('*', { count: 'exact', head: true }).eq('user_id', userId),
+      supabase.from('saved_places').select('*', { count: 'exact', head: true }).eq('user_id', userId),
+    ]);
+
+    const visitedCount = visitsRes.count || 0;
+    const sharedCount = expRes.count || 0;
+    const confirmedCount = verRes.count || 0;
+    const savedCount = savedRes.count || 0;
+
+    return {
+      explored: visitedCount,
+      shared: sharedCount,
+      confirmed: confirmedCount,
+      saved: savedCount,
+      visited: visitedCount,
+      verifications: confirmedCount,
+    };
+  } catch (err) {
+    console.warn('fetchUserRealStats error:', err);
+    return { explored: 0, shared: 0, confirmed: 0, saved: 0, visited: 0, verifications: 0 };
+  }
+}
+
+// -------------------------------------------------------------
 // 1. PROFILES TABLE
 // -------------------------------------------------------------
 export interface SupabaseProfile {
@@ -202,7 +399,7 @@ export async function fetchLocations(division?: string, district?: string): Prom
 // -------------------------------------------------------------
 // 3. PLACES & 4. PLACE_IMAGES TABLES
 // -------------------------------------------------------------
-export async function fetchPlacesFromSupabase(): Promise<Place[] | null> {
+export async function fetchPlacesFromSupabase(): Promise<Place[]> {
   try {
     const { data, error } = await supabase
       .from('places')
@@ -224,44 +421,82 @@ export async function fetchPlacesFromSupabase(): Promise<Place[] | null> {
           would_go_again,
           comment,
           approx_spend_taka,
+          mostly_count,
+          partly_count,
+          not_really_count,
           created_at
         )
       `)
       .limit(100);
 
     if (error || !data || data.length === 0) {
-      return null;
+      return [];
+    }
+
+    // Filter approved places (status === 'approved' or status is null)
+    const approvedPlaces = data.filter((row: any) => {
+      if (typeof row.status === 'string') {
+        return row.status.toLowerCase() === 'approved';
+      }
+      return true;
+    });
+
+    if (approvedPlaces.length === 0) {
+      return [];
     }
 
     // Map Supabase rows to OUTERA Place interface
-    return data.map((row: any): Place => {
+    return approvedPlaces.map((row: any): Place => {
       const images: string[] = row.place_images?.length
         ? row.place_images.map((img: any) => img.url)
-        : Array.isArray(row.images) ? row.images : [];
+        : Array.isArray(row.images)
+        ? row.images
+        : [];
 
       const rawExperiences = row.experiences || [];
-      const experienceReports: ExperienceReport[] = rawExperiences.map((exp: any): ExperienceReport => ({
-        id: exp.id,
-        placeId: exp.place_id || row.id,
-        createdAt: exp.created_at ? new Date(exp.created_at).getTime() : Date.now(),
-        authorName: exp.author_name || 'Anonymous Scout',
-        authorHandle: exp.author_handle || '@outera.user',
-        isVerifiedVisitor: !!exp.is_verified_visitor,
-        price: exp.price || 'Fair',
-        crowd: exp.crowd || 'Medium',
-        vibe: exp.vibe || 'Social',
-        wouldGoAgain: exp.would_go_again || 'Yes',
-        comment: exp.comment,
-        approxSpendTaka: exp.approx_spend_taka || undefined,
-        verification: {
-          mostlyCount: 12,
-          partlyCount: 1,
-          notReallyCount: 0,
-          totalResponses: 13,
-          confidence: 'High',
-          commonDifferences: [],
-        },
-      }));
+      const experienceReports: ExperienceReport[] = rawExperiences.map((exp: any): ExperienceReport => {
+        const mostly = Number(exp.mostly_count) || 0;
+        const partly = Number(exp.partly_count) || 0;
+        const notReally = Number(exp.not_really_count) || 0;
+        const totalResponses = mostly + partly + notReally;
+
+        let confidence: 'High' | 'Mixed' | 'Low' | 'Insufficient Data' = 'Insufficient Data';
+        if (totalResponses >= 3) {
+          const ratio = mostly / totalResponses;
+          if (ratio >= 0.75) confidence = 'High';
+          else if (ratio >= 0.45) confidence = 'Mixed';
+          else confidence = 'Low';
+        }
+
+        return {
+          id: exp.id,
+          placeId: exp.place_id || row.id,
+          createdAt: exp.created_at ? new Date(exp.created_at).getTime() : Date.now(),
+          authorName: exp.author_name || 'Anonymous Scout',
+          authorHandle: exp.author_handle || '@outera.user',
+          isVerifiedVisitor: !!exp.is_verified_visitor,
+          price: exp.price || 'Fair',
+          crowd: exp.crowd || 'Medium',
+          vibe: exp.vibe || 'Social',
+          wouldGoAgain: exp.would_go_again || 'Yes',
+          comment: exp.comment,
+          approxSpendTaka: exp.approx_spend_taka || undefined,
+          verification: {
+            mostlyCount: mostly,
+            partlyCount: partly,
+            notReallyCount: notReally,
+            totalResponses,
+            confidence,
+            commonDifferences: [],
+          },
+        };
+      });
+
+      // Calculate place level metrics
+      const verifiedVisitorsCount = Number(row.verified_visitors_count) || 0;
+      const totalReports = experienceReports.length || Number(row.total_reports) || 0;
+      let communityConfidence: 'High' | 'Mixed' | 'Low' | 'Insufficient Data' =
+        row.community_confidence || (experienceReports.length < 3 ? 'Insufficient Data' : 'High');
 
       return {
         id: row.id,
@@ -285,10 +520,10 @@ export async function fetchPlacesFromSupabase(): Promise<Place[] | null> {
           label: row.price_label || '৳150–৳450',
           symbol: row.price_symbol || '৳',
         },
-        communityScore: row.community_score || 88,
-        communityConfidence: row.community_confidence || 'High',
-        totalReports: row.total_reports || experienceReports.length,
-        verifiedVisitorsCount: row.verified_visitors_count || 14,
+        communityScore: row.community_score || (totalReports > 0 ? 85 : 0),
+        communityConfidence,
+        totalReports,
+        verifiedVisitorsCount,
         markerState: row.marker_state || 'Popular',
         isTrending: !!row.is_trending,
         isHiddenGem: !!row.is_hidden_gem,
@@ -304,12 +539,12 @@ export async function fetchPlacesFromSupabase(): Promise<Place[] | null> {
         groupFit: Array.isArray(row.group_fit) ? row.group_fit : ['Friends', 'Date'],
         environment: row.environment || 'Indoor',
         tags: Array.isArray(row.tags) ? row.tags : [],
-        images: images.length ? images : ['https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=800&q=80'],
-        whyPick: row.why_pick || 'Vibrant spot popular among local scouts.',
-        highlights: Array.isArray(row.highlights) ? row.highlights : ['Top community pick'],
+        images,
+        whyPick: row.why_pick || '',
+        highlights: Array.isArray(row.highlights) ? row.highlights : [],
         experienceReports,
         userReportsBreakdown: {
-          worthVisitingPct: row.worth_visiting_pct || 90,
+          worthVisitingPct: row.worth_visiting_pct || (totalReports > 0 ? 85 : 0),
           mostCommonCrowd: 'Medium',
           mostCommonVibe: 'Social',
           mostCommonPrice: 'Fair',
@@ -319,7 +554,7 @@ export async function fetchPlacesFromSupabase(): Promise<Place[] | null> {
     });
   } catch (err) {
     console.warn('fetchPlacesFromSupabase error:', err);
-    return null;
+    return [];
   }
 }
 
@@ -701,18 +936,30 @@ export async function submitReportToSupabase(
 // -------------------------------------------------------------
 // 16. PLACE_SUGGESTIONS TABLE
 // -------------------------------------------------------------
-export async function submitPlaceSuggestion(suggestion: {
+export interface PlaceSuggestionInput {
   name: string;
   category: string;
-  district: string;
   division: string;
+  district: string;
   address?: string;
-  notes?: string;
-}): Promise<boolean> {
+  whyWorthVisiting: string;
+  approxBudget?: string;
+  bestTimeToVisit?: string;
+}
+
+export async function submitPlaceSuggestion(suggestion: PlaceSuggestionInput): Promise<boolean> {
   try {
     const user = await getCurrentUser();
     const payload = {
-      ...suggestion,
+      name: suggestion.name,
+      category: suggestion.category,
+      division: suggestion.division,
+      district: suggestion.district,
+      address: suggestion.address || null,
+      notes: suggestion.whyWorthVisiting,
+      why_worth_visiting: suggestion.whyWorthVisiting,
+      approx_budget: suggestion.approxBudget || null,
+      best_time_to_visit: suggestion.bestTimeToVisit || null,
       user_id: user?.id || null,
       status: 'pending_review',
       created_at: new Date().toISOString(),
@@ -720,11 +967,29 @@ export async function submitPlaceSuggestion(suggestion: {
 
     const { error } = await supabase.from('place_suggestions').insert(payload);
     if (error) {
-      console.warn('submitPlaceSuggestion error:', error.message);
-      return false;
+      console.warn('submitPlaceSuggestion error, attempting fallback schema:', error.message);
+      const fallbackPayload = {
+        name: suggestion.name,
+        category: suggestion.category,
+        division: suggestion.division,
+        district: suggestion.district,
+        address: suggestion.address || null,
+        notes: `${suggestion.whyWorthVisiting}${
+          suggestion.approxBudget ? ` | Budget: ${suggestion.approxBudget}` : ''
+        }${suggestion.bestTimeToVisit ? ` | Best time: ${suggestion.bestTimeToVisit}` : ''}`,
+        user_id: user?.id || null,
+        status: 'pending_review',
+        created_at: new Date().toISOString(),
+      };
+      const { error: err2 } = await supabase.from('place_suggestions').insert(fallbackPayload);
+      if (err2) {
+        console.warn('submitPlaceSuggestion fallback notice:', err2.message);
+        return false;
+      }
     }
     return true;
-  } catch {
+  } catch (err) {
+    console.warn('submitPlaceSuggestion catch:', err);
     return false;
   }
 }

@@ -28,6 +28,8 @@ interface PlaceDetailsModalProps {
   onToggleSave: (id: string) => void;
   onOpenReportModal: (place: PlaceWithDistance) => void;
   onPlaceUpdated?: () => void;
+  isAuthenticated?: boolean;
+  onRequireAuth?: (action: string) => void;
 }
 
 export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
@@ -38,6 +40,8 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
   onToggleSave,
   onOpenReportModal,
   onPlaceUpdated,
+  isAuthenticated = false,
+  onRequireAuth,
 }) => {
   const [copied, setCopied] = useState(false);
   const [activeTab, setActiveTab] = useState<'overview' | 'experiences'>('overview');
@@ -53,11 +57,19 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
   const userHasVisited = isPlaceVisitedByUser(place.id);
 
   const handleToggleVisited = () => {
+    if (!isAuthenticated && onRequireAuth) {
+      onRequireAuth('mark places you have visited');
+      return;
+    }
     toggleVisitedPlace(place.id);
     if (onPlaceUpdated) onPlaceUpdated();
   };
 
   const handleToggleWantToTry = () => {
+    if (!isAuthenticated && onRequireAuth) {
+      onRequireAuth('save places to your Want-to-Try list');
+      return;
+    }
     const next = !wantToTry;
     setWantToTry(next);
     toggleWantToTryInSupabase(place.id);
@@ -399,7 +411,13 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
 
                 <button
                   type="button"
-                  onClick={() => onOpenReportModal(place)}
+                  onClick={() => {
+                    if (!isAuthenticated && onRequireAuth) {
+                      onRequireAuth('share your experience');
+                      return;
+                    }
+                    onOpenReportModal(place);
+                  }}
                   className="h-9 px-3 rounded-xl bg-[#ccff00] text-black font-extrabold text-xs uppercase tracking-wider flex items-center gap-1.5"
                 >
                   <MessageSquarePlus className="w-3.5 h-3.5" />
@@ -415,6 +433,8 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
                       report={report}
                       placeId={place.id}
                       isUserVerifiedVisitor={userHasVisited}
+                      isAuthenticated={isAuthenticated}
+                      onRequireAuth={onRequireAuth}
                       onVerificationUpdated={() => {
                         if (onPlaceUpdated) onPlaceUpdated();
                       }}
@@ -471,7 +491,13 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
         <div className="sticky bottom-0 z-20 bg-[#101216]/95 backdrop-blur-md p-4 border-t border-white/[0.08] flex items-center gap-2.5">
           <button
             type="button"
-            onClick={() => onToggleSave(place.id)}
+            onClick={() => {
+              if (!isAuthenticated && onRequireAuth) {
+                onRequireAuth('save places to your vault');
+                return;
+              }
+              onToggleSave(place.id);
+            }}
             className={`h-12 px-3.5 rounded-xl border flex items-center justify-center text-xs font-bold transition-all ${
               isSaved
                 ? 'bg-[#ccff00]/10 border-[#ccff00]/40 text-[#ccff00]'
