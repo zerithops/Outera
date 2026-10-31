@@ -1,34 +1,31 @@
 import React, { useState, useEffect } from 'react';
 import {
-  User,
   Compass,
   MessageSquareHeart,
   CheckCircle2,
-  Bookmark,
   LogOut,
   LogIn,
   Edit3,
-  Sliders,
   Check,
-  MapPin,
 } from 'lucide-react';
 import { UserLocation } from '../types/outera';
 import {
-  getUserProfile,
   saveUserProfile,
   UserProfile,
-  getVisitedPlaceIds,
-  getUserExperienceReports,
-  getCommunityVerifications,
+  EMPTY_GUEST_PROFILE,
+  getCachedUserProfile,
+  setCachedUserProfile,
+  clearUserProfileCache,
 } from '../services/storage';
 import {
   getCurrentUser,
   signOut,
-  fetchProfile,
+  ensureUserProfile,
   upsertProfile,
   fetchUserRealStats,
   fetchRecentActivities,
   subscribeToAuthChanges,
+  isUsernameAvailable,
 } from '../services/supabase';
 
 interface ProfileViewProps {
@@ -40,14 +37,10 @@ interface ProfileViewProps {
 }
 
 export const ProfileView: React.FC<ProfileViewProps> = ({
-  currentLocation,
-  onSelectLocation,
-  savedCount,
-  reportCount,
   onOpenAuthModal,
 }) => {
   const [authUser, setAuthUser] = useState<any>(null);
-  const [profile, setProfile] = useState<UserProfile>(() => getUserProfile());
+  const [profile, setProfile] = useState<UserProfile>(EMPTY_GUEST_PROFILE);
   const [stats, setStats] = useState({
     explored: 0,
     shared: 0,
@@ -63,44 +56,46 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [editHandle, setEditHandle] = useState('');
   const [editBio, setEditBio] = useState('');
   const [editAvatarSeed, setEditAvatarSeed] = useState('scout-1');
+  const [editError, setEditError] = useState<string | null>(null);
   const [savedSuccess, setSavedSuccess] = useState(false);
 
-  // Load auth state, user profile, and genuine stats
+  // Load auth state, genuine user profile, and real stats
   useEffect(() => {
     let isMounted = true;
 
     const loadUserData = async (user: any) => {
       setAuthUser(user);
       if (user) {
-        // Fetch real database profile
-        const dbProfile = await fetchProfile(user.id);
-        if (isMounted && dbProfile) {
-          const loadedProfile: UserProfile = {
-            name: dbProfile.name || user.user_metadata?.name || user.email?.split('@')[0] || 'Scout',
-            handle: dbProfile.handle || `@${user.user_metadata?.username || user.email?.split('@')[0]}`,
-            vibePreference: dbProfile.vibe_preference || 'Chill & Social',
-            budgetPreference: dbProfile.budget_preference || 'Under ৳500',
-            avatarSeed: dbProfile.avatar_seed || 'scout-1',
-          };
-          setProfile(loadedProfile);
-        } else if (isMounted) {
-          const fallbackName = user.user_metadata?.name || user.email?.split('@')[0] || 'Scout';
-          const fallbackHandle = `@${user.user_metadata?.username || user.email?.split('@')[0]}`;
-          setProfile((prev) => ({
-            ...prev,
-            name: fallbackName,
-            handle: fallbackHandle,
-          }));
+        // Fast-load from per-user cache to avoid UI flicker
+        const cached = getCachedUserProfile(user.id);
+        if (cached && isMounted) {
+          setProfile(cached);
         }
 
-        // Fetch real stats from Supabase
+        // Fetch or ensure genuine DB profile strictly for user.id
+        const dbProfile = await ensureUserProfile(user);
+        if (isMounted && dbProfile) {
+          const loadedProfile: UserProfile = {
+            name: dbProfile.display_name || user.user_metadata?.display_name || user.user_metadata?.name || user.email?.split('@')[0] || 'Scout',
+            handle: `@${dbProfile.username || user.user_metadata?.username || user.email?.split('@')[0] || 'scout'}`,
+            vibePreference: cached?.vibePreference || 'Chill & Social',
+            budgetPreference: cached?.budgetPreference || 'Under ৳500',
+            avatarSeed: cached?.avatarSeed || 'scout-1',
+            bio: dbProfile.bio || '',
+          };
+          setProfile(loadedProfile);
+          setCachedUserProfile(user.id, loadedProfile);
+        }
+
+        // Fetch genuine stats from Supabase
         const realStats = await fetchUserRealStats(user.id);
         if (isMounted) {
           setStats(realStats);
         }
       } else {
-        // Guest user: starts with genuine 0 across all metrics
+        // Guest user: starts with genuine 0 across all metrics and neutral guest state
         if (isMounted) {
+          setProfile(EMPTY_GUEST_PROFILE);
           setStats({
             explored: 0,
             shared: 0,
@@ -132,9 +127,11 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   }, []);
 
   const handleSignOut = async () => {
+    const userId = authUser?.id;
     await signOut();
+    clearUserProfileCache(userId);
     setAuthUser(null);
-    setProfile(getUserProfile());
+    setProfile(EMPTY_GUEST_PROFILE);
     setStats({
       explored: 0,
       shared: 0,
@@ -146,56 +143,78 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   };
 
   const handleOpenEdit = () => {
-    setEditName(profile.name || authUser?.user_metadata?.name || '');
+    setEditName(profile.name || authUser?.user_metadata?.display_name || authUser?.user_metadata?.name || '');
     setEditHandle(profile.handle.replace(/^@/, ''));
-    setEditBio('');
+    setEditBio(profile.bio || '');
     setEditAvatarSeed(profile.avatarSeed || 'scout-1');
+    setEditError(null);
     setShowEditModal(true);
   };
 
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanHandle = `@${editHandle.replace(/^@/, '').trim().toLowerCase()}`;
-    const cleanName = editName.trim() || 'Scout';
+    if (!authUser) return;
+    setEditError(null);
 
-    const updated = saveUserProfile({
-      name: cleanName,
-      handle: cleanHandle,
-      avatarSeed: editAvatarSeed,
-    });
-    setProfile(updated);
+    const cleanName = editName.trim();
+    const cleanUsername = editHandle.replace(/^@/, '').trim().toLowerCase();
 
-    if (authUser) {
-      await upsertProfile({
-        name: cleanName,
-        handle: cleanHandle,
-        avatar_seed: editAvatarSeed,
-        bio: editBio.trim() || undefined,
-      });
+    if (!cleanName) {
+      setEditError('Display name cannot be empty.');
+      return;
     }
+    if (!cleanUsername || cleanUsername.length < 3 || cleanUsername.length > 20) {
+      setEditError('Username must be between 3 and 20 characters.');
+      return;
+    }
+    if (!/^[a-z0-9_]+$/.test(cleanUsername)) {
+      setEditError('Username can only contain letters, numbers, and underscores.');
+      return;
+    }
+
+    // Check availability if username was changed
+    const currentUsername = profile.handle.replace(/^@/, '').toLowerCase();
+    if (cleanUsername !== currentUsername) {
+      const available = await isUsernameAvailable(cleanUsername, authUser.id);
+      if (!available) {
+        setEditError('That username is already taken. Please choose another.');
+        return;
+      }
+    }
+
+    const updatedProfile: UserProfile = {
+      ...profile,
+      name: cleanName,
+      handle: `@${cleanUsername}`,
+      avatarSeed: editAvatarSeed,
+      bio: editBio.trim(),
+    };
+
+    saveUserProfile(updatedProfile, authUser.id);
+    setProfile(updatedProfile);
+
+    await upsertProfile({
+      display_name: cleanName,
+      username: cleanUsername,
+      bio: editBio.trim() || undefined,
+    });
 
     setSavedSuccess(true);
     setTimeout(() => {
       setSavedSuccess(false);
       setShowEditModal(false);
-    }, 1000);
+    }, 800);
   };
 
   const handleUpdateVibe = (vibe: string) => {
-    const updated = saveUserProfile({ vibePreference: vibe });
+    const updated = saveUserProfile({ vibePreference: vibe }, authUser?.id);
     setProfile(updated);
-    if (authUser) {
-      upsertProfile({ vibe_preference: vibe });
-    }
     showSavedNotification();
   };
 
   const handleUpdateBudget = (budget: string) => {
-    const updated = saveUserProfile({ budgetPreference: budget });
+    const updated = saveUserProfile({ budgetPreference: budget }, authUser?.id);
     setProfile(updated);
-    if (authUser) {
-      upsertProfile({ budget_preference: budget });
-    }
     showSavedNotification();
   };
 
@@ -212,8 +231,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       {/* Header Profile Lockup */}
       <div className="p-5 rounded-2xl bg-[#111317] border border-white/[0.08] flex items-center justify-between gap-4">
         <div className="flex items-center gap-4 min-w-0">
-          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-[#ccff00]/15 to-zinc-900 border border-[#ccff00]/30 flex items-center justify-center text-[#ccff00] font-black text-xl shrink-0">
-            {profile.name ? profile.name.slice(0, 2).toUpperCase() : 'OUT'}
+          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-[#ccff00]/15 to-zinc-900 border border-[#ccff00]/30 flex items-center justify-center text-[#ccff00] font-black text-xl shrink-0 uppercase">
+            {profile.name ? profile.name.slice(0, 2) : 'OUT'}
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2">
@@ -226,7 +245,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 </span>
               )}
             </div>
-            <p className="text-xs text-zinc-400 mt-0.5 truncate">
+            <p className="text-xs text-zinc-400 mt-0.5 truncate font-mono">
               {profile.handle || authUser?.email || 'Sign in to create your scout handle'}
             </p>
           </div>
@@ -286,7 +305,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         </div>
       )}
 
-      {/* Genuine Contribution Stats (Starts at 0 for new accounts) */}
+      {/* Genuine Contribution Stats (Starts at 0 for new accounts, never fake values) */}
       <div className="grid grid-cols-3 gap-2 sm:gap-3">
         <div className="p-3 sm:p-4 rounded-xl bg-white/[0.03] border border-white/[0.06] text-center">
           <div className="flex items-center justify-center gap-1 text-[11px] text-zinc-400 mb-1">
@@ -490,6 +509,12 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               </button>
             </div>
 
+            {editError && (
+              <div className="p-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-300 text-xs">
+                {editError}
+              </div>
+            )}
+
             <form onSubmit={handleSaveProfile} className="space-y-3.5">
               <div>
                 <label className="block text-[11px] font-semibold text-zinc-400 mb-1">
@@ -509,14 +534,19 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 <label className="block text-[11px] font-semibold text-zinc-400 mb-1">
                   Username Handle
                 </label>
-                <input
-                  type="text"
-                  required
-                  value={editHandle}
-                  onChange={(e) => setEditHandle(e.target.value)}
-                  placeholder="username"
-                  className="w-full h-10 px-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#ccff00]"
-                />
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-zinc-500 font-mono">
+                    @
+                  </span>
+                  <input
+                    type="text"
+                    required
+                    value={editHandle}
+                    onChange={(e) => setEditHandle(e.target.value.replace(/^@/, ''))}
+                    placeholder="username"
+                    className="w-full h-10 pl-7 pr-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#ccff00] font-mono"
+                  />
+                </div>
               </div>
 
               <div>
@@ -525,7 +555,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                   rows={2}
                   value={editBio}
                   onChange={(e) => setEditBio(e.target.value)}
-                  placeholder="Exploring coffee bars, rooftops and weekend sports spots in Dhaka..."
+                  placeholder="Coffee lover, rooftop seeker, discovering spots in Bangladesh..."
                   className="w-full p-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#ccff00] resize-none"
                 />
               </div>

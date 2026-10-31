@@ -105,8 +105,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         return;
       }
       const cleanUsername = username.replace(/^@/, '').trim().toLowerCase();
-      if (!cleanUsername || cleanUsername.length < 3) {
-        setErrorMessage('Username must be at least 3 characters.');
+      if (!cleanUsername || cleanUsername.length < 3 || cleanUsername.length > 20) {
+        setErrorMessage('Username must be between 3 and 20 characters.');
+        return;
+      }
+      if (!/^[a-z0-9_]+$/.test(cleanUsername)) {
+        setErrorMessage('Username can only contain letters, numbers, and underscores.');
         return;
       }
       if (!email.trim()) {

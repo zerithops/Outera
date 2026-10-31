@@ -107,10 +107,12 @@ export default function App() {
         setAuthUser(user);
         if (user) {
           fetchUserSavedPlaces().then((supabaseSaved) => {
-            if (supabaseSaved && supabaseSaved.length > 0) {
+            if (isMounted && supabaseSaved) {
               setSavedPlaceIds(Array.from(new Set(supabaseSaved)));
             }
           });
+        } else {
+          setSavedPlaceIds([]);
         }
       }
     });

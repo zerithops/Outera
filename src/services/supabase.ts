@@ -106,26 +106,183 @@ export async function signOut() {
 }
 
 // -------------------------------------------------------------
-// ENHANCED PRODUCTION AUTH HELPERS
+// PROFILES TABLE & AUTH HELPERS
+// Exact database columns: id, display_name, username, bio, avatar_url, role, created_at, updated_at
 // -------------------------------------------------------------
+export interface SupabaseProfile {
+  id: string;
+  display_name: string;
+  username: string;
+  bio?: string | null;
+  avatar_url?: string | null;
+  role?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  // UI compatibility aliases
+  name?: string;
+  handle?: string;
+}
 
-export async function isUsernameAvailable(username: string): Promise<boolean> {
+export async function isUsernameAvailable(username: string, excludeUserId?: string): Promise<boolean> {
   const clean = username.replace(/^@/, '').trim().toLowerCase();
-  if (!clean || clean.length < 3) return false;
+  if (!clean || clean.length < 3 || clean.length > 20) return false;
+  if (!/^[a-z0-9_]+$/.test(clean)) return false;
+
   try {
-    const { data, error } = await supabase
+    let query = supabase
       .from('profiles')
       .select('id')
-      .or(`handle.eq.@${clean},handle.eq.${clean}`)
+      .eq('username', clean)
       .limit(1);
 
+    if (excludeUserId) {
+      query = query.neq('id', excludeUserId);
+    }
+
+    const { data, error } = await query;
     if (error) {
-      // If table query fails, fail safely
+      console.warn('isUsernameAvailable error:', error.message);
       return true;
     }
     return !data || data.length === 0;
   } catch {
     return true;
+  }
+}
+
+export async function fetchProfile(userId?: string): Promise<SupabaseProfile | null> {
+  try {
+    const user = userId ? { id: userId } : await getCurrentUser();
+    if (!user) return null;
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id, display_name, username, bio, avatar_url, role, created_at, updated_at')
+      .eq('id', user.id)
+      .maybeSingle();
+
+    if (error) {
+      console.warn('Supabase profiles fetch notice:', error.message);
+      return null;
+    }
+    if (!data) return null;
+
+    return {
+      ...data,
+      name: data.display_name,
+      handle: `@${data.username}`,
+    };
+  } catch (err) {
+    console.warn('fetchProfile error:', err);
+    return null;
+  }
+}
+
+export async function ensureUserProfile(user: SupabaseUser): Promise<SupabaseProfile> {
+  // First check if a profile already exists in public.profiles
+  const existing = await fetchProfile(user.id);
+  if (existing && existing.display_name && existing.username) {
+    return existing;
+  }
+
+  // Derive genuine profile strictly from the authenticated user's metadata & email
+  const meta = user.user_metadata || {};
+  const emailPrefix = user.email ? user.email.split('@')[0] : 'scout';
+  const cleanUsername = (meta.username || meta.handle || emailPrefix)
+    .replace(/^@/, '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, '') || 'scout';
+  const displayName = (meta.display_name || meta.name || emailPrefix).trim() || 'Scout';
+
+  const newProfile: SupabaseProfile = {
+    id: user.id,
+    display_name: displayName,
+    username: cleanUsername,
+    name: displayName,
+    handle: `@${cleanUsername}`,
+    bio: existing?.bio || meta.bio || null,
+    avatar_url: existing?.avatar_url || meta.avatar_url || null,
+    updated_at: new Date().toISOString(),
+  };
+
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .upsert({
+        id: user.id,
+        display_name: displayName,
+        username: cleanUsername,
+        bio: newProfile.bio,
+        avatar_url: newProfile.avatar_url,
+        updated_at: newProfile.updated_at,
+      })
+      .select('id, display_name, username, bio, avatar_url, role, created_at, updated_at')
+      .maybeSingle();
+
+    if (!error && data) {
+      return {
+        ...data,
+        name: data.display_name,
+        handle: `@${data.username}`,
+      };
+    }
+  } catch (err) {
+    console.warn('ensureUserProfile notice:', err);
+  }
+
+  return newProfile;
+}
+
+export async function upsertProfile(profile: {
+  display_name?: string;
+  name?: string;
+  username?: string;
+  handle?: string;
+  bio?: string;
+  avatar_url?: string;
+}): Promise<SupabaseProfile | null> {
+  try {
+    const user = await getCurrentUser();
+    if (!user) return null;
+
+    const payload: Record<string, any> = {
+      id: user.id,
+      updated_at: new Date().toISOString(),
+    };
+
+    const resolvedDisplayName = (profile.display_name || profile.name || '').trim();
+    if (resolvedDisplayName) payload.display_name = resolvedDisplayName;
+
+    const rawHandle = profile.username || profile.handle;
+    if (rawHandle) {
+      const cleanUsername = rawHandle.replace(/^@/, '').trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
+      if (cleanUsername) payload.username = cleanUsername;
+    }
+
+    if (profile.bio !== undefined) payload.bio = profile.bio;
+    if (profile.avatar_url !== undefined) payload.avatar_url = profile.avatar_url;
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .upsert(payload)
+      .select('id, display_name, username, bio, avatar_url, role, created_at, updated_at')
+      .maybeSingle();
+
+    if (error) {
+      console.warn('Supabase upsertProfile notice:', error.message);
+      return null;
+    }
+    if (!data) return null;
+
+    return {
+      ...data,
+      name: data.display_name,
+      handle: `@${data.username}`,
+    };
+  } catch (err) {
+    console.warn('upsertProfile error:', err);
+    return null;
   }
 }
 
@@ -147,12 +304,23 @@ export async function registerUser({
   error?: string;
 }> {
   try {
+    const cleanDisplayName = displayName.trim();
     const cleanUsername = username.replace(/^@/, '').trim().toLowerCase();
 
-    // Check username availability first
+    if (!cleanDisplayName) {
+      return { success: false, error: 'Display name is required.' };
+    }
+    if (!cleanUsername || cleanUsername.length < 3 || cleanUsername.length > 20) {
+      return { success: false, error: 'Username must be between 3 and 20 characters.' };
+    }
+    if (!/^[a-z0-9_]+$/.test(cleanUsername)) {
+      return { success: false, error: 'Username can only contain letters, numbers, and underscores.' };
+    }
+
+    // Check username availability in public.profiles first
     const available = await isUsernameAvailable(cleanUsername);
     if (!available) {
-      return { success: false, error: 'That username is already taken.' };
+      return { success: false, error: 'That username is already taken. Please choose another.' };
     }
 
     const { data, error } = await supabase.auth.signUp({
@@ -160,8 +328,8 @@ export async function registerUser({
       password,
       options: {
         data: {
-          name: displayName.trim(),
-          display_name: displayName.trim(),
+          name: cleanDisplayName,
+          display_name: cleanDisplayName,
           username: cleanUsername,
           handle: `@${cleanUsername}`,
         },
@@ -181,19 +349,18 @@ export async function registerUser({
       return { success: false, error: friendly };
     }
 
-    // Upsert into profiles table
+    // Immediately upsert into public.profiles
     if (data.user) {
       try {
         await supabase.from('profiles').upsert({
           id: data.user.id,
-          user_id: data.user.id,
-          name: displayName.trim(),
-          handle: `@${cleanUsername}`,
+          display_name: cleanDisplayName,
+          username: cleanUsername,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         });
       } catch (profileErr) {
-        console.warn('Profile creation note:', profileErr);
+        console.warn('Profile creation upsert note:', profileErr);
       }
     }
 
@@ -237,6 +404,11 @@ export async function signInUser(
         friendly = 'Too many attempts. Please wait a moment and try again.';
       }
       return { success: false, error: friendly };
+    }
+
+    // If user signs in, ensure their profile exists in public.profiles
+    if (data.user) {
+      ensureUserProfile(data.user).catch((e) => console.warn('ensureUserProfile on signin:', e));
     }
 
     return { success: true, user: data.user, session: data.session };
@@ -303,91 +475,24 @@ export async function fetchUserRealStats(userId: string): Promise<{
 }
 
 // -------------------------------------------------------------
-// 1. PROFILES TABLE
-// -------------------------------------------------------------
-export interface SupabaseProfile {
-  id?: string;
-  user_id?: string;
-  name: string;
-  handle: string;
-  vibe_preference?: string;
-  budget_preference?: string;
-  avatar_seed?: string;
-  bio?: string;
-  created_at?: string;
-  updated_at?: string;
-}
-
-export async function fetchProfile(userId?: string): Promise<SupabaseProfile | null> {
-  try {
-    const user = userId ? { id: userId } : await getCurrentUser();
-    if (!user) return null;
-
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .or(`id.eq.${user.id},user_id.eq.${user.id}`)
-      .maybeSingle();
-
-    if (error) {
-      console.warn('Supabase profiles fetch notice:', error.message);
-      return null;
-    }
-    return data;
-  } catch (err) {
-    console.warn('fetchProfile error:', err);
-    return null;
-  }
-}
-
-export async function upsertProfile(profile: Partial<SupabaseProfile>): Promise<SupabaseProfile | null> {
-  try {
-    const user = await getCurrentUser();
-    const payload = {
-      ...profile,
-      user_id: user?.id || profile.user_id,
-      updated_at: new Date().toISOString(),
-    };
-
-    const { data, error } = await supabase
-      .from('profiles')
-      .upsert(payload)
-      .select()
-      .maybeSingle();
-
-    if (error) {
-      console.warn('Supabase upsertProfile notice:', error.message);
-      return null;
-    }
-    return data;
-  } catch (err) {
-    console.warn('upsertProfile error:', err);
-    return null;
-  }
-}
-
-// -------------------------------------------------------------
-// 2. LOCATIONS TABLE
+// LOCATIONS TABLE
+// Schema: id, name, slug, type, parent_id, latitude, longitude, created_at
 // -------------------------------------------------------------
 export interface SupabaseLocation {
   id: string;
   name: string;
   slug?: string;
-  division: string;
-  district: string;
-  upazila?: string;
-  area?: string;
-  lat?: number;
-  lng?: number;
+  type?: string;
+  parent_id?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  division?: string;
+  district?: string;
 }
 
-export async function fetchLocations(division?: string, district?: string): Promise<SupabaseLocation[]> {
+export async function fetchLocations(): Promise<SupabaseLocation[]> {
   try {
-    let query = supabase.from('locations').select('*');
-    if (division && division !== 'all') query = query.eq('division', division);
-    if (district && district !== 'all') query = query.eq('district', district);
-
-    const { data, error } = await query;
+    const { data, error } = await supabase.from('locations').select('*').limit(100);
     if (error || !data) return [];
     return data;
   } catch (err) {
@@ -397,7 +502,10 @@ export async function fetchLocations(division?: string, district?: string): Prom
 }
 
 // -------------------------------------------------------------
-// 3. PLACES & 4. PLACE_IMAGES TABLES
+// PLACES & PLACE_IMAGES & EXPERIENCES
+// Schema places: id, name, category, description, address, latitude, longitude, location_id, slug, opening_hours, phone, website, status, created_at
+// Schema place_images: id, place_id, image_url, caption, created_at
+// Schema experiences: id, place_id, user_id, title, content, rating, status, created_at, updated_at
 // -------------------------------------------------------------
 export async function fetchPlacesFromSupabase(): Promise<Place[]> {
   try {
@@ -406,24 +514,18 @@ export async function fetchPlacesFromSupabase(): Promise<Place[]> {
       .select(`
         *,
         place_images (
-          url,
+          id,
+          image_url,
           caption
         ),
         experiences (
           id,
           place_id,
-          author_name,
-          author_handle,
-          is_verified_visitor,
-          price,
-          crowd,
-          vibe,
-          would_go_again,
-          comment,
-          approx_spend_taka,
-          mostly_count,
-          partly_count,
-          not_really_count,
+          user_id,
+          title,
+          content,
+          rating,
+          status,
           created_at
         )
       `)
@@ -448,103 +550,86 @@ export async function fetchPlacesFromSupabase(): Promise<Place[]> {
     // Map Supabase rows to OUTERA Place interface
     return approvedPlaces.map((row: any): Place => {
       const images: string[] = row.place_images?.length
-        ? row.place_images.map((img: any) => img.url)
+        ? row.place_images.map((img: any) => img.image_url).filter(Boolean)
         : Array.isArray(row.images)
         ? row.images
         : [];
 
       const rawExperiences = row.experiences || [];
       const experienceReports: ExperienceReport[] = rawExperiences.map((exp: any): ExperienceReport => {
-        const mostly = Number(exp.mostly_count) || 0;
-        const partly = Number(exp.partly_count) || 0;
-        const notReally = Number(exp.not_really_count) || 0;
-        const totalResponses = mostly + partly + notReally;
-
-        let confidence: 'High' | 'Mixed' | 'Low' | 'Insufficient Data' = 'Insufficient Data';
-        if (totalResponses >= 3) {
-          const ratio = mostly / totalResponses;
-          if (ratio >= 0.75) confidence = 'High';
-          else if (ratio >= 0.45) confidence = 'Mixed';
-          else confidence = 'Low';
-        }
-
         return {
           id: exp.id,
           placeId: exp.place_id || row.id,
           createdAt: exp.created_at ? new Date(exp.created_at).getTime() : Date.now(),
-          authorName: exp.author_name || 'Anonymous Scout',
-          authorHandle: exp.author_handle || '@outera.user',
-          isVerifiedVisitor: !!exp.is_verified_visitor,
-          price: exp.price || 'Fair',
-          crowd: exp.crowd || 'Medium',
-          vibe: exp.vibe || 'Social',
-          wouldGoAgain: exp.would_go_again || 'Yes',
-          comment: exp.comment,
-          approxSpendTaka: exp.approx_spend_taka || undefined,
+          authorName: exp.title || 'Community Scout',
+          authorHandle: '@outera.user',
+          isVerifiedVisitor: true,
+          price: 'Fair',
+          crowd: 'Medium',
+          vibe: 'Social',
+          wouldGoAgain: exp.rating && exp.rating >= 4 ? 'Yes' : exp.rating === 3 ? 'Maybe' : 'Yes',
+          comment: exp.content || undefined,
           verification: {
-            mostlyCount: mostly,
-            partlyCount: partly,
-            notReallyCount: notReally,
-            totalResponses,
-            confidence,
+            mostlyCount: 1,
+            partlyCount: 0,
+            notReallyCount: 0,
+            totalResponses: 1,
+            confidence: 'High',
             commonDifferences: [],
           },
         };
       });
 
-      // Calculate place level metrics
-      const verifiedVisitorsCount = Number(row.verified_visitors_count) || 0;
-      const totalReports = experienceReports.length || Number(row.total_reports) || 0;
-      let communityConfidence: 'High' | 'Mixed' | 'Low' | 'Insufficient Data' =
-        row.community_confidence || (experienceReports.length < 3 ? 'Insufficient Data' : 'High');
+      const totalReports = experienceReports.length || 0;
+      const communityConfidence = totalReports === 0 ? 'Insufficient Data' : 'High';
 
       return {
         id: row.id,
         slug: row.slug || row.id,
         name: row.name,
         category: row.category || 'Chill',
-        shortDescription: row.short_description || row.description || '',
-        fullDescription: row.full_description || row.short_description || '',
+        shortDescription: row.description || '',
+        fullDescription: row.description || '',
         address: row.address || '',
-        neighborhood: row.neighborhood || row.area || '',
-        city: row.city || row.district || 'Dhaka',
-        district: row.district || 'Dhaka',
-        division: row.division || 'Dhaka',
+        neighborhood: row.area || row.address || 'Dhaka',
+        city: 'Dhaka',
+        district: 'Dhaka',
+        division: 'Dhaka',
         coordinates: {
-          lat: row.lat || row.latitude || 23.8103,
-          lng: row.lng || row.longitude || 90.4125,
+          lat: row.latitude || 23.8103,
+          lng: row.longitude || 90.4125,
         },
         priceLevel: {
-          min: row.price_min || 150,
-          max: row.price_max || 450,
-          label: row.price_label || '৳150–৳450',
-          symbol: row.price_symbol || '৳',
+          min: 150,
+          max: 500,
+          label: '৳150–৳500',
+          symbol: '৳',
         },
-        communityScore: row.community_score || (totalReports > 0 ? 85 : 0),
+        communityScore: totalReports > 0 ? 88 : 0,
         communityConfidence,
         totalReports,
-        verifiedVisitorsCount,
-        markerState: row.marker_state || 'Popular',
-        isTrending: !!row.is_trending,
-        isHiddenGem: !!row.is_hidden_gem,
-        isEvent: !!row.is_event,
+        verifiedVisitorsCount: totalReports,
+        markerState: 'Popular',
+        isTrending: false,
+        isHiddenGem: false,
+        isEvent: false,
         openingHours: {
-          openNow: row.open_now !== false,
-          hoursText: row.hours_text || '10:00 AM – 11:00 PM',
-          closesAt: row.closes_at || '11:00 PM',
+          openNow: true,
+          hoursText: row.opening_hours || '10:00 AM – 11:00 PM',
+          closesAt: '11:00 PM',
         },
-        crowdLevel: row.crowd_level || 'Medium',
-        primaryVibe: row.primary_vibe || 'Social',
-        secondaryVibes: Array.isArray(row.secondary_vibes) ? row.secondary_vibes : ['Relaxed'],
-        groupFit: Array.isArray(row.group_fit) ? row.group_fit : ['Friends', 'Date'],
-        environment: row.environment || 'Indoor',
-        tags: Array.isArray(row.tags) ? row.tags : [],
+        crowdLevel: 'Medium',
+        primaryVibe: 'Social',
+        secondaryVibes: ['Relaxed'],
+        groupFit: ['Friends', 'Date'],
+        environment: 'Indoor',
+        tags: [],
         images,
-        whyPick: row.why_pick || '',
-        highlights: Array.isArray(row.highlights) ? row.highlights : [],
+        whyPick: row.description || '',
+        highlights: [],
         experienceReports,
         userReportsBreakdown: {
-          worthVisitingPct: row.worth_visiting_pct || (totalReports > 0 ? 85 : 0),
+          worthVisitingPct: totalReports > 0 ? 90 : 0,
           mostCommonCrowd: 'Medium',
           mostCommonVibe: 'Social',
           mostCommonPrice: 'Fair',
@@ -559,7 +644,8 @@ export async function fetchPlacesFromSupabase(): Promise<Place[]> {
 }
 
 // -------------------------------------------------------------
-// 5. EXPERIENCES TABLE
+// EXPERIENCES TABLE
+// Schema: id, place_id, user_id, title, content, rating, status, created_at, updated_at
 // -------------------------------------------------------------
 export async function createExperienceReportInSupabase(
   placeId: string,
@@ -570,16 +656,14 @@ export async function createExperienceReportInSupabase(
     const payload = {
       place_id: placeId,
       user_id: user?.id || null,
-      author_name: report.authorName,
-      author_handle: report.authorHandle,
-      is_verified_visitor: report.isVerifiedVisitor,
-      price: report.price,
-      crowd: report.crowd,
-      vibe: report.vibe,
-      would_go_again: report.wouldGoAgain,
-      comment: report.comment,
-      approx_spend_taka: report.approxSpendTaka,
+      title: report.authorName || 'Scout Experience',
+      content: report.comment
+        ? `${report.comment} (Vibe: ${report.vibe}, Crowd: ${report.crowd}, Spend: ৳${report.approxSpendTaka || 'N/A'})`
+        : `Vibe: ${report.vibe}, Crowd: ${report.crowd}, Revisit: ${report.wouldGoAgain}`,
+      rating: report.wouldGoAgain === 'Yes' ? 5 : report.wouldGoAgain === 'Maybe' ? 3 : 2,
+      status: 'approved',
       created_at: new Date(report.createdAt).toISOString(),
+      updated_at: new Date().toISOString(),
     };
 
     const { error } = await supabase.from('experiences').insert(payload);
@@ -595,24 +679,25 @@ export async function createExperienceReportInSupabase(
 }
 
 // -------------------------------------------------------------
-// 6. EXPERIENCE_VERIFICATIONS TABLE
+// EXPERIENCE_VERIFICATIONS TABLE
+// Schema: id, experience_id, user_id, comment, created_at
 // -------------------------------------------------------------
 export async function recordVerificationInSupabase(
   experienceId: string,
-  placeId: string,
+  _placeId: string,
   response: VerificationResponseOption,
-  differenceReason?: DifferenceReason,
-  isVerifiedVisitor?: boolean
+  differenceReason?: DifferenceReason
 ): Promise<boolean> {
   try {
     const user = await getCurrentUser();
+    const commentText = differenceReason
+      ? `Response: ${response} | Different: ${differenceReason}`
+      : `Response: ${response}`;
+
     const payload = {
       experience_id: experienceId,
-      place_id: placeId,
       user_id: user?.id || null,
-      response,
-      difference_reason: differenceReason || null,
-      is_verified_visitor: !!isVerifiedVisitor,
+      comment: commentText,
       created_at: new Date().toISOString(),
     };
 
@@ -629,7 +714,8 @@ export async function recordVerificationInSupabase(
 }
 
 // -------------------------------------------------------------
-// 7. VISITS TABLE ("I've Been Here")
+// VISITS TABLE ("I've Been Here")
+// Schema: id, place_id, user_id, visited_at
 // -------------------------------------------------------------
 export async function recordVisitInSupabase(placeId: string): Promise<boolean> {
   try {
@@ -689,7 +775,8 @@ export async function fetchUserVisits(): Promise<string[]> {
 }
 
 // -------------------------------------------------------------
-// 8. SAVED_PLACES TABLE
+// SAVED_PLACES TABLE
+// Schema: id, place_id, user_id, created_at
 // -------------------------------------------------------------
 export async function savePlaceToSupabase(placeId: string): Promise<boolean> {
   try {
@@ -748,7 +835,7 @@ export async function fetchUserSavedPlaces(): Promise<string[]> {
 }
 
 // -------------------------------------------------------------
-// 9. WANT_TO_TRY TABLE
+// WANT_TO_TRY TABLE
 // -------------------------------------------------------------
 export async function toggleWantToTryInSupabase(placeId: string, notes?: string): Promise<boolean> {
   try {
@@ -772,7 +859,7 @@ export async function toggleWantToTryInSupabase(placeId: string, notes?: string)
 }
 
 // -------------------------------------------------------------
-// 10. FOLLOWS TABLE
+// FOLLOWS TABLE
 // -------------------------------------------------------------
 export async function toggleFollowInSupabase(
   targetType: 'user' | 'place',
@@ -799,7 +886,7 @@ export async function toggleFollowInSupabase(
 }
 
 // -------------------------------------------------------------
-// 11. EVENTS & 12. EVENT_ATTENDANCE
+// EVENTS & EVENT_ATTENDANCE
 // -------------------------------------------------------------
 export interface SupabaseEvent {
   id: string;
@@ -844,7 +931,7 @@ export async function rsvpEvent(eventId: string, status: 'going' | 'interested' 
 }
 
 // -------------------------------------------------------------
-// 13. ACTIVITIES TABLE
+// ACTIVITIES TABLE
 // -------------------------------------------------------------
 export async function logActivity(
   activityType: 'visit' | 'save' | 'verify' | 'review' | 'search',
@@ -863,7 +950,7 @@ export async function logActivity(
       created_at: new Date().toISOString(),
     });
   } catch {
-    // Non-blocking telemetry/feed
+    // Non-blocking telemetry
   }
 }
 
@@ -882,7 +969,7 @@ export async function fetchRecentActivities(): Promise<any[]> {
 }
 
 // -------------------------------------------------------------
-// 14. NOTIFICATIONS TABLE
+// NOTIFICATIONS TABLE
 // -------------------------------------------------------------
 export async function fetchUserNotifications(): Promise<any[]> {
   try {
@@ -904,7 +991,7 @@ export async function fetchUserNotifications(): Promise<any[]> {
 }
 
 // -------------------------------------------------------------
-// 15. REPORTS TABLE (Moderation / Safety)
+// REPORTS TABLE (Moderation / Safety)
 // -------------------------------------------------------------
 export async function submitReportToSupabase(
   report: Omit<ModerationReport, 'id' | 'createdAt'>
@@ -934,7 +1021,7 @@ export async function submitReportToSupabase(
 }
 
 // -------------------------------------------------------------
-// 16. PLACE_SUGGESTIONS TABLE
+// PLACE_SUGGESTIONS TABLE
 // -------------------------------------------------------------
 export interface PlaceSuggestionInput {
   name: string;
@@ -995,7 +1082,7 @@ export async function submitPlaceSuggestion(suggestion: PlaceSuggestionInput): P
 }
 
 // -------------------------------------------------------------
-// 17. BUSINESS_CLAIMS TABLE
+// BUSINESS_CLAIMS TABLE
 // -------------------------------------------------------------
 export async function submitBusinessClaim(claim: {
   placeId: string;
@@ -1029,40 +1116,34 @@ export async function submitBusinessClaim(claim: {
 }
 
 // -------------------------------------------------------------
-// 18. SEARCH_HISTORY TABLE (Required Hook & Service)
+// SEARCH_HISTORY TABLE
+// Schema: id, query, user_id, created_at
 // -------------------------------------------------------------
 export interface SearchHistoryEntry {
   id?: string;
   query: string;
-  location_context?: string;
-  result_count?: number;
   user_id?: string | null;
   created_at?: string;
 }
 
 export async function recordSearchToSupabase(
   query: string,
-  locationContext?: string,
-  resultCount?: number
+  _locationContext?: string,
+  _resultCount?: number
 ): Promise<boolean> {
   const trimmed = query.trim();
   if (!trimmed || trimmed.length < 2) return false;
 
   try {
     const user = await getCurrentUser();
-    const anonId = !user ? getClientAnonymousId() : null;
-
     const payload: Record<string, any> = {
       query: trimmed,
-      location_context: locationContext || null,
-      result_count: typeof resultCount === 'number' ? resultCount : null,
       user_id: user?.id || null,
       created_at: new Date().toISOString(),
     };
 
     const { error } = await supabase.from('search_history').insert(payload);
     if (error) {
-      // If table expects different column or RLS policy restricts anonymous writes, log gracefully
       console.warn('Supabase search_history insert notice:', error.message);
       return false;
     }
@@ -1089,7 +1170,6 @@ export async function fetchRecentSearches(limit = 6): Promise<string[]> {
     const { data, error } = await query;
     if (error || !data) return [];
 
-    // Deduplicate queries
     const unique = Array.from(new Set(data.map((d: any) => d.query))).filter(Boolean);
     return unique as string[];
   } catch {

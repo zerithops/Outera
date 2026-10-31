@@ -9,6 +9,9 @@ import {
   VibeType,
 } from '../types/outera';
 
+import { getCurrentUser, fetchProfile } from '../services/supabase';
+import { getCachedUserProfile, isPlaceVisitedByUser } from '../services/storage';
+
 interface CommunityFeedbackModalProps {
   place: Place | null;
   isOpen: boolean;
@@ -31,15 +34,42 @@ export const CommunityFeedbackModal: React.FC<CommunityFeedbackModalProps> = ({
 
   if (!isOpen || !place) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    const user = await getCurrentUser();
+    let authorName = 'OUTERA Scout';
+    let authorHandle = '@scout';
+
+    if (user) {
+      const cached = getCachedUserProfile(user.id);
+      if (cached && cached.name) {
+        authorName = cached.name;
+        authorHandle = cached.handle;
+      } else {
+        const dbProfile = await fetchProfile(user.id);
+        if (dbProfile?.display_name) {
+          authorName = dbProfile.display_name;
+          authorHandle = `@${dbProfile.username}`;
+        } else {
+          authorName =
+            user.user_metadata?.display_name ||
+            user.user_metadata?.name ||
+            user.email?.split('@')[0] ||
+            'OUTERA Scout';
+          authorHandle = `@${user.user_metadata?.username || user.email?.split('@')[0] || 'scout'}`;
+        }
+      }
+    }
+
+    const isVisited = isPlaceVisitedByUser(place.id);
     const newReport: ExperienceReport = {
       id: `report-${Date.now()}`,
       placeId: place.id,
       createdAt: Date.now(),
-      authorName: 'You',
-      authorHandle: '@you',
-      isVerifiedVisitor: true,
+      authorName,
+      authorHandle,
+      isVerifiedVisitor: isVisited,
       price,
       crowd,
       vibe,

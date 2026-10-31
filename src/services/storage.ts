@@ -18,9 +18,6 @@ import {
   submitReportToSupabase,
   upsertProfile,
   logActivity,
-  fetchUserSavedPlaces,
-  fetchUserVisits,
-  fetchProfile,
 } from './supabase';
 
 const STORAGE_KEYS = {
@@ -30,8 +27,25 @@ const STORAGE_KEYS = {
   USER_REPORTS: 'outera_user_reports',
   VERIFICATIONS: 'outera_verifications',
   MODERATION_REPORTS: 'outera_moderation_reports',
-  USER_PROFILE: 'outera_user_profile',
 };
+
+// Immediate purge of any legacy demo profile keys from previous sessions
+if (typeof window !== 'undefined' && typeof window.localStorage !== 'undefined') {
+  try {
+    const legacyKeysToPurge = [
+      'outera_user_profile',
+      'outera_profile',
+      'user_profile',
+      'mock_profile',
+      'demo_profile',
+    ];
+    for (const key of legacyKeysToPurge) {
+      window.localStorage.removeItem(key);
+    }
+  } catch {
+    // Ignore storage purge errors
+  }
+}
 
 export interface UserProfile {
   name: string;
@@ -39,15 +53,20 @@ export interface UserProfile {
   vibePreference: string;
   budgetPreference: string;
   avatarSeed: string;
+  bio?: string;
 }
 
-export const DEFAULT_PROFILE: UserProfile = {
+// Neutral empty guest profile — NEVER contains hardcoded demo names or fake handles
+export const EMPTY_GUEST_PROFILE: UserProfile = {
   name: '',
   handle: '',
   vibePreference: 'Chill & Social',
   budgetPreference: 'Under ৳500',
-  avatarSeed: '',
+  avatarSeed: 'scout-1',
+  bio: '',
 };
+
+export const DEFAULT_PROFILE: UserProfile = EMPTY_GUEST_PROFILE;
 
 export const DEFAULT_COLLECTIONS: SavedCollection[] = [];
 
@@ -57,6 +76,75 @@ function isStorageAvailable(): boolean {
   } catch {
     return false;
   }
+}
+
+// ----------------- Per-User Profile Caching -----------------
+export function getUserProfileCacheKey(userId?: string): string {
+  if (!userId) return 'outera_profile_guest';
+  return `outera_profile_${userId}`;
+}
+
+export function getCachedUserProfile(userId?: string): UserProfile | null {
+  if (!isStorageAvailable() || !userId) return null;
+  try {
+    const raw = window.localStorage.getItem(getUserProfileCacheKey(userId));
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+export function setCachedUserProfile(userId: string, profile: UserProfile): void {
+  if (!isStorageAvailable() || !userId) return;
+  try {
+    window.localStorage.setItem(getUserProfileCacheKey(userId), JSON.stringify(profile));
+  } catch (e) {
+    console.warn('Failed to cache user profile:', e);
+  }
+}
+
+export function clearUserProfileCache(userId?: string): void {
+  if (!isStorageAvailable()) return;
+  try {
+    if (userId) {
+      window.localStorage.removeItem(getUserProfileCacheKey(userId));
+    }
+    window.localStorage.removeItem('outera_profile_guest');
+    window.localStorage.removeItem('outera_user_profile');
+  } catch (e) {
+    console.warn(e);
+  }
+}
+
+export function getUserProfile(userId?: string): UserProfile {
+  if (!userId) return EMPTY_GUEST_PROFILE;
+  const cached = getCachedUserProfile(userId);
+  if (cached) return cached;
+  return EMPTY_GUEST_PROFILE;
+}
+
+export function saveUserProfile(profile: Partial<UserProfile>, userId?: string): UserProfile {
+  const current = userId ? (getCachedUserProfile(userId) || EMPTY_GUEST_PROFILE) : EMPTY_GUEST_PROFILE;
+  const updated: UserProfile = { ...current, ...profile };
+
+  if (userId) {
+    setCachedUserProfile(userId, updated);
+  }
+
+  // Clean username if handle is passed
+  const cleanUsername = updated.handle
+    ? updated.handle.replace(/^@/, '').trim().toLowerCase().replace(/[^a-z0-9_]/g, '')
+    : undefined;
+
+  // Sync to Supabase public.profiles table
+  upsertProfile({
+    display_name: updated.name || undefined,
+    username: cleanUsername,
+    bio: updated.bio || undefined,
+  });
+
+  return updated;
 }
 
 // ----------------- Saved Places -----------------
@@ -244,7 +332,7 @@ export function submitVerificationAction(
   }
 
   // Sync to Supabase experience_verifications table
-  recordVerificationInSupabase(reportId, placeId, response, differenceReason, userVisited);
+  recordVerificationInSupabase(reportId, placeId, response, differenceReason);
   logActivity('verify', placeId, `Community verification: ${response}`, {
     differenceReason,
     isVerifiedVisitor: userVisited,
@@ -282,40 +370,6 @@ export function submitModerationReport(report: Omit<ModerationReport, 'id' | 'cr
   return newReport;
 }
 
-// ----------------- User Profile -----------------
-export function getUserProfile(): UserProfile {
-  if (!isStorageAvailable()) return DEFAULT_PROFILE;
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEYS.USER_PROFILE);
-    if (!raw) return DEFAULT_PROFILE;
-    return { ...DEFAULT_PROFILE, ...JSON.parse(raw) };
-  } catch {
-    return DEFAULT_PROFILE;
-  }
-}
-
-export function saveUserProfile(profile: Partial<UserProfile>): UserProfile {
-  const current = getUserProfile();
-  const updated = { ...current, ...profile };
-  if (isStorageAvailable()) {
-    try {
-      window.localStorage.setItem(STORAGE_KEYS.USER_PROFILE, JSON.stringify(updated));
-    } catch (e) {
-      console.warn(e);
-    }
-  }
-
-  // Sync to Supabase profiles table
-  upsertProfile({
-    name: updated.name,
-    handle: updated.handle,
-    vibe_preference: updated.vibePreference,
-    budget_preference: updated.budgetPreference,
-  });
-
-  return updated;
-}
-
 // ----------------- Augmented Places Aggregation -----------------
 export function getAugmentedPlaces(basePlaces: Place[] = []): Place[] {
   if (!basePlaces || basePlaces.length === 0) {
@@ -346,7 +400,6 @@ export function getAugmentedPlaces(basePlaces: Place[] = []): Place[] {
       }
 
       for (const v of relatedVerifications) {
-        // Stronger weight given to visitors who marked a visit
         const weight = v.isVerifiedVisitor ? 2 : 1;
         if (v.response === 'Mostly') mostly += weight;
         else if (v.response === 'Partly') partly += weight;
@@ -389,11 +442,9 @@ export function getAugmentedPlaces(basePlaces: Place[] = []): Place[] {
       };
     });
 
-    // Check if user has marked a visit
     const isUserVisited = visitedPlaceIds.includes(place.id);
     const effectiveVerifiedCount = place.verifiedVisitorsCount + (isUserVisited ? 1 : 0);
 
-    // Calculate place level community confidence
     const totalVerifications = augmentedExperienceReports.reduce(
       (sum, r) => sum + r.verification.totalResponses,
       0
