@@ -18,7 +18,13 @@ import { PlaceWithDistance } from '../services/discoveryEngine';
 import { formatDistance } from '../services/location';
 import { isPlaceVisitedByUser, toggleVisitedPlace } from '../services/storage';
 import { ExperienceVerificationItem } from './ExperienceVerificationItem';
-import { toggleWantToTryInSupabase, submitBusinessClaim } from '../services/supabase';
+import {
+  toggleWantToTryInSupabase,
+  submitBusinessClaim,
+  fetchPublicPlacePosts,
+  PlacePost,
+} from '../services/supabase';
+import { CreatePostModal } from './CreatePostModal';
 
 interface PlaceDetailsModalProps {
   place: PlaceWithDistance | null;
@@ -51,6 +57,17 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
   const [claimEmail, setClaimEmail] = useState('');
   const [claimRole, setClaimRole] = useState('Owner / Manager');
   const [claimSuccess, setClaimSuccess] = useState(false);
+
+  const [publicPosts, setPublicPosts] = useState<PlacePost[]>([]);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+
+  React.useEffect(() => {
+    if (isOpen && place) {
+      fetchPublicPlacePosts(place.id).then((posts) => {
+        setPublicPosts(posts || []);
+      });
+    }
+  }, [isOpen, place]);
 
   if (!isOpen || !place) return null;
 
@@ -409,24 +426,72 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
                   </p>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!isAuthenticated && onRequireAuth) {
-                      onRequireAuth('share your experience');
-                      return;
-                    }
-                    onOpenReportModal(place);
-                  }}
-                  className="h-9 px-3 rounded-xl bg-[#ccff00] text-black font-extrabold text-xs uppercase tracking-wider flex items-center gap-1.5"
-                >
-                  <MessageSquarePlus className="w-3.5 h-3.5" />
-                  <span>Log Yours</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!isAuthenticated && onRequireAuth) {
+                        onRequireAuth('share your post');
+                        return;
+                      }
+                      setShowCreateModal(true);
+                    }}
+                    className="h-9 px-3 rounded-xl bg-[#ccff00] text-black font-extrabold text-xs uppercase tracking-wider flex items-center gap-1.5 shadow-md shadow-[#ccff00]/10"
+                  >
+                    <MessageSquarePlus className="w-3.5 h-3.5" />
+                    <span>Create Post</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!isAuthenticated && onRequireAuth) {
+                        onRequireAuth('share your experience');
+                        return;
+                      }
+                      onOpenReportModal(place);
+                    }}
+                    className="h-9 px-3 rounded-xl bg-white/[0.06] hover:bg-white/[0.1] text-white font-bold text-xs flex items-center gap-1.5 border border-white/[0.08]"
+                  >
+                    <span>Quick Report</span>
+                  </button>
+                </div>
               </div>
+
+              {/* Approved Community Posts (Strictly status = 'approved') */}
+              {publicPosts.length > 0 && (
+                <div className="space-y-3">
+                  <p className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-[#ccff00]" />
+                    <span>Approved Community Posts ({publicPosts.length})</span>
+                  </p>
+                  <div className="space-y-2.5">
+                    {publicPosts.map((p) => (
+                      <div
+                        key={p.id}
+                        className="p-4 rounded-xl bg-[#111317] border border-white/[0.08] space-y-2"
+                      >
+                        <div className="flex items-center justify-between text-xs">
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-white">{p.author_name}</span>
+                            <span className="text-zinc-500 font-mono text-[11px]">{p.author_username}</span>
+                          </div>
+                          {p.is_visited && (
+                            <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                              Verified Visit
+                            </span>
+                          )}
+                        </div>
+                        <h4 className="text-sm font-bold text-white tracking-tight">{p.title}</h4>
+                        <p className="text-xs text-zinc-300 leading-relaxed">{p.content}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {reports.length > 0 ? (
                 <div className="space-y-3">
+                  <p className="text-xs font-bold text-zinc-400">Community Scout Confirmations</p>
                   {reports.map((report) => (
                     <ExperienceVerificationItem
                       key={report.id}
@@ -441,11 +506,11 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
                     />
                   ))}
                 </div>
-              ) : (
+              ) : publicPosts.length === 0 ? (
                 <div className="p-6 rounded-2xl bg-white/[0.02] border border-white/[0.05] text-center">
-                  <p className="text-xs text-zinc-400">Be the first to log a community experience for this spot!</p>
+                  <p className="text-xs text-zinc-400">Be the first to share a post or log an experience for this spot!</p>
                 </div>
-              )}
+              ) : null}
             </div>
           )}
 
@@ -600,6 +665,17 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
             </div>
           </div>
         )}
+
+        {/* Create Post Modal */}
+        <CreatePostModal
+          isOpen={showCreateModal}
+          onClose={() => setShowCreateModal(false)}
+          defaultPlaceId={place.id}
+          defaultPlaceName={place.name}
+          onPostSubmitted={() => {
+            fetchPublicPlacePosts(place.id).then((posts) => setPublicPosts(posts || []));
+          }}
+        />
       </div>
     </div>
   );

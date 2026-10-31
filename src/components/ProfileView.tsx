@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Compass,
   MessageSquareHeart,
@@ -7,6 +7,14 @@ import {
   LogIn,
   Edit3,
   Check,
+  Shield,
+  Plus,
+  Trash2,
+  AlertCircle,
+  Star,
+  MapPin,
+  Clock,
+  Sparkles,
 } from 'lucide-react';
 import { UserLocation } from '../types/outera';
 import {
@@ -26,7 +34,12 @@ import {
   fetchRecentActivities,
   subscribeToAuthChanges,
   isUsernameAvailable,
+  fetchUserPlacePosts,
+  deleteUserPost,
+  PlacePost,
 } from '../services/supabase';
+import { AdminDashboard } from './AdminDashboard';
+import { CreatePostModal } from './CreatePostModal';
 
 interface ProfileViewProps {
   currentLocation: UserLocation;
@@ -40,6 +53,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   onOpenAuthModal,
 }) => {
   const [authUser, setAuthUser] = useState<any>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [profile, setProfile] = useState<UserProfile>(EMPTY_GUEST_PROFILE);
   const [stats, setStats] = useState({
     explored: 0,
@@ -49,8 +63,13 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     visited: 0,
     verifications: 0,
   });
-  const [activeTab, setActiveTab] = useState<'stats' | 'visited' | 'preferences' | 'activity'>('stats');
+
+  const [activeTab, setActiveTab] = useState<'preferences' | 'visited' | 'activity' | 'posts' | 'admin'>('preferences');
   const [activities, setActivities] = useState<any[]>([]);
+  const [userPosts, setUserPosts] = useState<PlacePost[]>([]);
+  const [loadingPosts, setLoadingPosts] = useState(false);
+
+  // Edit Profile Modal
   const [showEditModal, setShowEditModal] = useState(false);
   const [editName, setEditName] = useState('');
   const [editHandle, setEditHandle] = useState('');
@@ -58,6 +77,22 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [editAvatarSeed, setEditAvatarSeed] = useState('scout-1');
   const [editError, setEditError] = useState<string | null>(null);
   const [savedSuccess, setSavedSuccess] = useState(false);
+
+  // Create / Edit Post Modal
+  const [showCreatePostModal, setShowCreatePostModal] = useState(false);
+  const [editingPost, setEditingPost] = useState<PlacePost | null>(null);
+
+  const loadUserPosts = useCallback(async (userId: string) => {
+    setLoadingPosts(true);
+    try {
+      const posts = await fetchUserPlacePosts(userId);
+      setUserPosts(posts || []);
+    } catch (err) {
+      console.warn('Failed to load user posts:', err);
+    } finally {
+      setLoadingPosts(false);
+    }
+  }, []);
 
   // Load auth state, genuine user profile, and real stats
   useEffect(() => {
@@ -85,6 +120,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           };
           setProfile(loadedProfile);
           setCachedUserProfile(user.id, loadedProfile);
+
+          // Check if admin from database role
+          const hasAdminRole = dbProfile.role === 'admin';
+          setIsAdmin(hasAdminRole);
         }
 
         // Fetch genuine stats from Supabase
@@ -92,10 +131,15 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         if (isMounted) {
           setStats(realStats);
         }
+
+        // Load user's own posts
+        loadUserPosts(user.id);
       } else {
         // Guest user: starts with genuine 0 across all metrics and neutral guest state
         if (isMounted) {
           setProfile(EMPTY_GUEST_PROFILE);
+          setIsAdmin(false);
+          setUserPosts([]);
           setStats({
             explored: 0,
             shared: 0,
@@ -124,14 +168,17 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       isMounted = false;
       unsubscribe();
     };
-  }, []);
+  }, [loadUserPosts]);
 
   const handleSignOut = async () => {
     const userId = authUser?.id;
     await signOut();
     clearUserProfileCache(userId);
     setAuthUser(null);
+    setIsAdmin(false);
+    setUserPosts([]);
     setProfile(EMPTY_GUEST_PROFILE);
+    setActiveTab('preferences');
     setStats({
       explored: 0,
       shared: 0,
@@ -206,6 +253,14 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     }, 800);
   };
 
+  const handleDeletePost = async (postId: string) => {
+    if (!confirm('Are you sure you want to delete this post?')) return;
+    const res = await deleteUserPost(postId);
+    if (res.success && authUser) {
+      loadUserPosts(authUser.id);
+    }
+  };
+
   const handleUpdateVibe = (vibe: string) => {
     const updated = saveUserProfile({ vibePreference: vibe }, authUser?.id);
     setProfile(updated);
@@ -226,6 +281,11 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const vibeOptions = ['Chill & Social', 'Quiet & Focused', 'High Energy & Active', 'Spontaneous'];
   const budgetOptions = ['Under ৳300', 'Under ৳500', 'Under ৳1,000', 'No Limit'];
 
+  // If Admin Dashboard tab is chosen, display it full width
+  if (activeTab === 'admin' && isAdmin) {
+    return <AdminDashboard onClose={() => setActiveTab('preferences')} />;
+  }
+
   return (
     <div className="w-full px-4 sm:px-6 py-6 max-w-xl mx-auto space-y-6">
       {/* Header Profile Lockup */}
@@ -239,11 +299,16 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               <h1 className="text-base sm:text-lg font-bold text-white tracking-tight truncate">
                 {profile.name || (authUser ? 'OUTERA Scout' : 'Guest Scout')}
               </h1>
-              {authUser && (
-                <span className="text-[10px] font-bold text-[#ccff00] bg-[#ccff00]/10 px-2 py-0.5 rounded-full border border-[#ccff00]/25 uppercase shrink-0">
+              {isAdmin ? (
+                <span className="text-[10px] font-extrabold text-[#ccff00] bg-[#ccff00]/15 px-2 py-0.5 rounded-full border border-[#ccff00]/30 uppercase shrink-0 flex items-center gap-1">
+                  <Shield className="w-2.5 h-2.5" />
+                  <span>Admin</span>
+                </span>
+              ) : authUser ? (
+                <span className="text-[10px] font-bold text-zinc-300 bg-white/[0.06] px-2 py-0.5 rounded-full border border-white/[0.1] uppercase shrink-0">
                   Scout
                 </span>
-              )}
+              ) : null}
             </div>
             <p className="text-xs text-zinc-400 mt-0.5 truncate font-mono">
               {profile.handle || authUser?.email || 'Sign in to create your scout handle'}
@@ -324,7 +389,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             <span>Shared</span>
           </div>
           <p className="text-xl sm:text-2xl font-extrabold text-white font-mono tabular-nums">
-            {stats.shared}
+            {userPosts.length || stats.shared}
           </p>
           <p className="text-[10px] text-zinc-500 mt-0.5">experiences</p>
         </div>
@@ -341,23 +406,77 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         </div>
       </div>
 
+      {/* ADMIN ENTRY IN PROFILE MENU - EXCLUSIVELY SHOWN TO ROLE = 'admin' */}
+      {isAdmin && (
+        <div className="p-4 rounded-2xl bg-gradient-to-r from-[#171a14] to-[#121510] border border-[#ccff00]/30 flex items-center justify-between gap-3 shadow-lg shadow-[#ccff00]/5">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-[#ccff00]/15 border border-[#ccff00]/30 flex items-center justify-center text-[#ccff00] shrink-0">
+              <Shield className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-black text-white uppercase tracking-wider">
+                  Admin System
+                </span>
+                <span className="text-[10px] font-bold text-black bg-[#ccff00] px-1.5 py-0.2 rounded-full">
+                  Staff
+                </span>
+              </div>
+              <p className="text-[11px] text-zinc-400 mt-0.5">
+                Review pending posts, manage public visibility & moderation actions.
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('admin')}
+            className="h-9 px-3.5 rounded-xl bg-[#ccff00] hover:bg-[#d8ff33] text-black font-extrabold text-xs transition-all shrink-0 shadow-md shadow-[#ccff00]/10"
+          >
+            Open Dashboard
+          </button>
+        </div>
+      )}
+
       {/* Tabs Switcher */}
-      <div className="flex rounded-xl bg-white/[0.03] p-1 border border-white/[0.06]">
+      <div className="flex rounded-xl bg-white/[0.03] p-1 border border-white/[0.06] overflow-x-auto no-scrollbar">
         <button
           type="button"
-          onClick={() => setActiveTab('stats')}
-          className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
-            activeTab === 'stats'
+          onClick={() => setActiveTab('preferences')}
+          className={`flex-1 min-w-[85px] py-2 text-xs font-bold rounded-lg transition-all ${
+            activeTab === 'preferences'
               ? 'bg-[#ccff00] text-black font-extrabold'
               : 'text-zinc-400 hover:text-white'
           }`}
         >
           Preferences
         </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('posts')}
+          className={`flex-1 min-w-[85px] py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+            activeTab === 'posts'
+              ? 'bg-[#ccff00] text-black font-extrabold'
+              : 'text-zinc-400 hover:text-white'
+          }`}
+        >
+          <span>My Posts</span>
+          {userPosts.length > 0 && (
+            <span
+              className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                activeTab === 'posts' ? 'bg-black text-[#ccff00]' : 'bg-white/[0.08] text-zinc-300'
+              }`}
+            >
+              {userPosts.length}
+            </span>
+          )}
+        </button>
+
         <button
           type="button"
           onClick={() => setActiveTab('visited')}
-          className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
+          className={`flex-1 min-w-[85px] py-2 text-xs font-bold rounded-lg transition-all ${
             activeTab === 'visited'
               ? 'bg-[#ccff00] text-black font-extrabold'
               : 'text-zinc-400 hover:text-white'
@@ -365,10 +484,11 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         >
           Visited ({stats.visited})
         </button>
+
         <button
           type="button"
           onClick={() => setActiveTab('activity')}
-          className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
+          className={`flex-1 min-w-[85px] py-2 text-xs font-bold rounded-lg transition-all ${
             activeTab === 'activity'
               ? 'bg-[#ccff00] text-black font-extrabold'
               : 'text-zinc-400 hover:text-white'
@@ -378,8 +498,152 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         </button>
       </div>
 
+      {/* Tab: My Posts (Normal user post lifecycle) */}
+      {activeTab === 'posts' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-bold text-white tracking-tight">Your Community Posts</h2>
+              <p className="text-[11px] text-zinc-400">
+                Track status from pending review to public community visibility.
+              </p>
+            </div>
+
+            {authUser && (
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingPost(null);
+                  setShowCreatePostModal(true);
+                }}
+                className="h-8 px-3 rounded-xl bg-[#ccff00] hover:bg-[#d8ff33] text-black font-extrabold text-xs flex items-center gap-1.5 transition-all shadow-md shadow-[#ccff00]/10 shrink-0"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Create Post</span>
+              </button>
+            )}
+          </div>
+
+          {loadingPosts ? (
+            <div className="py-12 text-center text-xs text-zinc-400 font-mono">
+              Loading your posts...
+            </div>
+          ) : userPosts.length === 0 ? (
+            <div className="py-12 px-4 rounded-2xl bg-white/[0.02] border border-white/[0.06] text-center max-w-sm mx-auto space-y-3">
+              <Sparkles className="w-7 h-7 text-zinc-500 mx-auto" />
+              <div>
+                <p className="text-sm font-bold text-white">No posts shared yet</p>
+                <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
+                  Visited a spot in Bangladesh? Share your experience, spend, and vibes with the community.
+                </p>
+              </div>
+              {authUser ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingPost(null);
+                    setShowCreatePostModal(true);
+                  }}
+                  className="h-9 px-4 rounded-xl bg-[#ccff00] text-black text-xs font-extrabold inline-flex items-center gap-1.5"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Share your first post</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onOpenAuthModal}
+                  className="h-9 px-4 rounded-xl bg-[#ccff00] text-black text-xs font-extrabold inline-flex items-center gap-1.5"
+                >
+                  <LogIn className="w-3.5 h-3.5" />
+                  <span>Sign in to post</span>
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {userPosts.map((post) => {
+                const isPending = post.status === 'pending';
+                const statusStyles: Record<string, string> = {
+                  pending: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
+                  approved: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
+                  rejected: 'bg-rose-500/15 text-rose-300 border-rose-500/30',
+                  hidden: 'bg-zinc-800 text-zinc-400 border-zinc-700',
+                };
+
+                return (
+                  <div
+                    key={post.id}
+                    className="p-4 rounded-2xl bg-[#111317] border border-white/[0.08] space-y-3"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <MapPin className="w-3.5 h-3.5 text-[#ccff00]" />
+                          <span className="text-xs font-bold text-white truncate">
+                            {post.place_name}
+                          </span>
+                        </div>
+                        <h3 className="text-sm font-bold text-white mt-1">{post.title}</h3>
+                      </div>
+
+                      <span
+                        className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border shrink-0 ${
+                          statusStyles[post.status] || statusStyles.pending
+                        }`}
+                      >
+                        {post.status}
+                      </span>
+                    </div>
+
+                    <p className="text-xs text-zinc-300 leading-relaxed">{post.content}</p>
+
+                    <div className="flex items-center justify-between text-xs text-zinc-400 pt-1">
+                      <div className="flex items-center gap-1 text-amber-400">
+                        <Star className="w-3.5 h-3.5 fill-amber-400" />
+                        <span className="font-mono font-bold text-white">{post.rating}/5</span>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {isPending && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingPost(post);
+                              setShowCreatePostModal(true);
+                            }}
+                            className="text-xs font-bold text-[#ccff00] hover:underline"
+                          >
+                            Edit
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleDeletePost(post.id)}
+                          className="text-xs text-red-400 hover:text-red-300"
+                          title="Delete post"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Moderation note if rejected or hidden */}
+                    {post.moderation_note && (
+                      <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200">
+                        <span className="font-bold">Moderator Feedback:</span> {post.moderation_note}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Tab: Preferences */}
-      {activeTab === 'stats' && (
+      {activeTab === 'preferences' && (
         <div className="space-y-5">
           {/* Vibe Preference */}
           <div className="space-y-2">
@@ -576,6 +840,19 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Create / Edit Post Modal */}
+      <CreatePostModal
+        isOpen={showCreatePostModal}
+        onClose={() => {
+          setShowCreatePostModal(false);
+          setEditingPost(null);
+        }}
+        editingPost={editingPost}
+        onPostSubmitted={() => {
+          if (authUser) loadUserPosts(authUser.id);
+        }}
+      />
     </div>
   );
 };

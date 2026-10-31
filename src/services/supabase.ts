@@ -1176,3 +1176,415 @@ export async function fetchRecentSearches(limit = 6): Promise<string[]> {
     return [];
   }
 }
+
+// -------------------------------------------------------------
+// 19. PLACE_POSTS TABLE & SECURE ADMIN MODERATION SYSTEM
+// Schema: id, place_id, user_id, title, content, rating, status, is_visited, created_at, updated_at
+// -------------------------------------------------------------
+export interface PlacePost {
+  id: string;
+  place_id: string;
+  user_id: string;
+  title: string;
+  content: string;
+  rating: number;
+  status: 'pending' | 'approved' | 'rejected' | 'hidden';
+  is_visited: boolean;
+  moderation_note?: string | null;
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
+  created_at: string;
+  updated_at?: string;
+  // Augmented details for UI
+  author_name?: string;
+  author_username?: string;
+  author_avatar?: string | null;
+  place_name?: string;
+  place_category?: string;
+  place_address?: string;
+}
+
+const MODERATION_NOTES_STORAGE_KEY = 'outera_post_moderation_notes';
+
+function getStoredModerationNotes(): Record<string, { note: string; reviewed_by?: string; reviewed_at?: string }> {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = window.localStorage.getItem(MODERATION_NOTES_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function storeModerationNote(postId: string, note: string, reviewedBy?: string) {
+  if (typeof window === 'undefined') return;
+  try {
+    const notes = getStoredModerationNotes();
+    notes[postId] = {
+      note,
+      reviewed_by: reviewedBy,
+      reviewed_at: new Date().toISOString(),
+    };
+    window.localStorage.setItem(MODERATION_NOTES_STORAGE_KEY, JSON.stringify(notes));
+  } catch (err) {
+    console.warn('Failed to store moderation note:', err);
+  }
+}
+
+export async function isCurrentUserAdmin(): Promise<boolean> {
+  try {
+    const user = await getCurrentUser();
+    if (!user) return false;
+    const profile = await fetchProfile(user.id);
+    return profile?.role === 'admin';
+  } catch {
+    return false;
+  }
+}
+
+async function hydratePlacePosts(rawPosts: any[]): Promise<PlacePost[]> {
+  if (!rawPosts || rawPosts.length === 0) return [];
+
+  const userIds = Array.from(new Set(rawPosts.map((p) => p.user_id).filter(Boolean)));
+  const profilesMap = new Map<string, SupabaseProfile>();
+
+  if (userIds.length > 0) {
+    try {
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('id, display_name, username, avatar_url')
+        .in('id', userIds);
+      if (profiles) {
+        for (const p of profiles) {
+          profilesMap.set(p.id, p);
+        }
+      }
+    } catch (e) {
+      console.warn('hydratePlacePosts profiles notice:', e);
+    }
+  }
+
+  const storedNotes = getStoredModerationNotes();
+
+  return rawPosts.map((p) => {
+    const author = profilesMap.get(p.user_id);
+    const place = p.places || {};
+    const modInfo = storedNotes[p.id];
+
+    return {
+      id: p.id,
+      place_id: p.place_id,
+      user_id: p.user_id,
+      title: p.title || '',
+      content: p.content || '',
+      rating: Number(p.rating) || 5,
+      status: (p.status || 'pending').toLowerCase() as PlacePost['status'],
+      is_visited: Boolean(p.is_visited),
+      moderation_note: p.moderation_note || modInfo?.note || null,
+      reviewed_by: p.reviewed_by || modInfo?.reviewed_by || null,
+      reviewed_at: p.reviewed_at || modInfo?.reviewed_at || null,
+      created_at: p.created_at,
+      updated_at: p.updated_at,
+      author_name: author?.display_name || 'OUTERA Scout',
+      author_username: author?.username ? `@${author.username}` : '@scout',
+      author_avatar: author?.avatar_url || null,
+      place_name: place.name || 'Selected Place',
+      place_category: place.category || 'Spot',
+      place_address: place.address || '',
+    };
+  });
+}
+
+// Public visibility: ONLY status = 'approved' are publicly visible
+export async function fetchPublicPlacePosts(placeId?: string): Promise<PlacePost[]> {
+  try {
+    let query = supabase
+      .from('place_posts')
+      .select('*, places(id, name, category, address)')
+      .eq('status', 'approved')
+      .order('created_at', { ascending: false })
+      .limit(50);
+
+    if (placeId) {
+      query = query.eq('place_id', placeId);
+    }
+
+    const { data, error } = await query;
+    if (error || !data) return [];
+    return await hydratePlacePosts(data);
+  } catch (err) {
+    console.warn('fetchPublicPlacePosts error:', err);
+    return [];
+  }
+}
+
+// User can view their own posts and moderation status
+export async function fetchUserPlacePosts(userId?: string): Promise<PlacePost[]> {
+  try {
+    const user = userId ? { id: userId } : await getCurrentUser();
+    if (!user) return [];
+
+    const { data, error } = await supabase
+      .from('place_posts')
+      .select('*, places(id, name, category, address)')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false });
+
+    if (error || !data) return [];
+    return await hydratePlacePosts(data);
+  } catch (err) {
+    console.warn('fetchUserPlacePosts error:', err);
+    return [];
+  }
+}
+
+// Create new post - strictly status = 'pending'
+export async function createPlacePost(input: {
+  place_id: string;
+  title: string;
+  content: string;
+  rating?: number;
+  is_visited?: boolean;
+}): Promise<{ success: boolean; data?: PlacePost; error?: string }> {
+  try {
+    const user = await getCurrentUser();
+    if (!user) {
+      return { success: false, error: 'You must be signed in to post.' };
+    }
+
+    if (!input.title.trim()) {
+      return { success: false, error: 'Post title is required.' };
+    }
+    if (!input.content.trim()) {
+      return { success: false, error: 'Post content is required.' };
+    }
+    if (!input.place_id) {
+      return { success: false, error: 'Please select a place.' };
+    }
+
+    const payload = {
+      place_id: input.place_id,
+      user_id: user.id,
+      title: input.title.trim(),
+      content: input.content.trim(),
+      rating: typeof input.rating === 'number' ? Math.max(1, Math.min(5, input.rating)) : 5,
+      status: 'pending', // Strictly pending!
+      is_visited: Boolean(input.is_visited),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data, error } = await supabase
+      .from('place_posts')
+      .insert(payload)
+      .select('*, places(id, name, category, address)')
+      .maybeSingle();
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    const hydrated = data ? (await hydratePlacePosts([data]))[0] : undefined;
+    return { success: true, data: hydrated };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to submit post.' };
+  }
+}
+
+// User can edit their own pending post
+export async function updateUserPendingPost(
+  postId: string,
+  updates: { title?: string; content?: string; rating?: number; is_visited?: boolean }
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const user = await getCurrentUser();
+    if (!user) return { success: false, error: 'Authentication required' };
+
+    const { data: existing, error: fetchErr } = await supabase
+      .from('place_posts')
+      .select('id, user_id, status')
+      .eq('id', postId)
+      .maybeSingle();
+
+    if (fetchErr || !existing) {
+      return { success: false, error: 'Post not found.' };
+    }
+    if (existing.user_id !== user.id) {
+      return { success: false, error: 'You can only edit your own posts.' };
+    }
+    if (existing.status !== 'pending') {
+      return { success: false, error: 'Only pending posts can be edited.' };
+    }
+
+    const payload: Record<string, any> = {
+      updated_at: new Date().toISOString(),
+    };
+    if (updates.title !== undefined) payload.title = updates.title.trim();
+    if (updates.content !== undefined) payload.content = updates.content.trim();
+    if (updates.rating !== undefined) payload.rating = updates.rating;
+    if (updates.is_visited !== undefined) payload.is_visited = updates.is_visited;
+
+    const { error: updateErr } = await supabase
+      .from('place_posts')
+      .update(payload)
+      .eq('id', postId)
+      .eq('user_id', user.id);
+
+    if (updateErr) {
+      return { success: false, error: updateErr.message };
+    }
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to update post.' };
+  }
+}
+
+// User can delete their own post
+export async function deleteUserPost(postId: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const user = await getCurrentUser();
+    if (!user) return { success: false, error: 'Authentication required' };
+
+    const { error } = await supabase
+      .from('place_posts')
+      .delete()
+      .eq('id', postId)
+      .eq('user_id', user.id);
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to delete post.' };
+  }
+}
+
+// Admin: Overview stats
+export async function fetchAdminOverviewStats(): Promise<{
+  totalUsers: number;
+  totalPlaces: number;
+  totalPosts: number;
+  pendingPosts: number;
+  totalReports: number;
+}> {
+  try {
+    const isAdmin = await isCurrentUserAdmin();
+    if (!isAdmin) {
+      throw new Error('Unauthorized');
+    }
+
+    const [usersRes, placesRes, postsRes, pendingRes, reportsRes] = await Promise.all([
+      supabase.from('profiles').select('*', { count: 'exact', head: true }),
+      supabase.from('places').select('*', { count: 'exact', head: true }),
+      supabase.from('place_posts').select('*', { count: 'exact', head: true }),
+      supabase.from('place_posts').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
+      supabase.from('reports').select('*', { count: 'exact', head: true }),
+    ]);
+
+    return {
+      totalUsers: usersRes.count || 0,
+      totalPlaces: placesRes.count || 0,
+      totalPosts: postsRes.count || 0,
+      pendingPosts: pendingRes.count || 0,
+      totalReports: reportsRes.count || 0,
+    };
+  } catch (err) {
+    console.warn('fetchAdminOverviewStats error:', err);
+    return { totalUsers: 0, totalPlaces: 0, totalPosts: 0, pendingPosts: 0, totalReports: 0 };
+  }
+}
+
+// Admin: Fetch posts by moderation tab
+export async function fetchAdminPlacePosts(
+  statusFilter: 'pending' | 'approved' | 'rejected' | 'hidden' | 'all' = 'pending'
+): Promise<PlacePost[]> {
+  try {
+    const isAdmin = await isCurrentUserAdmin();
+    if (!isAdmin) {
+      return [];
+    }
+
+    let query = supabase
+      .from('place_posts')
+      .select('*, places(id, name, category, address)')
+      .order('created_at', { ascending: false });
+
+    if (statusFilter !== 'all') {
+      query = query.eq('status', statusFilter);
+    }
+
+    const { data, error } = await query;
+    if (error || !data) return [];
+    return await hydratePlacePosts(data);
+  } catch (err) {
+    console.warn('fetchAdminPlacePosts error:', err);
+    return [];
+  }
+}
+
+// Admin: Moderate post action
+export async function moderatePlacePost(
+  postId: string,
+  action: 'approve' | 'reject' | 'hide',
+  note?: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const user = await getCurrentUser();
+    if (!user) return { success: false, error: 'Authentication required' };
+    const isAdmin = await isCurrentUserAdmin();
+    if (!isAdmin) {
+      return { success: false, error: 'Unauthorized: Admin role required' };
+    }
+
+    const statusMap = {
+      approve: 'approved',
+      reject: 'rejected',
+      hide: 'hidden',
+    };
+    const targetStatus = statusMap[action];
+
+    if (note?.trim()) {
+      storeModerationNote(postId, note.trim(), user.id);
+    }
+
+    const payload: Record<string, any> = {
+      status: targetStatus,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { error: updateErr } = await supabase
+      .from('place_posts')
+      .update(payload)
+      .eq('id', postId);
+
+    if (updateErr) {
+      return { success: false, error: updateErr.message };
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to moderate post.' };
+  }
+}
+
+// Admin: Delete post permanently
+export async function adminDeletePlacePost(postId: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const user = await getCurrentUser();
+    if (!user) return { success: false, error: 'Authentication required' };
+    const isAdmin = await isCurrentUserAdmin();
+    if (!isAdmin) {
+      return { success: false, error: 'Unauthorized: Admin role required' };
+    }
+
+    const { error } = await supabase.from('place_posts').delete().eq('id', postId);
+    if (error) {
+      return { success: false, error: error.message };
+    }
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to delete post.' };
+  }
+}
+
