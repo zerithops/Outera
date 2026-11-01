@@ -39,9 +39,11 @@ export const Navbar: React.FC<NavbarProps> = ({
         title="Tap to browse any division, district or detect GPS"
         aria-label="Current location"
       >
-        <MapPin className="w-3.5 h-3.5 text-[#ccff00] shrink-0" />
+        <MapPin className={`w-3.5 h-3.5 shrink-0 ${currentLocation.coords ? 'text-[#ccff00]' : 'text-zinc-500'}`} />
         <span className="truncate font-medium">
-          {currentLocation.neighborhoodName} · {currentLocation.district}
+          {currentLocation.neighborhoodName !== 'Location not set'
+            ? `${currentLocation.neighborhoodName}${currentLocation.district && currentLocation.district !== 'Nearby Area' ? ` · ${currentLocation.district}` : ''}`
+            : 'Set Location'}
         </span>
       </button>
 

@@ -52,13 +52,7 @@ export const LocationHierarchyModal: React.FC<LocationHierarchyModalProps> = ({
       onSelectLocation(result.location);
       onClose();
     } else {
-      if (result.error === 'denied') {
-        setErrorState('GPS access was denied. Pick your division or district manually below.');
-      } else if (result.error === 'timeout') {
-        setErrorState('GPS timed out. Select an area below to explore right away.');
-      } else {
-        setErrorState('Could not pinpoint GPS. Pick your district below.');
-      }
+      setErrorState(result.errorMessage || 'Could not pinpoint GPS location.');
     }
   };
 
@@ -72,10 +66,14 @@ export const LocationHierarchyModal: React.FC<LocationHierarchyModalProps> = ({
   }) => {
     onSelectLocation({
       coords: res.coords,
+      latitude: res.coords.lat,
+      longitude: res.coords.lng,
       neighborhoodName: res.area,
       district: res.district,
       division: res.division,
+      formattedAddress: `${res.area}, ${res.district}, ${res.division}`,
       isCustomManual: true,
+      status: 'ready',
     });
     onClose();
   };
@@ -84,10 +82,14 @@ export const LocationHierarchyModal: React.FC<LocationHierarchyModalProps> = ({
     if (!selectedDistrict || !selectedDivision) return;
     onSelectLocation({
       coords: selectedDistrict.coords,
+      latitude: selectedDistrict.coords.lat,
+      longitude: selectedDistrict.coords.lng,
       neighborhoodName: area,
       district: selectedDistrict.name,
       division: selectedDivision.name,
+      formattedAddress: `${area}, ${selectedDistrict.name}, ${selectedDivision.name}`,
       isCustomManual: true,
+      status: 'ready',
     });
     onClose();
   };
@@ -96,10 +98,14 @@ export const LocationHierarchyModal: React.FC<LocationHierarchyModalProps> = ({
     if (!selectedDivision) return;
     onSelectLocation({
       coords: dist.coords,
+      latitude: dist.coords.lat,
+      longitude: dist.coords.lng,
       neighborhoodName: dist.popularAreas[0] || dist.name,
       district: dist.name,
       division: selectedDivision.name,
+      formattedAddress: `${dist.popularAreas[0] || dist.name}, ${dist.name}, ${selectedDivision.name}`,
       isCustomManual: true,
+      status: 'ready',
     });
     onClose();
   };

@@ -2,12 +2,15 @@ import React, { useState } from 'react';
 import { X, Check, MapPin, Sparkles, AlertCircle, ArrowRight } from 'lucide-react';
 import { BANGLADESH_DIVISIONS } from '../data/bangladeshLocations';
 import { submitPlaceSuggestion } from '../services/supabase';
+import { LocationPickerMap } from './LocationPickerMap';
+import { Coordinates } from '../types/outera';
 
 interface PlaceSuggestionModalProps {
   isOpen: boolean;
   onClose: () => void;
   defaultDivision?: string;
   defaultDistrict?: string;
+  onOpenAuthModal?: () => void;
 }
 
 export const PlaceSuggestionModal: React.FC<PlaceSuggestionModalProps> = ({
@@ -15,12 +18,14 @@ export const PlaceSuggestionModal: React.FC<PlaceSuggestionModalProps> = ({
   onClose,
   defaultDivision,
   defaultDistrict,
+  onOpenAuthModal,
 }) => {
   const [name, setName] = useState('');
   const [category, setCategory] = useState('Chill');
   const [division, setDivision] = useState(defaultDivision || 'Dhaka');
   const [district, setDistrict] = useState(defaultDistrict || 'Dhaka');
   const [address, setAddress] = useState('');
+  const [coords, setCoords] = useState<Coordinates | null>(null);
   const [whyWorthVisiting, setWhyWorthVisiting] = useState('');
   const [approxBudget, setApproxBudget] = useState('Under ৳500');
   const [bestTimeToVisit, setBestTimeToVisit] = useState('Late afternoon / Sunset');
@@ -53,7 +58,7 @@ export const PlaceSuggestionModal: React.FC<PlaceSuggestionModalProps> = ({
     setLoading(true);
     setErrorMessage(null);
 
-    const success = await submitPlaceSuggestion({
+    const res = await submitPlaceSuggestion({
       name: name.trim(),
       category,
       division,
@@ -62,21 +67,24 @@ export const PlaceSuggestionModal: React.FC<PlaceSuggestionModalProps> = ({
       whyWorthVisiting: whyWorthVisiting.trim(),
       approxBudget,
       bestTimeToVisit,
+      latitude: coords?.lat ?? null,
+      longitude: coords?.lng ?? null,
     });
 
     setLoading(false);
 
-    if (success) {
+    if (res.success) {
       setSubmitted(true);
       setTimeout(() => {
         setSubmitted(false);
         setName('');
         setAddress('');
+        setCoords(null);
         setWhyWorthVisiting('');
         onClose();
       }, 1500);
     } else {
-      setErrorMessage('Failed to submit suggestion. Please try again.');
+      setErrorMessage(res.error || 'Failed to submit suggestion. Please try again.');
     }
   };
 
@@ -155,9 +163,23 @@ export const PlaceSuggestionModal: React.FC<PlaceSuggestionModalProps> = ({
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             {errorMessage && (
-              <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-300 text-xs flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
-                <p className="leading-snug">{errorMessage}</p>
+              <div className="p-3 sm:p-3.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-300 text-xs flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
+                  <p className="leading-snug">{errorMessage}</p>
+                </div>
+                {onOpenAuthModal && errorMessage.toLowerCase().includes('sign in') && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      onOpenAuthModal();
+                    }}
+                    className="px-3 py-1 rounded-lg bg-[#ccff00] text-black font-extrabold text-[11px] shrink-0 hover:bg-[#d8ff33] transition-all cursor-pointer"
+                  >
+                    Sign In
+                  </button>
+                )}
               </div>
             )}
 
@@ -247,6 +269,17 @@ export const PlaceSuggestionModal: React.FC<PlaceSuggestionModalProps> = ({
                 className="w-full h-10 px-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#ccff00]"
               />
             </div>
+
+            {/* Optional Interactive Map & Coordinate Picker */}
+            <LocationPickerMap
+              coordinates={coords}
+              onChangeCoordinates={setCoords}
+              onAddressDetected={(detectedAddr) => {
+                if (!address.trim()) {
+                  setAddress(detectedAddr);
+                }
+              }}
+            />
 
             {/* Why It's Worth Going Out For */}
             <div>

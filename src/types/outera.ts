@@ -99,8 +99,8 @@ export interface Place {
   neighborhood: string;
   city: string;
   district: string;
-  division: DivisionName;
-  coordinates: Coordinates;
+  division: DivisionName | string;
+  coordinates: Coordinates | null;
   priceLevel: {
     min: number;
     max: number;
@@ -163,13 +163,27 @@ export interface FilterState {
   mapLayer: 'all' | 'Trending' | 'Popular' | 'HiddenGems' | 'CommunityActivity' | 'Events';
 }
 
+export type LocationStatus =
+  | 'idle'
+  | 'detecting'
+  | 'ready'
+  | 'denied'
+  | 'unavailable'
+  | 'timeout'
+  | 'unsupported';
+
 export interface UserLocation {
-  coords: Coordinates;
+  coords: Coordinates | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  accuracyMeters?: number;
   neighborhoodName: string;
   district: string;
-  division: DivisionName;
+  division: DivisionName | string;
+  formattedAddress?: string;
   isCustomManual: boolean;
-  accuracyMeters?: number;
+  status: LocationStatus;
+  errorMessage?: string;
 }
 
 export interface SavedCollection {

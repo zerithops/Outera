@@ -26,7 +26,9 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
           OUTERA
         </span>
         <span className="text-zinc-600">·</span>
-        <span className="text-xs text-zinc-400 font-medium">Near {currentNeighborhood}</span>
+        <span className="text-xs text-zinc-400 font-medium">
+          {currentNeighborhood !== 'Location not set' ? `Near ${currentNeighborhood}` : 'Discover Hangouts & Vibe Checks'}
+        </span>
       </div>
 
       {/* Hero Headline */}

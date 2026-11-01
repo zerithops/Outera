@@ -125,6 +125,32 @@ export const FilterBar: React.FC<FilterBarProps> = ({
           Within 3 km
         </button>
 
+        {/* Within 5 km */}
+        <button
+          type="button"
+          onClick={() => setDistance(5)}
+          className={`shrink-0 h-8 px-3 rounded-lg text-xs font-medium border transition-all ${
+            filters.maxDistanceKm === 5
+              ? 'bg-[#ccff00] text-black font-bold border-[#ccff00]'
+              : 'bg-white/[0.03] text-zinc-300 border-white/[0.08] hover:bg-white/[0.06]'
+          }`}
+        >
+          Within 5 km
+        </button>
+
+        {/* Within 10 km */}
+        <button
+          type="button"
+          onClick={() => setDistance(10)}
+          className={`shrink-0 h-8 px-3 rounded-lg text-xs font-medium border transition-all ${
+            filters.maxDistanceKm === 10
+              ? 'bg-[#ccff00] text-black font-bold border-[#ccff00]'
+              : 'bg-white/[0.03] text-zinc-300 border-white/[0.08] hover:bg-white/[0.06]'
+          }`}
+        >
+          Within 10 km
+        </button>
+
         {/* Solo */}
         <button
           type="button"

@@ -2,18 +2,22 @@ import { Coordinates, FilterState, MoodCategory, Place } from '../types/outera';
 import { calculateDistanceKm } from './location';
 
 export interface PlaceWithDistance extends Place {
-  distanceKm: number;
+  distanceKm?: number;
   rankScore: number;
 }
 
 export function filterAndRankPlaces(
   places: Place[],
-  userCoords: Coordinates,
+  userCoords: Coordinates | null,
   filters: FilterState
 ): PlaceWithDistance[] {
-  // Calculate distance for all places
+  // Calculate distance for all places if user coordinates exist
   const processed = places.map((place) => {
-    const distanceKm = calculateDistanceKm(userCoords, place.coordinates);
+    const distanceKm =
+      userCoords && place.coordinates && typeof place.coordinates.lat === 'number'
+        ? calculateDistanceKm(userCoords, place.coordinates)
+        : undefined;
+
     return {
       ...place,
       distanceKm,
@@ -32,7 +36,15 @@ export function filterAndRankPlaces(
       const matchHood = place.neighborhood.toLowerCase().includes(q);
       const matchDistrict = place.district.toLowerCase().includes(q);
       const matchDivision = place.division.toLowerCase().includes(q);
-      if (!matchName && !matchCat && !matchDesc && !matchTags && !matchHood && !matchDistrict && !matchDivision) {
+      if (
+        !matchName &&
+        !matchCat &&
+        !matchDesc &&
+        !matchTags &&
+        !matchHood &&
+        !matchDistrict &&
+        !matchDivision
+      ) {
         return false;
       }
     }
@@ -62,9 +74,11 @@ export function filterAndRankPlaces(
       if (place.priceLevel.min > filters.priceMax) return false;
     }
 
-    // Max distance filter (only when not explicitly exploring another division)
+    // Max distance filter (requires known distance)
     if (filters.maxDistanceKm !== null && filters.selectedDivision === 'all') {
-      if (place.distanceKm > filters.maxDistanceKm) return false;
+      if (place.distanceKm === undefined || place.distanceKm > filters.maxDistanceKm) {
+        return false;
+      }
     }
 
     // Group fit
@@ -75,7 +89,11 @@ export function filterAndRankPlaces(
     // Environment
     if (filters.environment !== 'all') {
       if (filters.environment === 'Indoor' && place.environment !== 'Indoor') return false;
-      if (filters.environment === 'Outdoor' && place.environment !== 'Outdoor' && place.environment !== 'Rooftop') {
+      if (
+        filters.environment === 'Outdoor' &&
+        place.environment !== 'Outdoor' &&
+        place.environment !== 'Rooftop'
+      ) {
         return false;
       }
     }
@@ -93,27 +111,44 @@ export function filterAndRankPlaces(
 
     // Map Layer filter
     if (filters.mapLayer && filters.mapLayer !== 'all') {
-      if (filters.mapLayer === 'Trending' && !place.isTrending && place.markerState !== 'Trending') return false;
-      if (filters.mapLayer === 'Popular' && place.markerState !== 'Popular' && place.communityScore < 90) return false;
-      if (filters.mapLayer === 'HiddenGems' && !place.isHiddenGem && place.markerState !== 'HiddenGem') return false;
+      if (filters.mapLayer === 'Trending' && !place.isTrending && place.markerState !== 'Trending')
+        return false;
+      if (
+        filters.mapLayer === 'Popular' &&
+        place.markerState !== 'Popular' &&
+        place.communityScore < 90
+      )
+        return false;
+      if (
+        filters.mapLayer === 'HiddenGems' &&
+        !place.isHiddenGem &&
+        place.markerState !== 'HiddenGem'
+      )
+        return false;
       if (filters.mapLayer === 'Events' && !place.isEvent) return false;
-      if (filters.mapLayer === 'CommunityActivity' && (place.experienceReports?.length || 0) < 1) return false;
+      if (
+        filters.mapLayer === 'CommunityActivity' &&
+        (place.experienceReports?.length || 0) < 1
+      )
+        return false;
     }
 
     return true;
   });
 
-  // Ranking algorithm: Proximity + Community Score + Confidence + Open bonus
+  // Ranking algorithm: Proximity (if available) + Community Score + Confidence + Open bonus
   return filtered
     .map((place) => {
-      // Proximity score: closer is exponentially rewarded up to 20km
-      const proximityScore = Math.max(0, 60 - place.distanceKm * 2);
+      // Proximity score: closer is exponentially rewarded up to 20km if user location is available
+      const proximityScore =
+        place.distanceKm !== undefined ? Math.max(0, 60 - place.distanceKm * 2) : 0;
 
       // Community rating score (0 - 30)
       const communityWeight = (place.communityScore / 100) * 30;
 
       // Confidence weight: High confidence gives slight boost
-      const confidenceBonus = place.communityConfidence === 'High' ? 10 : place.communityConfidence === 'Mixed' ? 5 : 0;
+      const confidenceBonus =
+        place.communityConfidence === 'High' ? 10 : place.communityConfidence === 'Mixed' ? 5 : 0;
 
       // Open now bonus
       const openBonus = place.openingHours.openNow ? 10 : 0;
@@ -121,13 +156,24 @@ export function filterAndRankPlaces(
       // Trending bonus
       const trendingBonus = place.isTrending ? 8 : 0;
 
-      const rankScore = proximityScore + communityWeight + confidenceBonus + openBonus + trendingBonus;
+      const rankScore =
+        proximityScore + communityWeight + confidenceBonus + openBonus + trendingBonus;
       return {
         ...place,
         rankScore,
       };
     })
-    .sort((a, b) => b.rankScore - a.rankScore);
+    .sort((a, b) => {
+      // If user has location coordinates, sort strictly by nearest first!
+      if (userCoords) {
+        if (a.distanceKm !== undefined && b.distanceKm !== undefined) {
+          return a.distanceKm - b.distanceKm;
+        }
+        if (a.distanceKm !== undefined) return -1;
+        if (b.distanceKm !== undefined) return 1;
+      }
+      return b.rankScore - a.rankScore;
+    });
 }
 
 /**
@@ -135,13 +181,16 @@ export function filterAndRankPlaces(
  */
 export function getSurpriseRecommendation(
   places: Place[],
-  userCoords: Coordinates,
+  userCoords: Coordinates | null,
   excludeId?: string
 ): { place: PlaceWithDistance; reason: string } {
   const candidates = places
     .filter((p) => p.id !== excludeId)
     .map((place) => {
-      const distanceKm = calculateDistanceKm(userCoords, place.coordinates);
+      const distanceKm =
+        userCoords && place.coordinates
+          ? calculateDistanceKm(userCoords, place.coordinates)
+          : undefined;
       return {
         ...place,
         distanceKm,
@@ -151,8 +200,10 @@ export function getSurpriseRecommendation(
 
   // Prefer places that are open now and have high community score
   const sorted = candidates.sort((a, b) => {
-    const aScore = (a.openingHours.openNow ? 20 : 0) + a.communityScore - a.distanceKm * 0.5;
-    const bScore = (b.openingHours.openNow ? 20 : 0) + b.communityScore - b.distanceKm * 0.5;
+    const aDistancePenalty = a.distanceKm !== undefined ? a.distanceKm * 0.5 : 0;
+    const bDistancePenalty = b.distanceKm !== undefined ? b.distanceKm * 0.5 : 0;
+    const aScore = (a.openingHours.openNow ? 20 : 0) + a.communityScore - aDistancePenalty;
+    const bScore = (b.openingHours.openNow ? 20 : 0) + b.communityScore - bDistancePenalty;
     return bScore - aScore;
   });
 
@@ -161,7 +212,11 @@ export function getSurpriseRecommendation(
   const picked = pool[Math.floor(Math.random() * pool.length)] || sorted[0];
 
   // Dynamic reason builder
-  let reason = `You're ${picked.distanceKm < 1 ? 'just a short walk away' : `${picked.distanceKm.toFixed(1)} km out`}`;
+  let reason =
+    picked.distanceKm !== undefined
+      ? `You're ${picked.distanceKm < 1 ? 'just a short walk away' : `${picked.distanceKm.toFixed(1)} km out`}`
+      : 'Top community verified pick';
+
   if (picked.openingHours.openNow) {
     reason += ', it is open right now';
   }

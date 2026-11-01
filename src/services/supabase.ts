@@ -583,6 +583,21 @@ export async function fetchPlacesFromSupabase(): Promise<Place[]> {
       const totalReports = experienceReports.length || 0;
       const communityConfidence = totalReports === 0 ? 'Insufficient Data' : 'High';
 
+      const hasValidCoords =
+        typeof row.latitude === 'number' &&
+        typeof row.longitude === 'number' &&
+        !isNaN(row.latitude) &&
+        !isNaN(row.longitude);
+
+      const coordinates: Coordinates | null = hasValidCoords
+        ? { lat: row.latitude, lng: row.longitude }
+        : null;
+
+      const addressParts = (row.address || '')
+        .split(',')
+        .map((s: string) => s.trim())
+        .filter(Boolean);
+
       return {
         id: row.id,
         slug: row.slug || row.id,
@@ -591,14 +606,11 @@ export async function fetchPlacesFromSupabase(): Promise<Place[]> {
         shortDescription: row.description || '',
         fullDescription: row.description || '',
         address: row.address || '',
-        neighborhood: row.area || row.address || 'Dhaka',
-        city: 'Dhaka',
-        district: 'Dhaka',
-        division: 'Dhaka',
-        coordinates: {
-          lat: row.latitude || 23.8103,
-          lng: row.longitude || 90.4125,
-        },
+        neighborhood: row.area || addressParts[0] || '',
+        city: addressParts.length > 2 ? addressParts[addressParts.length - 2] : addressParts[0] || '',
+        district: row.district || (addressParts.length > 1 ? addressParts[1] : ''),
+        division: row.division || 'Dhaka',
+        coordinates,
         priceLevel: {
           min: 150,
           max: 500,
@@ -1022,6 +1034,7 @@ export async function submitReportToSupabase(
 
 // -------------------------------------------------------------
 // PLACE_SUGGESTIONS TABLE
+// Real table columns: id, name, category, address, description, website, latitude, longitude, status, user_id, created_at
 // -------------------------------------------------------------
 export interface PlaceSuggestionInput {
   name: string;
@@ -1032,52 +1045,268 @@ export interface PlaceSuggestionInput {
   whyWorthVisiting: string;
   approxBudget?: string;
   bestTimeToVisit?: string;
+  latitude?: number | null;
+  longitude?: number | null;
 }
 
-export async function submitPlaceSuggestion(suggestion: PlaceSuggestionInput): Promise<boolean> {
+export interface PlaceSuggestion {
+  id: string;
+  name: string;
+  category?: string | null;
+  address?: string | null;
+  description?: string | null;
+  website?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  user_id: string;
+  status: 'pending' | 'approved' | 'rejected' | string;
+  created_at: string;
+  author_name?: string;
+  author_handle?: string;
+}
+
+export async function submitPlaceSuggestion(
+  suggestion: PlaceSuggestionInput
+): Promise<{ success: boolean; error?: string; data?: any }> {
   try {
-    const user = await getCurrentUser();
-    const payload = {
-      name: suggestion.name,
-      category: suggestion.category,
-      division: suggestion.division,
-      district: suggestion.district,
-      address: suggestion.address || null,
-      notes: suggestion.whyWorthVisiting,
-      why_worth_visiting: suggestion.whyWorthVisiting,
-      approx_budget: suggestion.approxBudget || null,
-      best_time_to_visit: suggestion.bestTimeToVisit || null,
-      user_id: user?.id || null,
-      status: 'pending_review',
+    // 1. Authenticate user strictly via Supabase Auth
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+    if (authError || !user) {
+      return {
+        success: false,
+        error: 'Please sign in to suggest a place.',
+      };
+    }
+
+    if (!suggestion.name?.trim()) {
+      return {
+        success: false,
+        error: 'Please enter the place name.',
+      };
+    }
+
+    if (!suggestion.whyWorthVisiting?.trim()) {
+      return {
+        success: false,
+        error: 'Please describe why this place is worth visiting.',
+      };
+    }
+
+    // 2. Map division, district, and neighborhood into the real 'address' column
+    const addressParts = [
+      suggestion.address?.trim(),
+      suggestion.district?.trim(),
+      suggestion.division?.trim(),
+    ].filter(Boolean);
+    const formattedAddress = addressParts.join(', ');
+
+    // 3. Map why-worth-visiting, budget, and best-time into the real 'description' column
+    let descriptionText = suggestion.whyWorthVisiting.trim();
+    const metaNotes: string[] = [];
+    if (suggestion.approxBudget?.trim()) {
+      metaNotes.push(`Budget: ${suggestion.approxBudget.trim()}`);
+    }
+    if (suggestion.bestTimeToVisit?.trim()) {
+      metaNotes.push(`Best time: ${suggestion.bestTimeToVisit.trim()}`);
+    }
+    if (metaNotes.length > 0) {
+      descriptionText = `${descriptionText} [${metaNotes.join(' • ')}]`;
+    }
+
+    // 4. Construct payload using ONLY columns that exist in the real place_suggestions table
+    const payload: Record<string, any> = {
+      name: suggestion.name.trim(),
+      category: suggestion.category?.trim() || 'Chill',
+      address: formattedAddress || null,
+      description: descriptionText,
+      user_id: user.id,
+      status: 'pending',
       created_at: new Date().toISOString(),
     };
 
-    const { error } = await supabase.from('place_suggestions').insert(payload);
+    if (
+      typeof suggestion.latitude === 'number' &&
+      !isNaN(suggestion.latitude) &&
+      typeof suggestion.longitude === 'number' &&
+      !isNaN(suggestion.longitude)
+    ) {
+      payload.latitude = suggestion.latitude;
+      payload.longitude = suggestion.longitude;
+    }
+
+    console.log('OUTERA suggestion insert payload:', {
+      name: payload.name,
+      category: payload.category,
+      address: payload.address,
+      description: payload.description,
+      user_id: payload.user_id,
+      status: payload.status,
+    });
+
+    const { data, error } = await supabase
+      .from('place_suggestions')
+      .insert(payload)
+      .select();
+
     if (error) {
-      console.warn('submitPlaceSuggestion error, attempting fallback schema:', error.message);
-      const fallbackPayload = {
-        name: suggestion.name,
-        category: suggestion.category,
-        division: suggestion.division,
-        district: suggestion.district,
-        address: suggestion.address || null,
-        notes: `${suggestion.whyWorthVisiting}${
-          suggestion.approxBudget ? ` | Budget: ${suggestion.approxBudget}` : ''
-        }${suggestion.bestTimeToVisit ? ` | Best time: ${suggestion.bestTimeToVisit}` : ''}`,
-        user_id: user?.id || null,
-        status: 'pending_review',
-        created_at: new Date().toISOString(),
+      console.error('OUTERA suggestion submission error', {
+        message: error?.message,
+        code: error?.code,
+        details: error?.details,
+        hint: error?.hint,
+      });
+
+      // If status check constraint expects 'pending_review' or database default
+      if (error.code === '23514' || error.message?.toLowerCase().includes('status')) {
+        const fallbackPayload = { ...payload, status: 'pending_review' };
+        const { data: retryData, error: retryError } = await supabase
+          .from('place_suggestions')
+          .insert(fallbackPayload)
+          .select();
+
+        if (!retryError && retryData) {
+          return { success: true, data: retryData[0] };
+        }
+      }
+
+      return {
+        success: false,
+        error: error.message || 'Failed to submit suggestion. Please try again.',
       };
-      const { error: err2 } = await supabase.from('place_suggestions').insert(fallbackPayload);
-      if (err2) {
-        console.warn('submitPlaceSuggestion fallback notice:', err2.message);
-        return false;
+    }
+
+    return { success: true, data: data?.[0] };
+  } catch (err: any) {
+    console.error('OUTERA suggestion submission catch error', err);
+    return {
+      success: false,
+      error: err?.message || 'Failed to submit suggestion. Please try again.',
+    };
+  }
+}
+
+// Admin: Fetch place suggestions
+export async function fetchAdminPlaceSuggestions(
+  statusFilter: string = 'pending'
+): Promise<PlaceSuggestion[]> {
+  try {
+    const isAdmin = await isCurrentUserAdmin();
+    if (!isAdmin) return [];
+
+    let query = supabase
+      .from('place_suggestions')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (statusFilter !== 'all') {
+      query = query.eq('status', statusFilter);
+    }
+
+    const { data, error } = await query;
+    if (error || !data) return [];
+
+    const userIds = Array.from(new Set(data.map((s: any) => s.user_id).filter(Boolean)));
+    const profilesMap = new Map<string, any>();
+    if (userIds.length > 0) {
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('id, display_name, username')
+        .in('id', userIds);
+      if (profiles) {
+        for (const p of profiles) {
+          profilesMap.set(p.id, p);
+        }
       }
     }
-    return true;
+
+    return data.map((s: any) => {
+      const author = profilesMap.get(s.user_id);
+      return {
+        ...s,
+        author_name: author?.display_name || 'Scout User',
+        author_handle: author?.username ? `@${author.username}` : '@scout',
+      };
+    });
   } catch (err) {
-    console.warn('submitPlaceSuggestion catch:', err);
-    return false;
+    console.warn('fetchAdminPlaceSuggestions error:', err);
+    return [];
+  }
+}
+
+// Admin: Moderate place suggestion (approve / reject)
+export async function moderatePlaceSuggestion(
+  suggestionId: string,
+  action: 'approve' | 'reject'
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const isAdmin = await isCurrentUserAdmin();
+    if (!isAdmin) return { success: false, error: 'Unauthorized: Admin role required' };
+
+    const newStatus = action === 'approve' ? 'approved' : 'rejected';
+    const { data: updated, error } = await supabase
+      .from('place_suggestions')
+      .update({ status: newStatus })
+      .eq('id', suggestionId)
+      .select();
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    // When approved, promote to live public.places with coordinates preserved
+    if (action === 'approve' && updated && updated[0]) {
+      const sugg = updated[0];
+      const cleanSlug =
+        (sugg.name || 'place')
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/(^-|-$)/g, '') || `place-${Date.now()}`;
+
+      try {
+        await supabase.from('places').insert({
+          name: sugg.name,
+          slug: cleanSlug,
+          category: sugg.category || 'Chill',
+          address: sugg.address || '',
+          description: sugg.description || '',
+          latitude: typeof sugg.latitude === 'number' ? sugg.latitude : null,
+          longitude: typeof sugg.longitude === 'number' ? sugg.longitude : null,
+          status: 'approved',
+          created_by: sugg.user_id,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+      } catch (insertErr) {
+        console.warn('Auto place promotion notice:', insertErr);
+      }
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Action failed' };
+  }
+}
+
+// Admin: Permanently delete place suggestion
+export async function adminDeletePlaceSuggestion(
+  suggestionId: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const isAdmin = await isCurrentUserAdmin();
+    if (!isAdmin) return { success: false, error: 'Unauthorized: Admin role required' };
+
+    const { error } = await supabase
+      .from('place_suggestions')
+      .delete()
+      .eq('id', suggestionId);
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Delete failed' };
   }
 }
 
@@ -1467,6 +1696,8 @@ export async function fetchAdminOverviewStats(): Promise<{
   totalPosts: number;
   pendingPosts: number;
   totalReports: number;
+  totalSuggestions: number;
+  pendingSuggestions: number;
 }> {
   try {
     const isAdmin = await isCurrentUserAdmin();
@@ -1474,12 +1705,14 @@ export async function fetchAdminOverviewStats(): Promise<{
       throw new Error('Unauthorized');
     }
 
-    const [usersRes, placesRes, postsRes, pendingRes, reportsRes] = await Promise.all([
+    const [usersRes, placesRes, postsRes, pendingRes, reportsRes, suggestionsRes, pendingSugRes] = await Promise.all([
       supabase.from('profiles').select('*', { count: 'exact', head: true }),
       supabase.from('places').select('*', { count: 'exact', head: true }),
       supabase.from('place_posts').select('*', { count: 'exact', head: true }),
       supabase.from('place_posts').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
       supabase.from('reports').select('*', { count: 'exact', head: true }),
+      supabase.from('place_suggestions').select('*', { count: 'exact', head: true }),
+      supabase.from('place_suggestions').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
     ]);
 
     return {
@@ -1488,10 +1721,20 @@ export async function fetchAdminOverviewStats(): Promise<{
       totalPosts: postsRes.count || 0,
       pendingPosts: pendingRes.count || 0,
       totalReports: reportsRes.count || 0,
+      totalSuggestions: suggestionsRes.count || 0,
+      pendingSuggestions: pendingSugRes.count || 0,
     };
   } catch (err) {
     console.warn('fetchAdminOverviewStats error:', err);
-    return { totalUsers: 0, totalPlaces: 0, totalPosts: 0, pendingPosts: 0, totalReports: 0 };
+    return {
+      totalUsers: 0,
+      totalPlaces: 0,
+      totalPosts: 0,
+      pendingPosts: 0,
+      totalReports: 0,
+      totalSuggestions: 0,
+      pendingSuggestions: 0,
+    };
   }
 }
 

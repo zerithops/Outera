@@ -177,9 +177,12 @@ export const SurpriseMeView: React.FC<SurpriseMeViewProps> = ({
           <div className="p-5 sm:p-6 space-y-4">
             <div>
               <div className="flex items-center gap-2 text-xs font-semibold text-[#ccff00] uppercase tracking-wider">
-                <span>{currentPlace.category}</span>
-                <span className="text-zinc-600">·</span>
-                <span className="text-zinc-300 font-mono">{formatDistance(currentPlace.distanceKm)}</span>
+                {currentPlace.distanceKm !== undefined && (
+                  <>
+                    <span className="text-zinc-600">·</span>
+                    <span className="text-zinc-300 font-mono">{formatDistance(currentPlace.distanceKm)}</span>
+                  </>
+                )}
                 <span className="text-zinc-600">·</span>
                 <span className="text-zinc-300">{currentPlace.priceLevel.label}</span>
               </div>

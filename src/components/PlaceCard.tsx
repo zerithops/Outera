@@ -113,14 +113,18 @@ export const PlaceCard: React.FC<PlaceCardProps> = ({
 
         {/* Clean unboxed metadata (anti-slop rule: no static pills) */}
         <div className="flex flex-wrap items-center gap-1.5 text-xs text-zinc-400 mt-1.5 font-medium">
-          <span className="flex items-center gap-1 text-zinc-300">
-            <Navigation className="w-3 h-3 text-[#ccff00]" />
-            <span className="font-mono tabular-nums">{formatDistance(place.distanceKm)}</span>
-          </span>
-          <span aria-hidden="true" className="text-zinc-600">·</span>
+          {place.distanceKm !== undefined && (
+            <>
+              <span className="flex items-center gap-1 text-zinc-300">
+                <Navigation className="w-3 h-3 text-[#ccff00]" />
+                <span className="font-mono tabular-nums">{formatDistance(place.distanceKm)}</span>
+              </span>
+              <span aria-hidden="true" className="text-zinc-600">·</span>
+            </>
+          )}
           <span>{place.priceLevel.label}</span>
           <span aria-hidden="true" className="text-zinc-600">·</span>
-          <span>{place.district}</span>
+          <span>{place.neighborhood || place.district}</span>
         </div>
 
         <p className="text-xs text-zinc-300 mt-2.5 line-clamp-2 leading-relaxed">

@@ -16,13 +16,18 @@ import {
   Check,
   AlertTriangle,
   MessageSquare,
+  Sparkles,
 } from 'lucide-react';
 import {
   fetchAdminOverviewStats,
   fetchAdminPlacePosts,
   moderatePlacePost,
   adminDeletePlacePost,
+  fetchAdminPlaceSuggestions,
+  moderatePlaceSuggestion,
+  adminDeletePlaceSuggestion,
   PlacePost,
+  PlaceSuggestion,
   isCurrentUserAdmin,
   getCurrentUser,
   fetchProfile,
@@ -35,8 +40,10 @@ interface AdminDashboardProps {
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
   const [isAdminAuthorized, setIsAdminAuthorized] = useState<boolean | null>(null);
   const [adminEmail, setAdminEmail] = useState<string>('');
+  const [adminSection, setAdminSection] = useState<'posts' | 'suggestions'>('posts');
   const [activeTab, setActiveTab] = useState<'pending' | 'approved' | 'rejected' | 'hidden' | 'all'>('pending');
   const [posts, setPosts] = useState<PlacePost[]>([]);
+  const [suggestions, setSuggestions] = useState<PlaceSuggestion[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [stats, setStats] = useState({
@@ -45,6 +52,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
     totalPosts: 0,
     pendingPosts: 0,
     totalReports: 0,
+    totalSuggestions: 0,
+    pendingSuggestions: 0,
   });
 
   // Action modals state
@@ -85,12 +94,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
     }
 
     try {
-      const [overviewStats, fetchedPosts] = await Promise.all([
+      const [overviewStats, fetchedPosts, fetchedSuggestions] = await Promise.all([
         fetchAdminOverviewStats(),
         fetchAdminPlacePosts(activeTab),
+        fetchAdminPlaceSuggestions(activeTab),
       ]);
       setStats(overviewStats);
       setPosts(fetchedPosts);
+      setSuggestions(fetchedSuggestions);
     } catch (err) {
       console.warn('Failed to load admin data:', err);
     } finally {
@@ -102,7 +113,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
     loadData();
   }, [loadData]);
 
-  // Handle APPROVE
+  // Handle APPROVE POST
   const handleApprove = async (post: PlacePost) => {
     setActionLoadingId(post.id);
     const res = await moderatePlacePost(post.id, 'approve');
@@ -157,6 +168,47 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
       loadData();
     } else {
       showToast(`Error: ${res.error || 'Failed to delete'}`);
+    }
+  };
+
+  // Handle Place Suggestions Actions
+  const handleApproveSuggestion = async (sug: PlaceSuggestion) => {
+    setActionLoadingId(sug.id);
+    const res = await moderatePlaceSuggestion(sug.id, 'approve');
+    setActionLoadingId(null);
+
+    if (res.success) {
+      showToast(`Place suggestion "${sug.name}" approved!`);
+      loadData();
+    } else {
+      showToast(`Error: ${res.error || 'Failed to approve suggestion'}`);
+    }
+  };
+
+  const handleRejectSuggestion = async (sug: PlaceSuggestion) => {
+    setActionLoadingId(sug.id);
+    const res = await moderatePlaceSuggestion(sug.id, 'reject');
+    setActionLoadingId(null);
+
+    if (res.success) {
+      showToast(`Place suggestion "${sug.name}" marked as rejected.`);
+      loadData();
+    } else {
+      showToast(`Error: ${res.error || 'Failed to reject suggestion'}`);
+    }
+  };
+
+  const handleDeleteSuggestion = async (sug: PlaceSuggestion) => {
+    if (!confirm(`Permanently delete suggestion for "${sug.name}"?`)) return;
+    setActionLoadingId(sug.id);
+    const res = await adminDeletePlaceSuggestion(sug.id);
+    setActionLoadingId(null);
+
+    if (res.success) {
+      showToast(`Suggestion permanently deleted.`);
+      loadData();
+    } else {
+      showToast(`Error: ${res.error || 'Failed to delete suggestion'}`);
     }
   };
 
@@ -242,78 +294,152 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
         </div>
       </div>
 
-      {/* System Overview 5-Metric Strip */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-        <div className="p-4 rounded-2xl bg-[#111317] border border-white/[0.08] flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-blue-500/10 text-blue-400 flex items-center justify-center shrink-0">
-            <Users className="w-5 h-5" />
+      {/* System Overview 6-Metric Strip */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div className="p-3.5 rounded-2xl bg-[#111317] border border-white/[0.08] flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-blue-500/10 text-blue-400 flex items-center justify-center shrink-0">
+            <Users className="w-4 h-4" />
           </div>
           <div className="min-w-0">
-            <p className="text-[11px] text-zinc-400 font-semibold truncate">Total Users</p>
-            <p className="text-xl font-black text-white font-mono tabular-nums">{stats.totalUsers}</p>
+            <p className="text-[10px] text-zinc-400 font-semibold truncate">Total Users</p>
+            <p className="text-lg font-black text-white font-mono tabular-nums">{stats.totalUsers}</p>
           </div>
         </div>
 
-        <div className="p-4 rounded-2xl bg-[#111317] border border-white/[0.08] flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center shrink-0">
-            <MapPin className="w-5 h-5" />
+        <div className="p-3.5 rounded-2xl bg-[#111317] border border-white/[0.08] flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center shrink-0">
+            <MapPin className="w-4 h-4" />
           </div>
           <div className="min-w-0">
-            <p className="text-[11px] text-zinc-400 font-semibold truncate">Total Places</p>
-            <p className="text-xl font-black text-white font-mono tabular-nums">{stats.totalPlaces}</p>
+            <p className="text-[10px] text-zinc-400 font-semibold truncate">Total Places</p>
+            <p className="text-lg font-black text-white font-mono tabular-nums">{stats.totalPlaces}</p>
           </div>
         </div>
 
-        <div className="p-4 rounded-2xl bg-[#111317] border border-white/[0.08] flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-purple-500/10 text-purple-400 flex items-center justify-center shrink-0">
-            <FileText className="w-5 h-5" />
+        <div className="p-3.5 rounded-2xl bg-[#111317] border border-white/[0.08] flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-purple-500/10 text-purple-400 flex items-center justify-center shrink-0">
+            <FileText className="w-4 h-4" />
           </div>
           <div className="min-w-0">
-            <p className="text-[11px] text-zinc-400 font-semibold truncate">Total Posts</p>
-            <p className="text-xl font-black text-white font-mono tabular-nums">{stats.totalPosts}</p>
+            <p className="text-[10px] text-zinc-400 font-semibold truncate">Total Posts</p>
+            <p className="text-lg font-black text-white font-mono tabular-nums">{stats.totalPosts}</p>
           </div>
         </div>
 
         <div
-          className={`p-4 rounded-2xl border flex items-center gap-3 ${
+          className={`p-3.5 rounded-2xl border flex items-center gap-3 ${
             stats.pendingPosts > 0
               ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
               : 'bg-[#111317] border-white/[0.08]'
           }`}
         >
           <div
-            className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+            className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
               stats.pendingPosts > 0 ? 'bg-amber-500/20 text-amber-400' : 'bg-zinc-800 text-zinc-400'
             }`}
           >
-            <Clock className="w-5 h-5" />
+            <Clock className="w-4 h-4" />
           </div>
           <div className="min-w-0">
-            <p className="text-[11px] font-semibold truncate">Pending Posts</p>
-            <p className="text-xl font-black font-mono tabular-nums text-white">{stats.pendingPosts}</p>
+            <p className="text-[10px] font-semibold truncate">Pending Posts</p>
+            <p className="text-lg font-black font-mono tabular-nums text-white">{stats.pendingPosts}</p>
           </div>
         </div>
 
-        <div className="p-4 rounded-2xl bg-[#111317] border border-white/[0.08] flex items-center gap-3 col-span-2 sm:col-span-1">
-          <div className="w-10 h-10 rounded-xl bg-rose-500/10 text-rose-400 flex items-center justify-center shrink-0">
-            <Flag className="w-5 h-5" />
+        <div
+          className={`p-3.5 rounded-2xl border flex items-center gap-3 ${
+            stats.pendingSuggestions > 0
+              ? 'bg-[#ccff00]/10 border-[#ccff00]/30 text-[#ccff00]'
+              : 'bg-[#111317] border-white/[0.08]'
+          }`}
+        >
+          <div
+            className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+              stats.pendingSuggestions > 0 ? 'bg-[#ccff00]/20 text-[#ccff00]' : 'bg-zinc-800 text-zinc-400'
+            }`}
+          >
+            <Sparkles className="w-4 h-4" />
           </div>
           <div className="min-w-0">
-            <p className="text-[11px] text-zinc-400 font-semibold truncate">Reports</p>
-            <p className="text-xl font-black text-white font-mono tabular-nums">{stats.totalReports}</p>
+            <p className="text-[10px] font-semibold truncate">Pending Suggestions</p>
+            <p className="text-lg font-black font-mono tabular-nums text-white">{stats.pendingSuggestions}</p>
           </div>
+        </div>
+
+        <div className="p-3.5 rounded-2xl bg-[#111317] border border-white/[0.08] flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-rose-500/10 text-rose-400 flex items-center justify-center shrink-0">
+            <Flag className="w-4 h-4" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-[10px] text-zinc-400 font-semibold truncate">Reports</p>
+            <p className="text-lg font-black text-white font-mono tabular-nums">{stats.totalReports}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Section Switcher: Community Posts vs Place Suggestions */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex p-1 bg-white/[0.04] border border-white/[0.08] rounded-xl w-fit">
+          <button
+            type="button"
+            onClick={() => setAdminSection('posts')}
+            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+              adminSection === 'posts'
+                ? 'bg-[#ccff00] text-black font-extrabold shadow-sm'
+                : 'text-zinc-400 hover:text-white'
+            }`}
+          >
+            <FileText className="w-3.5 h-3.5" />
+            <span>Community Posts</span>
+            {stats.pendingPosts > 0 && (
+              <span className="text-[10px] px-1.5 py-0.2 rounded-full font-mono bg-black/20 font-bold">
+                {stats.pendingPosts}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setAdminSection('suggestions')}
+            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+              adminSection === 'suggestions'
+                ? 'bg-[#ccff00] text-black font-extrabold shadow-sm'
+                : 'text-zinc-400 hover:text-white'
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>Place Suggestions</span>
+            {stats.pendingSuggestions > 0 && (
+              <span className="text-[10px] px-1.5 py-0.2 rounded-full font-mono bg-black/20 font-bold">
+                {stats.pendingSuggestions}
+              </span>
+            )}
+          </button>
+        </div>
+
+        <div className="text-xs text-zinc-400">
+          Showing <span className="text-white font-bold">{adminSection === 'posts' ? 'posts' : 'place suggestions'}</span> queue
         </div>
       </div>
 
       {/* Moderation Tabs Navigation */}
       <div className="flex rounded-xl bg-white/[0.03] p-1 border border-white/[0.06] overflow-x-auto no-scrollbar">
         {(['pending', 'approved', 'rejected', 'hidden', 'all'] as const).map((tab) => {
+          // Hide 'hidden' tab for place suggestions as suggestions use pending/approved/rejected
+          if (adminSection === 'suggestions' && tab === 'hidden') return null;
+
           const isActive = activeTab === tab;
           const badgeCount =
-            tab === 'pending'
-              ? stats.pendingPosts
+            adminSection === 'posts'
+              ? tab === 'pending'
+                ? stats.pendingPosts
+                : tab === 'all'
+                ? stats.totalPosts
+                : undefined
+              : tab === 'pending'
+              ? stats.pendingSuggestions
               : tab === 'all'
-              ? stats.totalPosts
+              ? stats.totalSuggestions
               : undefined;
 
           return (
@@ -342,24 +468,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
         })}
       </div>
 
-      {/* Content Area: Posts List */}
+      {/* Content Area: Posts or Suggestions List */}
       <div className="space-y-3.5">
         {loading ? (
           <div className="py-20 text-center space-y-3 bg-[#111317] border border-white/[0.08] rounded-2xl">
             <RefreshCw className="w-6 h-6 text-[#ccff00] animate-spin mx-auto" />
             <p className="text-xs text-zinc-400 font-mono">Loading moderation queue from Supabase...</p>
           </div>
-        ) : posts.length === 0 ? (
-          <div className="py-20 text-center space-y-2 bg-[#111317] border border-white/[0.08] rounded-2xl p-6">
-            <CheckCircle className="w-8 h-8 text-[#ccff00]/60 mx-auto mb-1" />
-            <h3 className="text-sm font-bold text-white">No {activeTab} posts</h3>
-            <p className="text-xs text-zinc-400 max-w-sm mx-auto leading-relaxed">
-              {activeTab === 'pending'
-                ? 'All submitted posts have been reviewed! The community feed is up to date.'
-                : `There are currently no posts with status "${activeTab}".`}
-            </p>
-          </div>
-        ) : (
+        ) : adminSection === 'posts' ? (
+          posts.length === 0 ? (
+            <div className="py-20 text-center space-y-2 bg-[#111317] border border-white/[0.08] rounded-2xl p-6">
+              <CheckCircle className="w-8 h-8 text-[#ccff00]/60 mx-auto mb-1" />
+              <h3 className="text-sm font-bold text-white">No {activeTab} posts</h3>
+              <p className="text-xs text-zinc-400 max-w-sm mx-auto leading-relaxed">
+                {activeTab === 'pending'
+                  ? 'All submitted posts have been reviewed! The community feed is up to date.'
+                  : `There are currently no posts with status "${activeTab}".`}
+              </p>
+            </div>
+          ) : (
           posts.map((post) => {
             const isActing = actionLoadingId === post.id;
             const statusColors: Record<string, string> = {
@@ -525,6 +652,139 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
               </div>
             );
           })
+        )
+      ) : (
+          // PLACE SUGGESTIONS LIST
+          suggestions.length === 0 ? (
+            <div className="py-20 text-center space-y-2 bg-[#111317] border border-white/[0.08] rounded-2xl p-6">
+              <Sparkles className="w-8 h-8 text-[#ccff00]/60 mx-auto mb-1" />
+              <h3 className="text-sm font-bold text-white">No {activeTab} place suggestions</h3>
+              <p className="text-xs text-zinc-400 max-w-sm mx-auto leading-relaxed">
+                {activeTab === 'pending'
+                  ? 'All scout suggestions have been reviewed! New submissions will appear here.'
+                  : `There are currently no place suggestions with status "${activeTab}".`}
+              </p>
+            </div>
+          ) : (
+            suggestions.map((sug) => {
+              const isActing = actionLoadingId === sug.id;
+              const statusColors: Record<string, string> = {
+                pending: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
+                approved: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
+                rejected: 'bg-rose-500/15 text-rose-300 border-rose-500/30',
+              };
+
+              return (
+                <div
+                  key={sug.id}
+                  className="p-5 rounded-2xl bg-[#111317] border border-white/[0.08] hover:border-white/[0.14] transition-all space-y-4"
+                >
+                  {/* Header: Place Name, Category & Status Badge */}
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-10 h-10 rounded-xl bg-[#ccff00]/10 border border-[#ccff00]/20 flex items-center justify-center font-bold text-sm text-[#ccff00] shrink-0 uppercase">
+                        {sug.name ? sug.name.slice(0, 2) : 'PL'}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-base font-black text-white truncate">{sug.name}</h3>
+                          {sug.category && (
+                            <span className="text-[10px] font-bold text-[#ccff00] bg-[#ccff00]/10 px-2 py-0.5 rounded-full border border-[#ccff00]/20 shrink-0">
+                              {sug.category}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-zinc-400 mt-0.5 font-mono truncate">
+                          Suggested by {sug.author_name} ({sug.author_handle}) · User UUID: {sug.user_id.slice(0, 8)}...
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="shrink-0">
+                      <span
+                        className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full border ${
+                          statusColors[sug.status] || statusColors.pending
+                        }`}
+                      >
+                        {sug.status}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Address / Location */}
+                  {sug.address && (
+                    <div className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.05] flex items-center gap-2 text-xs">
+                      <MapPin className="w-3.5 h-3.5 text-[#ccff00] shrink-0" />
+                      <span className="text-zinc-300 font-medium">{sug.address}</span>
+                    </div>
+                  )}
+
+                  {/* Description / Why Worth Going Out */}
+                  {sug.description && (
+                    <div className="space-y-1">
+                      <p className="text-[11px] font-semibold text-zinc-400">Why worth going out for:</p>
+                      <p className="text-xs text-zinc-200 leading-relaxed whitespace-pre-wrap bg-white/[0.01] p-3 rounded-xl border border-white/[0.04]">
+                        {sug.description}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Footer Toolbar: Date, UUID, Actions */}
+                  <div className="pt-2 border-t border-white/[0.06] flex flex-wrap items-center justify-between gap-2.5">
+                    <div className="text-[11px] text-zinc-500 font-mono">
+                      Created: {new Date(sug.created_at).toLocaleDateString([], {
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {/* Approve Suggestion */}
+                      {sug.status !== 'approved' && (
+                        <button
+                          type="button"
+                          onClick={() => handleApproveSuggestion(sug)}
+                          disabled={isActing}
+                          className="h-8 px-3.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-extrabold text-xs flex items-center gap-1.5 transition-all disabled:opacity-50"
+                        >
+                          <CheckCircle className="w-3.5 h-3.5" />
+                          <span>Approve</span>
+                        </button>
+                      )}
+
+                      {/* Reject Suggestion */}
+                      {sug.status !== 'rejected' && (
+                        <button
+                          type="button"
+                          onClick={() => handleRejectSuggestion(sug)}
+                          disabled={isActing}
+                          className="h-8 px-3 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 text-xs font-semibold flex items-center gap-1.5 transition-all disabled:opacity-50"
+                        >
+                          <XCircle className="w-3.5 h-3.5" />
+                          <span>Reject</span>
+                        </button>
+                      )}
+
+                      {/* Delete Suggestion */}
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteSuggestion(sug)}
+                        disabled={isActing}
+                        className="w-8 h-8 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 flex items-center justify-center transition-all disabled:opacity-50"
+                        title="Permanently Delete Suggestion"
+                        aria-label="Permanently Delete Suggestion"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          )
         )}
       </div>
 

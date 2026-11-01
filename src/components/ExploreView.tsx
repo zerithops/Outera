@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Search, MapPin, SlidersHorizontal, LayoutGrid, Map as MapIcon, X, Clock } from 'lucide-react';
+import { Search, MapPin, SlidersHorizontal, LayoutGrid, Map as MapIcon, X, Clock, Navigation } from 'lucide-react';
 import { FilterState, UserLocation } from '../types/outera';
 import { PlaceWithDistance } from '../services/discoveryEngine';
 import { PlaceCard } from './PlaceCard';
@@ -18,6 +18,8 @@ interface ExploreViewProps {
   onSelectPlace: (place: PlaceWithDistance) => void;
   onOpenLocationModal: () => void;
   onSuggestPlace?: () => void;
+  onRequestGPS?: () => void;
+  isDetectingGPS?: boolean;
 }
 
 export const ExploreView: React.FC<ExploreViewProps> = ({
@@ -30,6 +32,8 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
   onSelectPlace,
   onOpenLocationModal,
   onSuggestPlace,
+  onRequestGPS,
+  isDetectingGPS = false,
 }) => {
   const [viewMode, setViewMode] = useState<'grid' | 'map'>('grid');
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
@@ -43,6 +47,62 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
 
   return (
     <div className="w-full px-4 sm:px-6 py-4 space-y-5">
+      {/* Location Status / Permission Banner */}
+      {!currentLocation.coords && (
+        <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/[0.08] flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2.5">
+            <div
+              className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${
+                currentLocation.status === 'denied'
+                  ? 'bg-amber-500/10 text-amber-400'
+                  : 'bg-[#ccff00]/10 text-[#ccff00]'
+              }`}
+            >
+              <Navigation className={`w-3.5 h-3.5 ${isDetectingGPS ? 'animate-spin' : ''}`} />
+            </div>
+            <div>
+              <p className="font-bold text-white">
+                {currentLocation.status === 'denied'
+                  ? 'Location access is off'
+                  : currentLocation.status === 'detecting'
+                  ? 'Finding your location...'
+                  : 'Find what is around you'}
+              </p>
+              <p className="text-[11px] text-zinc-400">
+                {currentLocation.status === 'denied'
+                  ? 'Allow location access to discover places near you.'
+                  : currentLocation.status === 'detecting'
+                  ? 'Pinpointing GPS coordinates and calculating distances...'
+                  : 'Detect your GPS to calculate real walk/ride distances and sort by proximity.'}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0 self-start sm:self-auto">
+            {onRequestGPS && (
+              <button
+                type="button"
+                onClick={onRequestGPS}
+                disabled={isDetectingGPS}
+                className="h-8 px-3 rounded-lg bg-[#ccff00] text-black font-extrabold text-[11px] uppercase tracking-wider hover:bg-[#d8ff33] transition-all disabled:opacity-50"
+              >
+                {isDetectingGPS
+                  ? 'Locating...'
+                  : currentLocation.status === 'denied'
+                  ? 'Try Again'
+                  : 'Use My Location'}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onOpenLocationModal}
+              className="h-8 px-3 rounded-lg bg-white/[0.05] hover:bg-white/[0.1] text-white text-[11px] font-semibold border border-white/[0.08] transition-all"
+            >
+              Choose Area
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Page Header */}
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <div>
@@ -57,7 +117,11 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
               className="text-xs text-zinc-400 hover:text-white flex items-center gap-1 font-medium underline-offset-2 hover:underline"
             >
               <MapPin className="w-3.5 h-3.5 text-[#ccff00]" />
-              <span>{currentLocation.neighborhoodName}</span>
+              <span>
+                {currentLocation.neighborhoodName !== 'Location not set'
+                  ? currentLocation.neighborhoodName
+                  : 'Set Location'}
+              </span>
             </button>
           </div>
 
@@ -211,6 +275,8 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
           selectedLayer={filters.mapLayer || 'all'}
           onChangeLayer={(layer) => onChangeFilters({ ...filters, mapLayer: layer })}
           onSelectPlace={onSelectPlace}
+          onRequestGPS={onRequestGPS}
+          isDetectingGPS={isDetectingGPS}
         />
       )}
     </div>

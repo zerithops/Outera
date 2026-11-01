@@ -2,8 +2,8 @@ import React, { useState, useMemo, useEffect } from 'react';
 import {
   DEFAULT_LOCATION,
   isLocationChosen,
-  requestBrowserLocation,
 } from './services/location';
+import { useUserLocation } from './hooks/useUserLocation';
 import {
   DivisionName,
   FilterState,
@@ -64,7 +64,13 @@ const INITIAL_FILTERS: FilterState = {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<NavTab>('discover');
-  const [currentLocation, setCurrentLocation] = useState<UserLocation>(DEFAULT_LOCATION);
+  const {
+    currentLocation,
+    detecting: isDetectingGPS,
+    detectLocation: handleDetectGPS,
+    setManualLocation,
+    setCurrentLocation,
+  } = useUserLocation();
   const [places, setPlaces] = useState<Place[]>([]);
   const [savedPlaceIds, setSavedPlaceIds] = useState<string[]>(() => getSavedPlaceIds());
   const [collections, setCollections] = useState(() => getSavedCollections());
@@ -195,15 +201,6 @@ export default function App() {
     setLocationModalOpen(true);
   };
 
-  const handleDetectGPS = async () => {
-    const res = await requestBrowserLocation();
-    if (res.success && res.location) {
-      setCurrentLocation(res.location);
-    } else {
-      setLocationModalOpen(true);
-    }
-  };
-
   const handleCategorySelectFromHome = (category: 'all' | MoodCategory) => {
     setFilters((prev) => ({ ...prev, selectedCategory: category }));
     if (category !== 'all') {
@@ -272,38 +269,154 @@ export default function App() {
         activeTab={activeTab}
       />
 
-      {/* Dynamic Location Prompt Banner (if not yet chosen) */}
-      {!isLocationChosen(currentLocation) && (
-        <aside
-          aria-label="Location preference prompt"
-          className="w-full bg-gradient-to-r from-[#14181f] to-[#1a1f26] border-b border-white/[0.08] px-4 sm:px-6 py-3"
-        >
-          <div className="max-w-7xl mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-            <div className="flex items-center gap-2">
-              <MapPin className="w-4 h-4 text-[#ccff00] shrink-0" />
-              <p className="text-zinc-200">
-                <span className="font-bold text-white">Find what's around you:</span> Set your area to explore nearby hangout spots across Bangladesh.
-              </p>
+      {/* Dynamic Location Banner */}
+      {!isLocationChosen(currentLocation) ? (
+        currentLocation.status === 'detecting' || isDetectingGPS ? (
+          <aside
+            aria-label="Location detecting"
+            className="w-full bg-gradient-to-r from-[#14181f] to-[#1a1f26] border-b border-white/[0.08] px-4 sm:px-6 py-3"
+          >
+            <div className="max-w-7xl mx-auto flex items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2.5">
+                <Navigation className="w-4 h-4 text-[#ccff00] animate-spin shrink-0" />
+                <p className="text-zinc-200">
+                  <span className="font-bold text-white">Finding your location...</span> Pinpointing GPS coordinates and looking up address.
+                </p>
+              </div>
+            </div>
+          </aside>
+        ) : currentLocation.status === 'denied' ? (
+          <aside
+            aria-label="Location permission denied"
+            className="w-full bg-gradient-to-r from-amber-950/40 via-[#181313] to-[#1a1414] border-b border-amber-500/20 px-4 sm:px-6 py-3"
+          >
+            <div className="max-w-7xl mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2">
+                <MapPin className="w-4 h-4 text-amber-400 shrink-0" />
+                <p className="text-zinc-200">
+                  <span className="font-bold text-amber-300">Location access is off:</span> Allow location access to discover places near you.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={handleDetectGPS}
+                  className="h-8 px-3 rounded-lg bg-[#ccff00] text-black font-extrabold text-[11px] uppercase tracking-wider hover:bg-[#d8ff33] active:scale-95 transition-all flex items-center gap-1.5"
+                >
+                  <Navigation className="w-3 h-3" />
+                  <span>Try Again</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLocationModalOpen(true)}
+                  className="h-8 px-3 rounded-lg bg-white/[0.06] hover:bg-white/[0.1] text-white text-xs font-semibold border border-white/[0.08] transition-all"
+                >
+                  Choose Area
+                </button>
+              </div>
+            </div>
+          </aside>
+        ) : currentLocation.status === 'unavailable' || currentLocation.status === 'timeout' ? (
+          <aside
+            aria-label="Location unavailable"
+            className="w-full bg-gradient-to-r from-zinc-900 to-zinc-950 border-b border-white/[0.08] px-4 sm:px-6 py-3"
+          >
+            <div className="max-w-7xl mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2">
+                <MapPin className="w-4 h-4 text-zinc-400 shrink-0" />
+                <p className="text-zinc-300">
+                  <span className="font-bold text-white">Location access unavailable:</span> {currentLocation.errorMessage || 'Could not acquire GPS coordinates. Ensure device location is turned on.'}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={handleDetectGPS}
+                  className="h-8 px-3 rounded-lg bg-[#ccff00] text-black font-extrabold text-[11px] uppercase tracking-wider hover:bg-[#d8ff33] active:scale-95 transition-all flex items-center gap-1.5"
+                >
+                  <Navigation className="w-3 h-3" />
+                  <span>Try Again</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLocationModalOpen(true)}
+                  className="h-8 px-3 rounded-lg bg-white/[0.06] hover:bg-white/[0.1] text-white text-xs font-semibold border border-white/[0.08] transition-all"
+                >
+                  Choose Area
+                </button>
+              </div>
+            </div>
+          </aside>
+        ) : (
+          <aside
+            aria-label="Location preference prompt"
+            className="w-full bg-gradient-to-r from-[#14181f] to-[#1a1f26] border-b border-white/[0.08] px-4 sm:px-6 py-3"
+          >
+            <div className="max-w-7xl mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2">
+                <MapPin className="w-4 h-4 text-[#ccff00] shrink-0" />
+                <p className="text-zinc-200">
+                  <span className="font-bold text-white">Find what's around you:</span> Detect your real location to explore nearby hangout spots.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={handleDetectGPS}
+                  disabled={isDetectingGPS}
+                  className="h-8 px-3 rounded-lg bg-[#ccff00] text-black font-extrabold text-[11px] uppercase tracking-wider hover:bg-[#d8ff33] active:scale-95 transition-all flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <Navigation className="w-3 h-3" />
+                  <span>Use My Location</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLocationModalOpen(true)}
+                  className="h-8 px-3 rounded-lg bg-white/[0.06] hover:bg-white/[0.1] text-white text-xs font-semibold border border-white/[0.08] transition-all"
+                >
+                  Choose Area
+                </button>
+              </div>
+            </div>
+          </aside>
+        )
+      ) : (
+        <div className="w-full bg-[#0d0f12] border-b border-white/[0.05] px-4 sm:px-6 py-2">
+          <div className="max-w-7xl mx-auto flex items-center justify-between gap-3 text-[11px]">
+            <div className="flex items-center gap-2 truncate">
+              <span className="w-2 h-2 rounded-full bg-[#ccff00] animate-pulse shrink-0" />
+              <span className="font-bold text-white shrink-0">Location detected:</span>
+              <span className="text-zinc-300 truncate">
+                {currentLocation.formattedAddress || `${currentLocation.neighborhoodName}, ${currentLocation.district}`}
+              </span>
+              {currentLocation.accuracyMeters && (
+                <span className="text-zinc-500 font-mono hidden md:inline shrink-0">
+                  (±{Math.round(currentLocation.accuracyMeters)}m)
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <button
                 type="button"
                 onClick={handleDetectGPS}
-                className="h-8 px-3 rounded-lg bg-[#ccff00] text-black font-extrabold text-[11px] uppercase tracking-wider hover:bg-[#d8ff33] active:scale-95 transition-all flex items-center gap-1.5"
+                disabled={isDetectingGPS}
+                className="text-zinc-400 hover:text-[#ccff00] text-[11px] font-semibold flex items-center gap-1 transition-colors disabled:opacity-50"
+                title="Refresh GPS"
               >
-                <Navigation className="w-3 h-3" />
-                <span>Use Current Location</span>
+                <Navigation className={`w-3 h-3 ${isDetectingGPS ? 'animate-spin' : ''}`} />
+                <span className="hidden sm:inline">Refresh GPS</span>
               </button>
+              <span className="text-zinc-700">·</span>
               <button
                 type="button"
                 onClick={() => setLocationModalOpen(true)}
-                className="h-8 px-3 rounded-lg bg-white/[0.06] hover:bg-white/[0.1] text-white text-xs font-semibold border border-white/[0.08] transition-all"
+                className="text-zinc-400 hover:text-white text-[11px] font-semibold transition-colors"
               >
-                Choose Area
+                Change
               </button>
             </div>
           </div>
-        </aside>
+        </div>
       )}
 
       {/* Main Content Area */}
@@ -523,6 +636,8 @@ export default function App() {
                 onSelectPlace={(place) => setDetailsPlace(place)}
                 onOpenLocationModal={() => setLocationModalOpen(true)}
                 onSuggestPlace={() => setSuggestionModalOpen(true)}
+                onRequestGPS={handleDetectGPS}
+                isDetectingGPS={isDetectingGPS}
               />
             )}
 
@@ -601,7 +716,7 @@ export default function App() {
         isOpen={locationModalOpen}
         onClose={() => setLocationModalOpen(false)}
         currentLocation={currentLocation}
-        onSelectLocation={(newLoc) => setCurrentLocation(newLoc)}
+        onSelectLocation={(newLoc) => setManualLocation(newLoc)}
       />
 
       {/* Unified OUTERA Auth Modal */}
@@ -621,6 +736,10 @@ export default function App() {
         onClose={() => setSuggestionModalOpen(false)}
         defaultDivision={currentLocation.division || 'Dhaka'}
         defaultDistrict={currentLocation.district !== 'Select Location' ? currentLocation.district : 'Dhaka'}
+        onOpenAuthModal={() => {
+          setAuthContextAction('suggest a new place');
+          setAuthModalOpen(true);
+        }}
       />
 
       {/* Bottom Sticky Tab Navigation */}
