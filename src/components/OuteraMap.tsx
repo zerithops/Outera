@@ -79,13 +79,15 @@ export const OuteraMap: React.FC<OuteraMapProps> = ({
       });
 
       // CartoDB Dark Matter tiles (sleek dark palette matching OUTERA)
-      const darkTiles = L.tileLayer(
-        'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-        {
-          maxZoom: 19,
-          subdomains: 'abcd',
-        }
-      );
+
+const cartoApiKey = import.meta.env.VITE_CARTO_API_KEY;
+
+const darkTiles = L.tileLayer(
+  `https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png?key=${encodeURIComponent(cartoApiKey || '')}`,
+  {
+    maxZoom: 19,
+  }
+);
       darkTiles.addTo(map);
 
       // Attribution
