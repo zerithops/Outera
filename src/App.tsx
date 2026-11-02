@@ -701,6 +701,7 @@ export default function App() {
           setAuthContextAction(action);
           setAuthModalOpen(true);
         }}
+        userLocation={currentLocation}
       />
 
       {/* Community Feedback Modal */}

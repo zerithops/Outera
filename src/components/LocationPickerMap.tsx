@@ -49,6 +49,8 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
     });
   }, []);
 
+  const [selectedLabel, setSelectedLabel] = useState<string>('');
+
   // Update or place marker at specific coords
   const setPinAt = useCallback(
     async (lat: number, lng: number, reverseLookup = false) => {
@@ -71,11 +73,12 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
           const dLat = Math.round(pos.lat * 100000) / 100000;
           const dLng = Math.round(pos.lng * 100000) / 100000;
           onChangeCoordinates({ lat: dLat, lng: dLng });
-          if (onAddressDetected) {
-            const geocoded = await reverseGeocodeNominatim(dLat, dLng);
-            if (geocoded.formattedAddress) {
-              onAddressDetected(geocoded.formattedAddress);
-            }
+          const geocoded = await reverseGeocodeNominatim(dLat, dLng);
+          if (geocoded.neighborhoodName) {
+            setSelectedLabel(geocoded.neighborhoodName);
+          }
+          if (onAddressDetected && geocoded.formattedAddress) {
+            onAddressDetected(geocoded.formattedAddress);
           }
         });
 
@@ -84,9 +87,12 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
         markerRef.current.setLatLng([roundedLat, roundedLng]);
       }
 
-      if (reverseLookup && onAddressDetected) {
+      if (reverseLookup) {
         const geocoded = await reverseGeocodeNominatim(roundedLat, roundedLng);
-        if (geocoded.formattedAddress) {
+        if (geocoded.neighborhoodName) {
+          setSelectedLabel(geocoded.neighborhoodName);
+        }
+        if (onAddressDetected && geocoded.formattedAddress) {
           onAddressDetected(geocoded.formattedAddress);
         }
       }
@@ -148,6 +154,9 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
       if (map) {
         map.flyTo([lat, lng], 16, { duration: 0.6 });
       }
+      if (result.location.neighborhoodName) {
+        setSelectedLabel(result.location.neighborhoodName);
+      }
       setPinAt(lat, lng, true);
     } else {
       setSearchError(result.errorMessage || 'Could not detect your current location.');
@@ -200,6 +209,7 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
         map.flyTo([lat, lng], 15, { duration: 0.6 });
       }
 
+      setSelectedLabel(first.name || first.display_name?.split(',')?.[0] || 'Selected spot');
       setPinAt(lat, lng, false);
       if (onAddressDetected && first.display_name) {
         onAddressDetected(first.display_name);
@@ -213,6 +223,7 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
 
   const handleClearPin = () => {
     onChangeCoordinates(null);
+    setSelectedLabel('');
     if (markerRef.current && mapInstanceRef.current) {
       mapInstanceRef.current.removeLayer(markerRef.current);
       markerRef.current = null;
@@ -226,10 +237,11 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
         <div>
           <div className="flex items-center gap-1.5 text-xs font-bold text-white">
             <MapPin className="w-3.5 h-3.5 text-[#ccff00]" />
-            <span>Map Coordinates (Optional)</span>
+            <span>Where is this place?</span>
+            <span className="text-[#ccff00]">*</span>
           </div>
           <p className="text-[11px] text-zinc-400">
-            Click map or use GPS so this spot appears on OUTERA's interactive radar.
+            Click map or use GPS so this place appears accurately on OUTERA's radar.
           </p>
         </div>
 
@@ -238,17 +250,17 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
             type="button"
             onClick={handleUseCurrentLocation}
             disabled={locatingCurrent}
-            className="h-8 px-2.5 rounded-lg bg-[#ccff00] text-black font-extrabold text-[11px] flex items-center gap-1 hover:bg-[#d4ff1a] transition-all disabled:opacity-50"
+            className="h-8 px-2.5 rounded-lg bg-[#ccff00] text-black font-extrabold text-[11px] flex items-center gap-1.5 hover:bg-[#d4ff1a] transition-all disabled:opacity-50 cursor-pointer shadow-md shadow-[#ccff00]/10"
           >
             <Navigation className={`w-3 h-3 ${locatingCurrent ? 'animate-spin' : ''}`} />
-            <span>{locatingCurrent ? 'Locating...' : 'Use My GPS'}</span>
+            <span>{locatingCurrent ? 'Locating...' : 'Use My Current Location'}</span>
           </button>
 
           {coordinates && (
             <button
               type="button"
               onClick={handleClearPin}
-              className="h-8 px-2.5 rounded-lg bg-white/[0.05] hover:bg-white/[0.1] text-zinc-300 hover:text-white text-[11px] font-semibold border border-white/[0.08] transition-all flex items-center gap-1"
+              className="h-8 px-2.5 rounded-lg bg-white/[0.05] hover:bg-white/[0.1] text-zinc-300 hover:text-white text-[11px] font-semibold border border-white/[0.08] transition-all flex items-center gap-1 cursor-pointer"
             >
               <X className="w-3 h-3" />
               <span>Clear Pin</span>
@@ -274,7 +286,7 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
           type="button"
           onClick={() => handleSearchLocation()}
           disabled={searching || !searchQuery.trim()}
-          className="h-8 px-3 rounded-lg bg-white/[0.06] hover:bg-white/[0.1] text-white text-xs font-semibold border border-white/[0.08] transition-all shrink-0 disabled:opacity-40"
+          className="h-8 px-3 rounded-lg bg-white/[0.06] hover:bg-white/[0.1] text-white text-xs font-semibold border border-white/[0.08] transition-all shrink-0 disabled:opacity-40 cursor-pointer"
         >
           {searching ? 'Locating...' : 'Locate'}
         </button>
@@ -296,17 +308,17 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
           <span>Click map to place pin</span>
         </div>
 
-        {/* Coordinate indicator badge */}
+        {/* Selected location indicator badge: Shows clean address/area instead of raw coordinates */}
         {coordinates ? (
-          <div className="absolute bottom-2 left-2 px-2.5 py-1 rounded-md bg-black/85 border border-[#ccff00]/40 text-[10px] text-[#ccff00] font-mono z-10 flex items-center gap-1.5 shadow-lg">
-            <Check className="w-3 h-3" />
-            <span>
-              Lat: {coordinates.lat.toFixed(4)}, Lng: {coordinates.lng.toFixed(4)}
+          <div className="absolute bottom-2 left-2 max-w-[85%] px-2.5 py-1.5 rounded-md bg-black/90 border border-[#ccff00]/50 text-[11px] text-[#ccff00] font-medium z-10 flex items-center gap-1.5 shadow-lg">
+            <Check className="w-3.5 h-3.5 shrink-0 text-[#ccff00]" />
+            <span className="truncate">
+              📍 Location selected{selectedLabel ? `: ${selectedLabel}` : ''}
             </span>
           </div>
         ) : (
           <div className="absolute bottom-2 left-2 px-2.5 py-1 rounded-md bg-black/80 border border-white/10 text-[10px] text-zinc-400 z-10">
-            No pin placed yet
+            Click map to place pin
           </div>
         )}
       </div>

@@ -202,3 +202,104 @@ export interface ModerationReport {
   comment?: string;
   createdAt: number;
 }
+
+// -------------------------------------------------------------
+// TRANSPORT & FARE INTELLIGENCE SYSTEM
+// -------------------------------------------------------------
+export type TransportType =
+  | 'Bus'
+  | 'Train'
+  | 'CNG / Auto'
+  | 'Rickshaw'
+  | 'Easy Bike / E-bike'
+  | 'Launch / Boat'
+  | 'Private Car';
+
+export type FareSourceType = 'OFFICIAL' | 'OPERATOR' | 'COMMUNITY' | 'ESTIMATED';
+export type FareConfidence = 'High' | 'Medium' | 'Low';
+
+export interface RouteLeg {
+  fromLocation: string;
+  toLocation: string;
+  transportType: TransportType;
+  minFare: number;
+  maxFare: number;
+  estimatedDurationMin: number;
+  distanceKm?: number;
+  notes?: string;
+}
+
+export interface TransportOption {
+  id: string;
+  transportType: TransportType;
+  fromName: string;
+  toName: string;
+  minFare: number;
+  maxFare: number;
+  currency: 'BDT';
+  estimatedDurationMin: number;
+  distanceKm?: number;
+  sourceType: FareSourceType;
+  sourceReference?: string;
+  confidence: FareConfidence;
+  lastUpdated: string; // ISO date e.g. "2026-11-02"
+  isOutdated?: boolean;
+  notes?: string;
+  isMultiLeg?: boolean;
+  legs?: RouteLeg[];
+  communityReportsCount?: number;
+}
+
+export interface TransportRoute {
+  id: string;
+  originDistrict: string;
+  destinationDistrict: string;
+  destinationPlaceId?: string;
+  destinationPlaceName?: string;
+  fromLocation?: string;
+  toLocation?: string;
+  transportType: TransportType;
+  distanceKm?: number;
+  estimatedDurationMin: number;
+  active: boolean;
+  notes?: string;
+  isMultiLeg?: boolean;
+  legs?: RouteLeg[];
+  created_at?: string;
+}
+
+export interface TransportFare {
+  id: string;
+  routeId: string;
+  transportType: TransportType;
+  minFare: number;
+  maxFare: number;
+  currency: 'BDT';
+  fareUnit: 'per person' | 'per vehicle' | 'per trip';
+  sourceType: FareSourceType;
+  sourceReference?: string;
+  confidence: FareConfidence;
+  verifiedAt?: string;
+  notes?: string;
+  isArchived?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CommunityFareReport {
+  id: string;
+  userId?: string | null;
+  authorName?: string;
+  authorHandle?: string;
+  origin: string;
+  destination: string;
+  destinationPlaceId?: string;
+  destinationPlaceName?: string;
+  transportType: TransportType;
+  farePaid: number;
+  currency: 'BDT';
+  tripDate: string;
+  notes?: string;
+  status: 'pending' | 'verified' | 'rejected';
+  createdAt: string;
+}

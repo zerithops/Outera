@@ -25,6 +25,8 @@ import {
   PlacePost,
 } from '../services/supabase';
 import { CreatePostModal } from './CreatePostModal';
+import { HowToGetThereSection } from './HowToGetThereSection';
+import { UserLocation } from '../types/outera';
 
 interface PlaceDetailsModalProps {
   place: PlaceWithDistance | null;
@@ -36,6 +38,7 @@ interface PlaceDetailsModalProps {
   onPlaceUpdated?: () => void;
   isAuthenticated?: boolean;
   onRequireAuth?: (action: string) => void;
+  userLocation?: UserLocation;
 }
 
 export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
@@ -48,9 +51,10 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
   onPlaceUpdated,
   isAuthenticated = false,
   onRequireAuth,
+  userLocation,
 }) => {
   const [copied, setCopied] = useState(false);
-  const [activeTab, setActiveTab] = useState<'overview' | 'experiences'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'experiences' | 'transit'>('overview');
   const [wantToTry, setWantToTry] = useState(false);
   const [showClaimModal, setShowClaimModal] = useState(false);
   const [claimPhone, setClaimPhone] = useState('');
@@ -223,12 +227,12 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
           </div>
         </div>
 
-        {/* Header Tabs: Overview vs Community Experiences */}
-        <div className="px-5 pt-3 border-b border-white/[0.06] flex items-center gap-4">
+        {/* Header Tabs: Overview vs Community Experiences vs Transit */}
+        <div className="px-5 pt-3 border-b border-white/[0.06] flex items-center gap-4 overflow-x-auto no-scrollbar">
           <button
             type="button"
             onClick={() => setActiveTab('overview')}
-            className={`pb-2.5 text-xs font-bold border-b-2 transition-colors ${
+            className={`pb-2.5 text-xs font-bold border-b-2 transition-colors whitespace-nowrap ${
               activeTab === 'overview'
                 ? 'border-[#ccff00] text-white'
                 : 'border-transparent text-zinc-400 hover:text-zinc-200'
@@ -239,16 +243,28 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
           <button
             type="button"
             onClick={() => setActiveTab('experiences')}
-            className={`pb-2.5 text-xs font-bold border-b-2 transition-colors flex items-center gap-1.5 ${
+            className={`pb-2.5 text-xs font-bold border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${
               activeTab === 'experiences'
                 ? 'border-[#ccff00] text-white'
                 : 'border-transparent text-zinc-400 hover:text-zinc-200'
             }`}
           >
-            <span>See Community Experiences</span>
+            <span>Community Experiences</span>
             <span className="px-1.5 py-0.2 rounded-full bg-white/[0.08] text-[10px] font-mono">
               {reports.length}
             </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('transit')}
+            className={`pb-2.5 text-xs font-bold border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${
+              activeTab === 'transit'
+                ? 'border-[#ccff00] text-white'
+                : 'border-transparent text-zinc-400 hover:text-zinc-200'
+            }`}
+          >
+            <Navigation className="w-3.5 h-3.5 text-[#ccff00]" />
+            <span>How to Get There</span>
           </button>
         </div>
 
@@ -411,7 +427,17 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
                   </div>
                 </div>
               )}
+
+              {/* HOW TO GET THERE (Section on Place Details) */}
+              <div className="pt-2">
+                <HowToGetThereSection place={place} userLocation={userLocation} />
+              </div>
             </>
+          ) : activeTab === 'transit' ? (
+            /* DEDICATED HOW TO GET THERE TAB */
+            <div className="space-y-4">
+              <HowToGetThereSection place={place} userLocation={userLocation} />
+            </div>
           ) : (
             /* EXPERIENCES & VERIFICATION TAB */
             <div className="space-y-4">

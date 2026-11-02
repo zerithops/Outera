@@ -212,6 +212,8 @@ export async function requestBrowserLocation(): Promise<GeolocationResult> {
           message = 'Device GPS position is currently unavailable.';
         }
 
+        console.error('OUTERA location error', { code: err.code, message: err.message, status });
+
         resolve({
           success: false,
           error: status,
@@ -235,6 +237,7 @@ export function watchBrowserLocation(
   onError: (status: LocationStatus, message: string) => void
 ): () => void {
   if (typeof window === 'undefined' || typeof navigator === 'undefined' || !navigator.geolocation) {
+    console.error('OUTERA location error', 'Geolocation is not supported by your browser.');
     onError('unsupported', 'Geolocation is not supported by your browser.');
     return () => {};
   }
@@ -272,6 +275,7 @@ export function watchBrowserLocation(
         message = 'Location request timed out.';
       }
 
+      console.error('OUTERA location error', { code: err.code, message: err.message, status });
       onError(status, message);
     },
     {

@@ -55,6 +55,11 @@ export const PlaceSuggestionModal: React.FC<PlaceSuggestionModalProps> = ({
       return;
     }
 
+    if (!coords || typeof coords.lat !== 'number' || typeof coords.lng !== 'number') {
+      setErrorMessage('Please select the place location on the map.');
+      return;
+    }
+
     setLoading(true);
     setErrorMessage(null);
 
@@ -67,8 +72,8 @@ export const PlaceSuggestionModal: React.FC<PlaceSuggestionModalProps> = ({
       whyWorthVisiting: whyWorthVisiting.trim(),
       approxBudget,
       bestTimeToVisit,
-      latitude: coords?.lat ?? null,
-      longitude: coords?.lng ?? null,
+      latitude: coords.lat,
+      longitude: coords.lng,
     });
 
     setLoading(false);
@@ -84,6 +89,7 @@ export const PlaceSuggestionModal: React.FC<PlaceSuggestionModalProps> = ({
         onClose();
       }, 1500);
     } else {
+      console.error('OUTERA place suggestion error', res.error);
       setErrorMessage(res.error || 'Failed to submit suggestion. Please try again.');
     }
   };

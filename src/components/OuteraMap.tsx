@@ -282,6 +282,11 @@ export const OuteraMap: React.FC<OuteraMapProps> = ({
         </div>
       `;
 
+      const coords = place.coordinates;
+      const marker = L.marker([coords.lat, coords.lng], {
+        icon: customIcon,
+      });
+
       marker.bindPopup(popupHtml, {
         className: 'outera-custom-leaflet-popup',
         offset: [0, -12],
@@ -301,7 +306,7 @@ export const OuteraMap: React.FC<OuteraMapProps> = ({
       // Bind click
       marker.on('click', () => {
         setActivePlaceId(place.id);
-        map.flyTo([place.coordinates.lat, place.coordinates.lng], Math.max(map.getZoom(), 15), {
+        map.flyTo([coords.lat, coords.lng], Math.max(map.getZoom(), 15), {
           duration: 0.5,
         });
       });
