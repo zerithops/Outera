@@ -37,6 +37,8 @@ import { HeroSection } from './components/HeroSection';
 import { MoodScroller } from './components/MoodScroller';
 import { PlaceCard } from './components/PlaceCard';
 import { PlaceDetailsModal } from './components/PlaceDetailsModal';
+import { PostDetailsModal } from './components/PostDetailsModal';
+import { CreatePostModal } from './components/CreatePostModal';
 import { CommunityFeedbackModal } from './components/CommunityFeedbackModal';
 import { SurpriseMeView } from './components/SurpriseMeView';
 import { ExploreView } from './components/ExploreView';
@@ -46,6 +48,7 @@ import { LocationHierarchyModal } from './components/LocationHierarchyModal';
 import { LocationHubView } from './components/LocationHubView';
 import { AuthModal } from './components/AuthModal';
 import { PlaceSuggestionModal } from './components/PlaceSuggestionModal';
+import { PlacePost } from './services/supabase';
 import { Sparkles, ArrowRight, Compass, ShieldCheck, Globe2, MapPin, Navigation } from 'lucide-react';
 
 const INITIAL_FILTERS: FilterState = {
@@ -91,6 +94,40 @@ export default function App() {
   // Active division view for Location Hub
   const [activeHubDivision, setActiveHubDivision] = useState<'all' | DivisionName>('all');
   const [showLocationHub, setShowLocationHub] = useState(false);
+
+  // Community Post Details & Creation state
+  const [selectedPost, setSelectedPost] = useState<PlacePost | null>(null);
+  const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
+  const [createPostModalOpen, setCreatePostModalOpen] = useState(false);
+
+  // Listen for #post/<id> in URL hash
+  useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash;
+      const match = hash.match(/^#post\/([a-zA-Z0-9_-]+)$/);
+      if (match && match[1]) {
+        setSelectedPostId(match[1]);
+      }
+    };
+
+    handleHashChange();
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
+  const handleOpenPostDetails = (post: PlacePost) => {
+    setSelectedPost(post);
+    setSelectedPostId(post.id);
+    window.location.hash = `post/${post.id}`;
+  };
+
+  const handleClosePostDetails = () => {
+    setSelectedPost(null);
+    setSelectedPostId(null);
+    if (window.location.hash.startsWith('#post/')) {
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+  };
 
   // Sync Supabase places and authenticated user data
   useEffect(() => {
@@ -256,7 +293,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#090a0c] text-[#f4f4f5] flex flex-col antialiased selection:bg-[#ccff00] selection:text-black pb-24">
+    <div className="min-h-screen bg-[#090a0c] text-[#f4f4f5] flex flex-col antialiased selection:bg-[#ccff00] selection:text-black pb-24 md:pb-8 overflow-x-hidden">
       {/* Top Navigation */}
       <Navbar
         currentLocation={currentLocation}
@@ -267,6 +304,8 @@ export default function App() {
           window.scrollTo({ top: 0, behavior: 'smooth' });
         }}
         activeTab={activeTab}
+        onChangeTab={handleTabChange}
+        savedCount={savedPlaceIds.length}
       />
 
       {/* Dynamic Location Banner */}
@@ -638,6 +677,15 @@ export default function App() {
                 onSuggestPlace={() => setSuggestionModalOpen(true)}
                 onRequestGPS={handleDetectGPS}
                 isDetectingGPS={isDetectingGPS}
+                onOpenCreatePost={() => {
+                  if (!authUser) {
+                    setAuthContextAction('share an experience');
+                    setAuthModalOpen(true);
+                  } else {
+                    setCreatePostModalOpen(true);
+                  }
+                }}
+                onSelectPost={handleOpenPostDetails}
               />
             )}
 
@@ -681,6 +729,7 @@ export default function App() {
                   setAuthContextAction('access your scout profile');
                   setAuthModalOpen(true);
                 }}
+                onSelectPost={handleOpenPostDetails}
               />
             )}
           </>
@@ -702,6 +751,47 @@ export default function App() {
           setAuthModalOpen(true);
         }}
         userLocation={currentLocation}
+        onSelectPost={handleOpenPostDetails}
+        currentUserId={authUser?.id}
+        isAdmin={authUser?.role === 'admin'}
+      />
+
+      {/* Community Post Details Modal View */}
+      <PostDetailsModal
+        postId={selectedPostId}
+        post={selectedPost}
+        isOpen={Boolean(selectedPostId || selectedPost)}
+        onClose={handleClosePostDetails}
+        onPostDeleted={() => {
+          handleClosePostDetails();
+          refreshData();
+        }}
+        onSelectPlace={(placeId) => {
+          handleClosePostDetails();
+          const target = places.find((p) => p.id === placeId);
+          if (target) {
+            setDetailsPlace(target as PlaceWithDistance);
+          }
+        }}
+        currentUserId={authUser?.id}
+        isAdmin={authUser?.role === 'admin'}
+        onRequireAuth={(action) => {
+          setAuthContextAction(action);
+          setAuthModalOpen(true);
+        }}
+      />
+
+      {/* General Community Post Creation Modal */}
+      <CreatePostModal
+        isOpen={createPostModalOpen}
+        onClose={() => setCreatePostModalOpen(false)}
+        onPostSubmitted={() => {
+          refreshData();
+        }}
+        onRequireAuth={(action) => {
+          setAuthContextAction(action);
+          setAuthModalOpen(true);
+        }}
       />
 
       {/* Community Feedback Modal */}
@@ -743,12 +833,14 @@ export default function App() {
         }}
       />
 
-      {/* Bottom Sticky Tab Navigation */}
-      <BottomNav
-        activeTab={activeTab}
-        onChangeTab={handleTabChange}
-        savedCount={savedPlaceIds.length}
-      />
+      {/* Bottom Sticky Tab Navigation - Visible on Mobile, Replaced by Top Navbar on Desktop */}
+      <div className="md:hidden">
+        <BottomNav
+          activeTab={activeTab}
+          onChangeTab={handleTabChange}
+          savedCount={savedPlaceIds.length}
+        />
+      </div>
     </div>
   );
 }

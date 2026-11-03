@@ -1571,6 +1571,27 @@ export async function fetchRecentSearches(limit = 6): Promise<string[]> {
 // 19. PLACE_POSTS TABLE & SECURE ADMIN MODERATION SYSTEM
 // Schema: id, place_id, user_id, title, content, rating, status, is_visited, created_at, updated_at
 // -------------------------------------------------------------
+export interface PlacePostImage {
+  id: string;
+  post_id: string;
+  user_id: string;
+  storage_path: string;
+  url: string;
+  created_at: string;
+}
+
+export interface PlacePostComment {
+  id: string;
+  post_id: string;
+  user_id: string;
+  content: string;
+  created_at: string;
+  updated_at?: string;
+  author_name?: string;
+  author_username?: string;
+  author_avatar?: string | null;
+}
+
 export interface PlacePost {
   id: string;
   place_id: string;
@@ -1592,6 +1613,9 @@ export interface PlacePost {
   place_name?: string;
   place_category?: string;
   place_address?: string;
+  images?: string[];
+  comments?: PlacePostComment[];
+  comments_count?: number;
 }
 
 const MODERATION_NOTES_STORAGE_KEY = 'outera_post_moderation_notes';
@@ -1633,12 +1657,25 @@ export async function isCurrentUserAdmin(): Promise<boolean> {
   }
 }
 
+export function getPublicStorageUrl(storagePath: string): string {
+  if (!storagePath) return '';
+  if (storagePath.startsWith('http://') || storagePath.startsWith('https://')) {
+    return storagePath;
+  }
+  const cleanPath = storagePath.startsWith('/') ? storagePath.slice(1) : storagePath;
+  const { data } = supabase.storage.from('community-review-media').getPublicUrl(cleanPath);
+  return data?.publicUrl || '';
+}
+
 async function hydratePlacePosts(rawPosts: any[]): Promise<PlacePost[]> {
   if (!rawPosts || rawPosts.length === 0) return [];
 
   const userIds = Array.from(new Set(rawPosts.map((p) => p.user_id).filter(Boolean)));
+  const postIds = Array.from(new Set(rawPosts.map((p) => p.id).filter(Boolean)));
   const profilesMap = new Map<string, SupabaseProfile>();
+  const postImagesMap = new Map<string, string[]>();
 
+  // Fetch author profiles
   if (userIds.length > 0) {
     try {
       const { data: profiles } = await supabase
@@ -1655,12 +1692,33 @@ async function hydratePlacePosts(rawPosts: any[]): Promise<PlacePost[]> {
     }
   }
 
+  // Fetch photos for these posts from place_post_images
+  if (postIds.length > 0) {
+    try {
+      const { data: images } = await supabase
+        .from('place_post_images')
+        .select('id, post_id, storage_path')
+        .in('post_id', postIds);
+      if (images && images.length > 0) {
+        for (const img of images) {
+          const list = postImagesMap.get(img.post_id) || [];
+          const publicUrl = getPublicStorageUrl(img.storage_path);
+          if (publicUrl) list.push(publicUrl);
+          postImagesMap.set(img.post_id, list);
+        }
+      }
+    } catch (imgErr) {
+      console.warn('hydratePlacePosts images notice:', imgErr);
+    }
+  }
+
   const storedNotes = getStoredModerationNotes();
 
   return rawPosts.map((p) => {
     const author = profilesMap.get(p.user_id);
     const place = p.places || {};
     const modInfo = storedNotes[p.id];
+    const postPhotos = postImagesMap.get(p.id) || [];
 
     return {
       id: p.id,
@@ -1682,6 +1740,7 @@ async function hydratePlacePosts(rawPosts: any[]): Promise<PlacePost[]> {
       place_name: place.name || 'Selected Place',
       place_category: place.category || 'Spot',
       place_address: place.address || '',
+      images: postPhotos,
     };
   });
 }
@@ -1830,21 +1889,266 @@ export async function updateUserPendingPost(
   }
 }
 
-// User can delete their own post
-export async function deleteUserPost(postId: string): Promise<{ success: boolean; error?: string }> {
+// Fetch a single place post by ID with defensive null-safety (never throws or crashes)
+export async function fetchPlacePostById(postId: string): Promise<PlacePost | null> {
+  if (!postId || typeof postId !== 'string') return null;
+  try {
+    const { data, error } = await supabase
+      .from('place_posts')
+      .select('*, places(id, name, category, address)')
+      .eq('id', postId.trim())
+      .maybeSingle();
+
+    if (error || !data) {
+      return null;
+    }
+
+    const hydratedList = await hydratePlacePosts([data]);
+    if (!hydratedList || hydratedList.length === 0) return null;
+
+    const post = hydratedList[0];
+
+    // Fetch comments for post
+    const comments = await fetchPostComments(post.id);
+    post.comments = comments;
+    post.comments_count = comments.length;
+
+    return post;
+  } catch (err) {
+    console.warn('fetchPlacePostById notice:', err);
+    return null;
+  }
+}
+
+// Fetch images for a specific post
+export async function fetchPostImages(postId: string): Promise<string[]> {
+  if (!postId) return [];
+  try {
+    const { data, error } = await supabase
+      .from('place_post_images')
+      .select('id, storage_path')
+      .eq('post_id', postId);
+
+    if (error || !data) return [];
+    return data
+      .map((img) => getPublicStorageUrl(img.storage_path))
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+// Upload direct photos from user's device to community-review-media bucket
+// and insert metadata records into public.place_post_images
+export async function uploadPlacePostImages(
+  userId: string,
+  postId: string,
+  files: File[]
+): Promise<{ success: boolean; imagePaths: string[]; error?: string }> {
+  if (!files || files.length === 0) {
+    return { success: true, imagePaths: [] };
+  }
+
+  const uploadedPaths: string[] = [];
+  const maxFiles = Math.min(files.length, 5);
+
+  for (let i = 0; i < maxFiles; i++) {
+    const file = files[i];
+    // Check 5MB limit
+    if (file.size > 5 * 1024 * 1024) {
+      continue;
+    }
+
+    const rawExt = file.name.split('.').pop()?.toLowerCase() || 'jpg';
+    const validExts = ['jpg', 'jpeg', 'png', 'webp'];
+    const ext = validExts.includes(rawExt) ? rawExt : 'jpg';
+
+    const safeFileName = `${Date.now()}_${i}_${Math.random().toString(36).slice(2, 6)}.${ext}`;
+    const storagePath = `post_photos/${userId}/${postId}/${safeFileName}`;
+
+    try {
+      const { error: uploadError } = await supabase.storage
+        .from('community-review-media')
+        .upload(storagePath, file, {
+          cacheControl: '3600',
+          upsert: true,
+        });
+
+      if (!uploadError) {
+        uploadedPaths.push(storagePath);
+
+        // Record in place_post_images table
+        const { error: imgInsertErr } = await supabase.from('place_post_images').insert({
+          post_id: postId,
+          user_id: userId,
+          storage_path: storagePath,
+          created_at: new Date().toISOString(),
+        });
+
+        if (imgInsertErr) {
+          console.warn('OUTERA place_post_images insert notice:', imgInsertErr);
+        }
+      } else {
+        console.warn('OUTERA photo upload notice:', uploadError);
+      }
+    } catch (e) {
+      console.warn('Failed to upload file:', file.name, e);
+    }
+  }
+
+  return {
+    success: uploadedPaths.length > 0 || files.length === 0,
+    imagePaths: uploadedPaths,
+  };
+}
+
+// Fetch comments for a post
+export async function fetchPostComments(postId: string): Promise<PlacePostComment[]> {
+  if (!postId) return [];
+  try {
+    const { data: rawComments, error } = await supabase
+      .from('place_post_comments')
+      .select('*')
+      .eq('post_id', postId)
+      .order('created_at', { ascending: true });
+
+    if (error || !rawComments || rawComments.length === 0) return [];
+
+    const userIds = Array.from(new Set(rawComments.map((c: any) => c.user_id).filter(Boolean)));
+    const profilesMap = new Map<string, SupabaseProfile>();
+
+    if (userIds.length > 0) {
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('id, display_name, username, avatar_url')
+        .in('id', userIds);
+      if (profiles) {
+        for (const p of profiles) profilesMap.set(p.id, p);
+      }
+    }
+
+    return rawComments.map((c: any) => {
+      const profile = profilesMap.get(c.user_id);
+      return {
+        id: c.id,
+        post_id: c.post_id,
+        user_id: c.user_id,
+        content: c.content || '',
+        created_at: c.created_at,
+        updated_at: c.updated_at,
+        author_name: profile?.display_name || 'OUTERA Scout',
+        author_username: profile?.username ? `@${profile.username}` : '@scout',
+        author_avatar: profile?.avatar_url || null,
+      };
+    });
+  } catch (err) {
+    console.warn('fetchPostComments error:', err);
+    return [];
+  }
+}
+
+// Add comment to a post
+export async function addPostComment(
+  postId: string,
+  content: string
+): Promise<{ success: boolean; comment?: PlacePostComment; error?: string }> {
   try {
     const user = await getCurrentUser();
-    if (!user) return { success: false, error: 'Authentication required' };
+    if (!user) return { success: false, error: 'Sign in to comment' };
+    if (!content.trim()) return { success: false, error: 'Comment cannot be empty' };
 
-    const { error } = await supabase
-      .from('place_posts')
-      .delete()
-      .eq('id', postId)
-      .eq('user_id', user.id);
+    const payload = {
+      post_id: postId,
+      user_id: user.id,
+      content: content.trim(),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data, error } = await supabase
+      .from('place_post_comments')
+      .insert(payload)
+      .select()
+      .maybeSingle();
 
     if (error) {
       return { success: false, error: error.message };
     }
+
+    const profile = await fetchProfile(user.id);
+    const newComment: PlacePostComment = {
+      id: data?.id || `temp-${Date.now()}`,
+      post_id: postId,
+      user_id: user.id,
+      content: payload.content,
+      created_at: payload.created_at,
+      author_name: profile?.display_name || 'OUTERA Scout',
+      author_username: profile?.username ? `@${profile.username}` : '@scout',
+      author_avatar: profile?.avatar_url || null,
+    };
+
+    return { success: true, comment: newComment };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to post comment' };
+  }
+}
+
+// Delete a comment
+export async function deletePostComment(commentId: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const user = await getCurrentUser();
+    if (!user) return { success: false, error: 'Authentication required' };
+    const isAdmin = await isCurrentUserAdmin();
+
+    let query = supabase.from('place_post_comments').delete().eq('id', commentId);
+    if (!isAdmin) {
+      query = query.eq('user_id', user.id);
+    }
+
+    const { error } = await query;
+    if (error) return { success: false, error: error.message };
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to delete comment' };
+  }
+}
+
+// User can delete their own post, or Admin can delete any post
+export async function deleteUserPost(postId: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const user = await getCurrentUser();
+    if (!user) return { success: false, error: 'Authentication required' };
+    const isAdmin = await isCurrentUserAdmin();
+
+    // Verify existing post
+    const { data: existing } = await supabase
+      .from('place_posts')
+      .select('id, user_id')
+      .eq('id', postId)
+      .maybeSingle();
+
+    if (existing && existing.user_id !== user.id && !isAdmin) {
+      return { success: false, error: 'Unauthorized: You can only delete your own posts.' };
+    }
+
+    // Clean up dependent comments and images
+    try {
+      await supabase.from('place_post_images').delete().eq('post_id', postId);
+      await supabase.from('place_post_comments').delete().eq('post_id', postId);
+    } catch (cleanupErr) {
+      console.warn('Post cleanup notice:', cleanupErr);
+    }
+
+    let query = supabase.from('place_posts').delete().eq('id', postId);
+    if (!isAdmin) {
+      query = query.eq('user_id', user.id);
+    }
+
+    const { error } = await query;
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
     return { success: true };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Failed to delete post.' };

@@ -39,6 +39,10 @@ interface PlaceDetailsModalProps {
   isAuthenticated?: boolean;
   onRequireAuth?: (action: string) => void;
   userLocation?: UserLocation;
+  onSelectPost?: (post: PlacePost) => void;
+  onDeletePost?: (postId: string) => void;
+  currentUserId?: string;
+  isAdmin?: boolean;
 }
 
 export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
@@ -52,6 +56,10 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
   isAuthenticated = false,
   onRequireAuth,
   userLocation,
+  onSelectPost,
+  onDeletePost,
+  currentUserId,
+  isAdmin = false,
 }) => {
   const [copied, setCopied] = useState(false);
   const [activeTab, setActiveTab] = useState<'overview' | 'experiences' | 'transit'>('overview');
@@ -494,21 +502,48 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
                     {publicPosts.map((p) => (
                       <div
                         key={p.id}
-                        className="p-4 rounded-xl bg-[#111317] border border-white/[0.08] space-y-2"
+                        onClick={() => onSelectPost && onSelectPost(p)}
+                        className="p-4 rounded-xl bg-[#111317] border border-white/[0.08] hover:border-[#ccff00]/40 transition-all cursor-pointer space-y-2 group"
                       >
                         <div className="flex items-center justify-between text-xs">
                           <div className="flex items-center gap-2">
-                            <span className="font-bold text-white">{p.author_name}</span>
+                            <span className="font-bold text-white group-hover:text-[#ccff00] transition-colors">
+                              {p.author_name}
+                            </span>
                             <span className="text-zinc-500 font-mono text-[11px]">{p.author_username}</span>
                           </div>
-                          {p.is_visited && (
-                            <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
-                              Verified Visit
-                            </span>
-                          )}
+                          <div className="flex items-center gap-1.5">
+                            {p.is_visited && (
+                              <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                                Verified Visit
+                              </span>
+                            )}
+                            {p.images && p.images.length > 0 && (
+                              <span className="text-[10px] font-bold text-purple-300 bg-purple-500/10 px-2 py-0.5 rounded-full border border-purple-500/20">
+                                📷 {p.images.length}
+                              </span>
+                            )}
+                          </div>
                         </div>
                         <h4 className="text-sm font-bold text-white tracking-tight">{p.title}</h4>
-                        <p className="text-xs text-zinc-300 leading-relaxed">{p.content}</p>
+                        <p className="text-xs text-zinc-300 leading-relaxed line-clamp-2">{p.content}</p>
+                        {p.images && p.images.length > 0 && (
+                          <div className="flex items-center gap-1.5 pt-1 overflow-x-auto no-scrollbar">
+                            {p.images.slice(0, 3).map((img, i) => (
+                              <img
+                                key={i}
+                                src={img}
+                                alt="Thumbnail"
+                                className="w-12 h-12 rounded-lg object-cover border border-white/[0.06]"
+                              />
+                            ))}
+                            {p.images.length > 3 && (
+                              <span className="text-[11px] text-zinc-400 font-medium self-center">
+                                +{p.images.length - 3} more
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -698,6 +733,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
           onClose={() => setShowCreateModal(false)}
           defaultPlaceId={place.id}
           defaultPlaceName={place.name}
+          onRequireAuth={onRequireAuth}
           onPostSubmitted={() => {
             fetchPublicPlacePosts(place.id).then((posts) => setPublicPosts(posts || []));
           }}

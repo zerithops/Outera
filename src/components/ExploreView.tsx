@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Search, MapPin, SlidersHorizontal, LayoutGrid, Map as MapIcon, X, Clock, Navigation } from 'lucide-react';
+import { Search, MapPin, SlidersHorizontal, LayoutGrid, Map as MapIcon, X, Clock, Navigation, Plus } from 'lucide-react';
 import { FilterState, UserLocation } from '../types/outera';
 import { PlaceWithDistance } from '../services/discoveryEngine';
 import { PlaceCard } from './PlaceCard';
@@ -7,6 +7,7 @@ import { FilterBar } from './FilterBar';
 import { DiscoveryMap } from './DiscoveryMap';
 import { formatDistance } from '../services/location';
 import { useSearchHistory } from '../hooks/useSearchHistory';
+import { PlacePost } from '../services/supabase';
 
 interface ExploreViewProps {
   places: PlaceWithDistance[];
@@ -20,6 +21,8 @@ interface ExploreViewProps {
   onSuggestPlace?: () => void;
   onRequestGPS?: () => void;
   isDetectingGPS?: boolean;
+  onOpenCreatePost?: () => void;
+  onSelectPost?: (post: PlacePost) => void;
 }
 
 export const ExploreView: React.FC<ExploreViewProps> = ({
@@ -34,6 +37,8 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
   onSuggestPlace,
   onRequestGPS,
   isDetectingGPS = false,
+  onOpenCreatePost,
+  onSelectPost,
 }) => {
   const [viewMode, setViewMode] = useState<'grid' | 'map'>('grid');
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
@@ -130,32 +135,45 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
           </h1>
         </div>
 
-        {/* View Toggle: Grid vs Map Preview */}
-        <div className="flex items-center gap-1 p-1 rounded-xl bg-white/[0.04] border border-white/[0.06] self-start sm:self-auto">
-          <button
-            type="button"
-            onClick={() => setViewMode('grid')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              viewMode === 'grid'
-                ? 'bg-[#ccff00] text-black font-bold'
-                : 'text-zinc-400 hover:text-white'
-            }`}
-          >
-            <LayoutGrid className="w-3.5 h-3.5" />
-            <span>Cards</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setViewMode('map')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              viewMode === 'map'
-                ? 'bg-[#ccff00] text-black font-bold'
-                : 'text-zinc-400 hover:text-white'
-            }`}
-          >
-            <MapIcon className="w-3.5 h-3.5" />
-            <span>Map Radar</span>
-          </button>
+        {/* Controls: Share Experience & View Toggle */}
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          {onOpenCreatePost && (
+            <button
+              type="button"
+              onClick={onOpenCreatePost}
+              className="h-9 px-3.5 rounded-xl bg-[#ccff00] hover:bg-[#d8ff33] text-black font-extrabold text-xs flex items-center gap-1.5 shadow-md shadow-[#ccff00]/10 active:scale-95 transition-all"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Share Experience</span>
+            </button>
+          )}
+
+          <div className="flex items-center gap-1 p-1 rounded-xl bg-white/[0.04] border border-white/[0.06]">
+            <button
+              type="button"
+              onClick={() => setViewMode('grid')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                viewMode === 'grid'
+                  ? 'bg-[#ccff00] text-black font-bold'
+                  : 'text-zinc-400 hover:text-white'
+              }`}
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+              <span>Cards</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('map')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                viewMode === 'map'
+                  ? 'bg-[#ccff00] text-black font-bold'
+                  : 'text-zinc-400 hover:text-white'
+              }`}
+            >
+              <MapIcon className="w-3.5 h-3.5" />
+              <span>Map Radar</span>
+            </button>
+          </div>
         </div>
       </div>
 

@@ -47,10 +47,12 @@ interface ProfileViewProps {
   savedCount: number;
   reportCount: number;
   onOpenAuthModal?: () => void;
+  onSelectPost?: (post: PlacePost) => void;
 }
 
 export const ProfileView: React.FC<ProfileViewProps> = ({
   onOpenAuthModal,
+  onSelectPost,
 }) => {
   const [authUser, setAuthUser] = useState<any>(null);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -562,6 +564,23 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             </div>
           ) : (
             <div className="space-y-3">
+              <div className="flex items-center justify-between pb-1">
+                <span className="text-xs font-bold uppercase tracking-wider text-zinc-400">
+                  My Posts ({userPosts.length})
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingPost(null);
+                    setShowCreatePostModal(true);
+                  }}
+                  className="h-8 px-3 rounded-xl bg-[#ccff00] text-black font-extrabold text-xs flex items-center gap-1.5 shadow-sm active:scale-95 transition-all"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Create Post</span>
+                </button>
+              </div>
+
               {userPosts.map((post) => {
                 const isPending = post.status === 'pending';
                 const statusStyles: Record<string, string> = {
@@ -574,29 +593,55 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 return (
                   <div
                     key={post.id}
-                    className="p-4 rounded-2xl bg-[#111317] border border-white/[0.08] space-y-3"
+                    onClick={() => onSelectPost && onSelectPost(post)}
+                    className="p-4 rounded-2xl bg-[#111317] border border-white/[0.08] hover:border-[#ccff00]/40 transition-all cursor-pointer space-y-3 group"
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <div className="flex items-center gap-2">
                           <MapPin className="w-3.5 h-3.5 text-[#ccff00]" />
-                          <span className="text-xs font-bold text-white truncate">
+                          <span className="text-xs font-bold text-white truncate group-hover:text-[#ccff00] transition-colors">
                             {post.place_name}
                           </span>
                         </div>
                         <h3 className="text-sm font-bold text-white mt-1">{post.title}</h3>
                       </div>
 
-                      <span
-                        className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border shrink-0 ${
-                          statusStyles[post.status] || statusStyles.pending
-                        }`}
-                      >
-                        {post.status}
-                      </span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {post.images && post.images.length > 0 && (
+                          <span className="text-[10px] font-bold text-purple-300 bg-purple-500/10 px-2 py-0.5 rounded-full border border-purple-500/20">
+                            📷 {post.images.length}
+                          </span>
+                        )}
+                        <span
+                          className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border ${
+                            statusStyles[post.status] || statusStyles.pending
+                          }`}
+                        >
+                          {post.status}
+                        </span>
+                      </div>
                     </div>
 
-                    <p className="text-xs text-zinc-300 leading-relaxed">{post.content}</p>
+                    <p className="text-xs text-zinc-300 leading-relaxed line-clamp-2">{post.content}</p>
+
+                    {post.images && post.images.length > 0 && (
+                      <div className="flex items-center gap-1.5 pt-0.5 overflow-x-auto no-scrollbar">
+                        {post.images.slice(0, 4).map((img, i) => (
+                          <img
+                            key={i}
+                            src={img}
+                            alt="Photo thumbnail"
+                            className="w-12 h-12 rounded-lg object-cover border border-white/[0.06]"
+                          />
+                        ))}
+                        {post.images.length > 4 && (
+                          <span className="text-[11px] text-zinc-400 font-medium self-center">
+                            +{post.images.length - 4} more
+                          </span>
+                        )}
+                      </div>
+                    )}
 
                     <div className="flex items-center justify-between text-xs text-zinc-400 pt-1">
                       <div className="flex items-center gap-1 text-amber-400">
@@ -608,19 +653,23 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                         {isPending && (
                           <button
                             type="button"
-                            onClick={() => {
+                            onClick={(e) => {
+                              e.stopPropagation();
                               setEditingPost(post);
                               setShowCreatePostModal(true);
                             }}
-                            className="text-xs font-bold text-[#ccff00] hover:underline"
+                            className="text-xs font-bold text-[#ccff00] hover:underline px-1 py-0.5"
                           >
                             Edit
                           </button>
                         )}
                         <button
                           type="button"
-                          onClick={() => handleDeletePost(post.id)}
-                          className="text-xs text-red-400 hover:text-red-300"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeletePost(post.id);
+                          }}
+                          className="text-xs text-red-400 hover:text-red-300 p-1 rounded hover:bg-red-500/10 transition-colors"
                           title="Delete post"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
