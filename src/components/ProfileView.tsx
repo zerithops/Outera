@@ -36,11 +36,13 @@ import {
   fetchUserPlacePosts,
   fetchUserPlaceSuggestions,
   deleteUserPost,
+  isEmailVerified,
   PlacePost,
   PlaceSuggestion,
 } from '../services/supabase';
 import { AdminDashboard } from './AdminDashboard';
 import { CreatePostModal } from './CreatePostModal';
+import { AccountSecuritySection } from './AccountSecuritySection';
 
 interface ProfileViewProps {
   currentLocation: UserLocation;
@@ -73,7 +75,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   });
 
   const [activeTab, setActiveTab] = useState<
-    'preferences' | 'posts' | 'suggestions' | 'visited' | 'activity' | 'admin'
+    'preferences' | 'posts' | 'suggestions' | 'visited' | 'activity' | 'security' | 'admin'
   >('posts');
   const [activities, setActivities] = useState<any[]>([]);
   const [userPosts, setUserPosts] = useState<PlacePost[]>([]);
@@ -330,11 +332,11 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   }
 
   return (
-    <div className="w-full px-4 sm:px-6 py-6 max-w-2xl mx-auto space-y-6">
+    <div className="w-full px-4 sm:px-6 py-6 max-w-4xl mx-auto space-y-6">
       {/* Header Profile Lockup */}
-      <div className="p-5 rounded-2xl bg-[#111317] border border-white/[0.08] flex items-center justify-between gap-4">
-        <div className="flex items-center gap-4 min-w-0">
-          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-[#ccff00]/15 to-zinc-900 border border-[#ccff00]/30 flex items-center justify-center text-[#ccff00] font-black text-xl shrink-0 uppercase">
+      <div className="p-4 sm:p-5 rounded-2xl bg-[#111317] border border-white/[0.08] flex flex-col xs:flex-row sm:flex-row xs:items-center justify-between gap-4">
+        <div className="flex items-center gap-3.5 sm:gap-4 min-w-0">
+          <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-gradient-to-br from-[#ccff00]/15 to-zinc-900 border border-[#ccff00]/30 flex items-center justify-center text-[#ccff00] font-extrabold text-lg sm:text-xl shrink-0 uppercase">
             {profile.name ? profile.name.slice(0, 2) : 'OUT'}
           </div>
           <div className="min-w-0">
@@ -343,15 +345,26 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 {profile.name || (authUser ? 'OUTERA Scout' : 'Guest Visitor')}
               </h1>
               {isAdmin ? (
-                <span className="text-[10px] font-extrabold text-[#ccff00] bg-[#ccff00]/15 px-2 py-0.5 rounded-full border border-[#ccff00]/30 uppercase shrink-0 flex items-center gap-1">
+                <span className="text-[10px] font-bold text-[#D8FF36] bg-[#D8FF36]/12 px-2 py-0.5 rounded-md border border-[#D8FF36]/25 uppercase shrink-0 flex items-center gap-1">
                   <Shield className="w-2.5 h-2.5" />
                   <span>Admin · Scout</span>
                 </span>
               ) : authUser ? (
-                <span className="text-[10px] font-extrabold text-[#ccff00] bg-[#ccff00]/10 px-2 py-0.5 rounded-full border border-[#ccff00]/30 uppercase shrink-0">
+                <span className="text-[10px] font-bold text-[#D8FF36] bg-[#D8FF36]/10 px-2 py-0.5 rounded-md border border-[#D8FF36]/25 uppercase shrink-0">
                   ✓ Active Scout
                 </span>
               ) : null}
+              {authUser && (
+                <span
+                  className={`text-[10px] font-bold px-2 py-0.5 rounded-md border uppercase shrink-0 ${
+                    isEmailVerified(authUser)
+                      ? 'text-emerald-300 bg-emerald-500/15 border-emerald-500/30'
+                      : 'text-amber-300 bg-amber-500/15 border-amber-500/30'
+                  }`}
+                >
+                  {isEmailVerified(authUser) ? 'Verified Email' : 'Unverified Email'}
+                </span>
+              )}
             </div>
             <p className="text-xs text-zinc-400 mt-0.5 truncate font-mono">
               {profile.handle || authUser?.email || 'Every registered user is automatically an OUTERA Scout'}
@@ -360,13 +373,13 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         </div>
 
         {/* Action buttons */}
-        <div className="shrink-0 flex items-center gap-2">
+        <div className="shrink-0 flex items-center gap-2 self-end xs:self-auto">
           {authUser ? (
             <>
               <button
                 type="button"
                 onClick={handleOpenEdit}
-                className="p-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] active:scale-95 border border-white/[0.08] text-zinc-300 hover:text-white transition-all cursor-pointer"
+                className="w-9 h-9 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] active:scale-95 border border-white/[0.08] flex items-center justify-center text-zinc-300 hover:text-white transition-all cursor-pointer"
                 title="Edit profile"
                 aria-label="Edit profile"
               >
@@ -374,18 +387,27 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               </button>
               <button
                 type="button"
+                onClick={() => setActiveTab('security')}
+                className="h-9 px-3 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] active:scale-95 border border-white/[0.08] text-xs font-semibold text-zinc-300 hover:text-white flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap"
+                title="Account & Security"
+              >
+                <Shield className="w-3.5 h-3.5 text-[#D8FF36]" />
+                <span className="hidden sm:inline">Security</span>
+              </button>
+              <button
+                type="button"
                 onClick={handleSignOut}
-                className="px-3 py-1.5 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] active:scale-95 border border-white/[0.08] text-xs font-semibold text-zinc-300 hover:text-white flex items-center gap-1.5 transition-all cursor-pointer"
+                className="h-9 px-3 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] active:scale-95 border border-white/[0.08] text-xs font-semibold text-zinc-300 hover:text-white flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap"
               >
                 <LogOut className="w-3.5 h-3.5 text-red-400" />
-                <span className="hidden sm:inline">Sign Out</span>
+                <span>Sign Out</span>
               </button>
             </>
           ) : (
             <button
               type="button"
               onClick={onOpenAuthModal}
-              className="px-4 py-2 rounded-xl bg-[#ccff00] hover:bg-[#d8ff33] active:scale-95 text-black text-xs font-extrabold flex items-center gap-1.5 transition-all shadow-md shadow-[#ccff00]/10 cursor-pointer"
+              className="h-10 px-4 rounded-xl bg-[#D8FF36] hover:bg-[#e2ff5e] active:scale-95 text-black text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap"
             >
               <LogIn className="w-3.5 h-3.5" />
               <span>Join as Scout</span>
@@ -393,6 +415,25 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           )}
         </div>
       </div>
+
+      {/* Unverified Email Notice Banner */}
+      {authUser && !isEmailVerified(authUser) && (
+        <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/25 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="text-xs text-amber-200 space-y-0.5">
+            <p className="font-bold text-amber-300">Verify your email to unlock full Scout features</p>
+            <p className="text-zinc-300">
+              Please confirm <span className="font-mono text-white">{authUser.email}</span> before publishing community reviews or suggesting new places.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setActiveTab('security')}
+            className="h-9 px-3.5 rounded-xl bg-[#D8FF36] text-black font-extrabold text-xs shrink-0 cursor-pointer"
+          >
+            Verify in Account Security
+          </button>
+        </div>
+      )}
 
       {/* Two Separate Scout Actions Bar: Create Community Post vs + Suggest a Place */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -403,12 +444,16 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               if (onOpenAuthModal) onOpenAuthModal();
               return;
             }
+            if (!isEmailVerified(authUser)) {
+              setActiveTab('security');
+              return;
+            }
             setEditingPost(null);
             setShowCreatePostModal(true);
           }}
-          className="h-11 px-4 rounded-2xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.1] text-white font-extrabold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer"
+          className="h-11 px-4 rounded-xl bg-[#111317] hover:bg-white/[0.06] border border-white/[0.1] text-white font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer whitespace-nowrap"
         >
-          <MessageSquareHeart className="w-4 h-4 text-[#ccff00]" />
+          <MessageSquareHeart className="w-4 h-4 text-[#D8FF36] shrink-0" />
           <span>Create Community Post</span>
         </button>
 
@@ -419,11 +464,15 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               if (onOpenAuthModal) onOpenAuthModal();
               return;
             }
+            if (!isEmailVerified(authUser)) {
+              setActiveTab('security');
+              return;
+            }
             if (onOpenSuggestionModal) onOpenSuggestionModal();
           }}
-          className="h-11 px-4 rounded-2xl bg-[#ccff00] hover:bg-[#d8ff33] text-black font-extrabold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all shadow-lg shadow-[#ccff00]/10 cursor-pointer"
+          className="h-11 px-4 rounded-xl bg-[#D8FF36] hover:bg-[#e2ff5e] text-black font-extrabold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all cursor-pointer whitespace-nowrap"
         >
-          <Sparkles className="w-4 h-4" />
+          <Sparkles className="w-4 h-4 shrink-0" />
           <span>+ Suggest a Place</span>
         </button>
       </div>
@@ -432,41 +481,41 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       <div className="grid grid-cols-3 gap-2 sm:gap-3">
         <div
           onClick={() => setActiveTab('suggestions')}
-          className="p-3 sm:p-4 rounded-2xl bg-white/[0.03] border border-white/[0.06] hover:border-[#ccff00]/30 transition-all text-center cursor-pointer"
+          className="p-2.5 sm:p-4 rounded-2xl bg-[#111317] border border-white/[0.08] hover:border-[#ccff00]/30 transition-all text-center cursor-pointer"
         >
-          <div className="flex items-center justify-center gap-1 text-[11px] text-zinc-400 mb-1">
-            <Sparkles className="w-3.5 h-3.5 text-[#ccff00]" />
-            <span>Places Suggested</span>
+          <div className="flex items-center justify-center gap-1 text-[10px] sm:text-xs text-zinc-400 mb-1">
+            <Sparkles className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#ccff00] shrink-0" />
+            <span className="truncate">Suggested</span>
           </div>
-          <p className="text-xl sm:text-2xl font-extrabold text-white font-mono tabular-nums">
+          <p className="text-lg sm:text-2xl font-extrabold text-white font-mono tabular-nums">
             {userSuggestions.length || stats.placesSuggested}
           </p>
-          <p className="text-[10px] text-zinc-500 mt-0.5">scout proposals</p>
+          <p className="text-[10px] text-zinc-500 mt-0.5 truncate">places proposed</p>
         </div>
 
         <div
           onClick={() => setActiveTab('posts')}
-          className="p-3 sm:p-4 rounded-2xl bg-white/[0.03] border border-white/[0.06] hover:border-[#ccff00]/30 transition-all text-center cursor-pointer"
+          className="p-2.5 sm:p-4 rounded-2xl bg-[#111317] border border-white/[0.08] hover:border-[#ccff00]/30 transition-all text-center cursor-pointer"
         >
-          <div className="flex items-center justify-center gap-1 text-[11px] text-zinc-400 mb-1">
-            <MessageSquareHeart className="w-3.5 h-3.5 text-[#ccff00]" />
-            <span>Community Posts</span>
+          <div className="flex items-center justify-center gap-1 text-[10px] sm:text-xs text-zinc-400 mb-1">
+            <MessageSquareHeart className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#ccff00] shrink-0" />
+            <span className="truncate">Posts</span>
           </div>
-          <p className="text-xl sm:text-2xl font-extrabold text-white font-mono tabular-nums">
+          <p className="text-lg sm:text-2xl font-extrabold text-white font-mono tabular-nums">
             {userPosts.length || stats.communityPosts}
           </p>
-          <p className="text-[10px] text-zinc-500 mt-0.5">place reviews</p>
+          <p className="text-[10px] text-zinc-500 mt-0.5 truncate">place reviews</p>
         </div>
 
-        <div className="p-3 sm:p-4 rounded-2xl bg-white/[0.03] border border-white/[0.06] text-center">
-          <div className="flex items-center justify-center gap-1 text-[11px] text-zinc-400 mb-1">
-            <ThumbsUp className="w-3.5 h-3.5 text-[#ccff00]" />
-            <span>Helpful Reports</span>
+        <div className="p-2.5 sm:p-4 rounded-2xl bg-[#111317] border border-white/[0.08] text-center">
+          <div className="flex items-center justify-center gap-1 text-[10px] sm:text-xs text-zinc-400 mb-1">
+            <ThumbsUp className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#ccff00] shrink-0" />
+            <span className="truncate">Helpful</span>
           </div>
-          <p className="text-xl sm:text-2xl font-extrabold text-white font-mono tabular-nums">
+          <p className="text-lg sm:text-2xl font-extrabold text-white font-mono tabular-nums">
             {stats.helpfulReports}
           </p>
-          <p className="text-[10px] text-zinc-500 mt-0.5">helpful & verified</p>
+          <p className="text-[10px] text-zinc-500 mt-0.5 truncate">verified reports</p>
         </div>
       </div>
 
@@ -561,12 +610,27 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           onClick={() => setActiveTab('visited')}
           className={`flex-1 min-w-[85px] py-2 px-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
             activeTab === 'visited'
-              ? 'bg-[#ccff00] text-black font-extrabold'
+              ? 'bg-[#D8FF36] text-black font-extrabold'
               : 'text-zinc-400 hover:text-white'
           }`}
         >
           Visited ({stats.visited})
         </button>
+
+        {authUser && (
+          <button
+            type="button"
+            onClick={() => setActiveTab('security')}
+            className={`flex-1 min-w-[130px] py-2 px-2.5 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+              activeTab === 'security'
+                ? 'bg-[#D8FF36] text-black font-extrabold'
+                : 'text-zinc-400 hover:text-white'
+            }`}
+          >
+            <Shield className="w-3.5 h-3.5 shrink-0" />
+            <span>Account & Security</span>
+          </button>
+        )}
       </div>
 
       {/* Tab: My Posts */}
@@ -891,6 +955,15 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             </div>
           )}
         </div>
+      )}
+
+      {/* Tab: Account & Security */}
+      {activeTab === 'security' && authUser && (
+        <AccountSecuritySection
+          user={authUser}
+          onUserUpdated={(updated) => setAuthUser(updated)}
+          onSignedOut={handleSignOut}
+        />
       )}
 
       {/* Edit Profile Modal */}

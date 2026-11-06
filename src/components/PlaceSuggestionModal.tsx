@@ -22,6 +22,7 @@ import {
 } from '../services/supabase';
 import { LocationPickerMap } from './LocationPickerMap';
 import { Coordinates, Place } from '../types/outera';
+import { OuteraLogo } from './OuteraLogo';
 
 interface PlaceSuggestionModalProps {
   isOpen: boolean;
@@ -359,27 +360,35 @@ export const PlaceSuggestionModal: React.FC<PlaceSuggestionModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md"
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-md"
       role="dialog"
       aria-modal="true"
       aria-labelledby="suggestion-modal-title"
     >
-      <div className="w-full max-w-2xl bg-[#111317] border border-white/[0.1] rounded-3xl p-6 sm:p-7 shadow-2xl space-y-5 max-h-[92vh] overflow-y-auto no-scrollbar animate-in fade-in zoom-in-95 duration-200">
+      <div className="w-full sm:max-w-2xl bg-[#111317] border-t sm:border border-white/[0.1] rounded-t-3xl sm:rounded-3xl p-5 sm:p-7 shadow-2xl space-y-5 max-h-[92dvh] overflow-y-auto no-scrollbar animate-in fade-in zoom-in-95 duration-200">
         {/* Header */}
-        <div className="flex items-start justify-between border-b border-white/[0.06] pb-4">
+        <div className="flex items-start justify-between gap-3 border-b border-white/[0.06] pb-4">
           <div>
-            <div className="flex items-center gap-2 mb-1">
-              <span className="font-extrabold text-[11px] tracking-widest text-[#ccff00] uppercase font-mono">
-                OUTERA SCOUT NETWORK
+            <div className="flex flex-wrap items-center gap-2 mb-1.5">
+              <OuteraLogo size="xs" />
+              <span className="text-zinc-600" aria-hidden="true">
+                ·
               </span>
-              <span className="w-1.5 h-1.5 rounded-full bg-[#ccff00]" />
+              <span className="text-[11px] font-semibold text-zinc-400">
+                Scout Network
+              </span>
               {isAuthenticated && (
-                <span className="px-2 py-0.5 rounded-full bg-[#ccff00]/15 text-[#ccff00] text-[10px] font-bold border border-[#ccff00]/30">
-                  Scout: {scoutName}
-                </span>
+                <>
+                  <span className="text-zinc-600" aria-hidden="true">
+                    ·
+                  </span>
+                  <span className="text-[11px] font-semibold text-[#ccff00]">
+                    Scout: {scoutName}
+                  </span>
+                </>
               )}
             </div>
-            <h2 id="suggestion-modal-title" className="text-xl sm:text-2xl font-black text-white tracking-tight">
+            <h2 id="suggestion-modal-title" className="text-xl sm:text-2xl font-extrabold text-white tracking-tight">
               + Suggest a New Place
             </h2>
             <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
@@ -390,7 +399,7 @@ export const PlaceSuggestionModal: React.FC<PlaceSuggestionModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="w-8 h-8 rounded-full bg-white/[0.04] hover:bg-white/[0.08] active:scale-95 flex items-center justify-center text-zinc-400 hover:text-white transition-all border border-white/[0.06] cursor-pointer"
+            className="w-9 h-9 rounded-full bg-white/[0.04] hover:bg-white/[0.08] active:scale-95 flex items-center justify-center text-zinc-400 hover:text-white transition-all border border-white/[0.06] shrink-0 cursor-pointer"
             aria-label="Close dialog"
           >
             <X className="w-4 h-4" />

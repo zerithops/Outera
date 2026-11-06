@@ -332,14 +332,11 @@ export const HowToGetThereSection: React.FC<HowToGetThereSectionProps> = ({
       {/* Header & Title */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/[0.06] pb-4">
         <div>
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-[10px] font-black tracking-widest uppercase text-[#ccff00] font-mono">
-              Tourist & Transit Intelligence
-            </span>
-            <span className="w-1.5 h-1.5 rounded-full bg-[#ccff00]" />
-          </div>
-          <h2 className="text-base sm:text-lg font-black text-white tracking-tight flex items-center gap-2">
-            <span>TOURIST GUIDE & GETTING THERE</span>
+          <p className="text-[10px] font-bold tracking-[0.16em] uppercase text-[#ccff00] font-mono mb-1">
+            Tourist & Transit Intelligence
+          </p>
+          <h2 className="text-base sm:text-lg font-black text-white tracking-tight">
+            Tourist Guide & Getting There
           </h2>
           <p className="text-xs text-zinc-400 mt-0.5">
             Real transit modes, local transport contacts, nearby stays, food spots, and things to do around{' '}

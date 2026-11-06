@@ -58,13 +58,32 @@ function getClientAnonymousId(): string {
 // -------------------------------------------------------------
 // SUPABASE AUTH SYSTEM
 // -------------------------------------------------------------
+export function getSiteUrl(): string {
+  const configured = getEnvVar('VITE_SITE_URL', getEnvVar('NEXT_PUBLIC_SITE_URL', ''));
+  if (configured && configured.trim()) {
+    return configured.trim().replace(/\/+$/, '');
+  }
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return window.location.origin.replace(/\/+$/, '');
+  }
+  return '';
+}
+
+export function isEmailVerified(user: SupabaseUser | null | undefined): boolean {
+  if (!user) return false;
+  return Boolean(
+    user.email_confirmed_at ||
+      (user as any).confirmed_at ||
+      user.app_metadata?.provider !== 'email'
+  );
+}
+
 export async function getCurrentUser(): Promise<SupabaseUser | null> {
   try {
     const { data: { user }, error } = await supabase.auth.getUser();
     if (error || !user) return null;
     return user;
-  } catch (err) {
-    console.warn('Supabase auth.getUser error:', err);
+  } catch {
     return null;
   }
 }
@@ -79,9 +98,11 @@ export async function getCurrentSession(): Promise<Session | null> {
   }
 }
 
-export function subscribeToAuthChanges(callback: (user: SupabaseUser | null) => void) {
-  const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-    callback(session?.user || null);
+export function subscribeToAuthChanges(
+  callback: (user: SupabaseUser | null, event?: string) => void
+) {
+  const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+    callback(session?.user || null, event);
   });
   return () => {
     subscription.unsubscribe();
@@ -92,7 +113,12 @@ export async function signInWithEmail(email: string, password?: string) {
   if (password) {
     return await supabase.auth.signInWithPassword({ email, password });
   }
-  return await supabase.auth.signInWithOtp({ email });
+  return await supabase.auth.signInWithOtp({
+    email,
+    options: {
+      emailRedirectTo: `${getSiteUrl()}/auth/callback?type=magiclink`,
+    },
+  });
 }
 
 export async function signUpWithEmail(email: string, password?: string, metadata?: Record<string, any>) {
@@ -100,17 +126,26 @@ export async function signUpWithEmail(email: string, password?: string, metadata
     return await supabase.auth.signUp({
       email,
       password,
-      options: { data: metadata },
+      options: {
+        data: metadata,
+        emailRedirectTo: `${getSiteUrl()}/auth/callback?type=signup`,
+      },
     });
   }
-  return await supabase.auth.signInWithOtp({ email, options: { data: metadata } });
+  return await supabase.auth.signInWithOtp({
+    email,
+    options: {
+      data: metadata,
+      emailRedirectTo: `${getSiteUrl()}/auth/callback?type=magiclink`,
+    },
+  });
 }
 
-export async function signOut() {
+export async function signOut(scope: 'global' | 'local' | 'others' = 'local') {
   try {
-    return await supabase.auth.signOut();
-  } catch (err) {
-    console.warn('Sign out failed:', err);
+    return await supabase.auth.signOut({ scope });
+  } catch {
+    // Do not expose internal tokens or session details
   }
 }
 
@@ -334,6 +369,7 @@ export async function registerUser({
       email: email.trim(),
       password,
       options: {
+        emailRedirectTo: `${getSiteUrl()}/auth/callback?type=signup`,
         data: {
           name: cleanDisplayName,
           display_name: cleanDisplayName,
@@ -352,11 +388,24 @@ export async function registerUser({
         error.message.toLowerCase().includes('user already exists')
       ) {
         friendly = 'An account with this email already exists. Try signing in.';
+      } else if (error.message.toLowerCase().includes('rate limit')) {
+        friendly = 'Too many attempts. Please wait a minute and try again.';
       }
       return { success: false, error: friendly };
     }
 
-    if (data.user) {
+    // Supabase returns an empty identities array if an email is already registered when email enumeration protection is enabled
+    const identities = (data.user as any)?.identities;
+    if (Array.isArray(identities) && identities.length === 0) {
+      return {
+        success: true,
+        user: data.user,
+        session: null,
+        requiresEmailVerification: true,
+      };
+    }
+
+    if (data.user && data.session) {
       try {
         await supabase.from('profiles').upsert({
           id: data.user.id,
@@ -365,8 +414,8 @@ export async function registerUser({
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         });
-      } catch (profileErr) {
-        console.warn('Profile creation upsert note:', profileErr);
+      } catch {
+        // Profile will also be ensured on first verified session
       }
     }
 
@@ -374,7 +423,7 @@ export async function registerUser({
       success: true,
       user: data.user,
       session: data.session,
-      requiresEmailVerification: !data.session,
+      requiresEmailVerification: !data.session || !isEmailVerified(data.user),
     };
   } catch (err: any) {
     return {
@@ -391,6 +440,7 @@ export async function signInUser(
   success: boolean;
   user?: SupabaseUser | null;
   session?: Session | null;
+  requiresEmailVerification?: boolean;
   error?: string;
 }> {
   try {
@@ -400,25 +450,69 @@ export async function signInUser(
     });
 
     if (error) {
-      let friendly = 'That email or password is incorrect.';
-      if (
-        error.message.toLowerCase().includes('email not confirmed') ||
-        error.message.toLowerCase().includes('confirm your email')
-      ) {
-        friendly = 'Please verify your email before signing in.';
-      } else if (error.message.toLowerCase().includes('rate limit')) {
-        friendly = 'Too many attempts. Please wait a moment and try again.';
+      const msg = error.message.toLowerCase();
+      if (msg.includes('email not confirmed') || msg.includes('confirm your email')) {
+        return {
+          success: false,
+          requiresEmailVerification: true,
+          error: 'Your email address is not verified yet. Please check your inbox or resend the verification email.',
+        };
       }
-      return { success: false, error: friendly };
+      if (msg.includes('rate limit') || msg.includes('too many')) {
+        return {
+          success: false,
+          error: 'Too many sign-in attempts. Please wait a moment and try again.',
+        };
+      }
+      return { success: false, error: 'That email or password is incorrect.' };
     }
 
     if (data.user) {
-      ensureUserProfile(data.user).catch((e) => console.warn('ensureUserProfile on signin:', e));
+      ensureUserProfile(data.user).catch(() => {});
     }
 
-    return { success: true, user: data.user, session: data.session };
+    return {
+      success: true,
+      user: data.user,
+      session: data.session,
+      requiresEmailVerification: !isEmailVerified(data.user),
+    };
   } catch {
     return { success: false, error: 'That email or password is incorrect.' };
+  }
+}
+
+export async function resendVerificationEmail(
+  email: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const cleanEmail = email.trim();
+    if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      return { success: false, error: 'Please enter a valid email address.' };
+    }
+
+    const { error } = await supabase.auth.resend({
+      type: 'signup',
+      email: cleanEmail,
+      options: {
+        emailRedirectTo: `${getSiteUrl()}/auth/callback?type=signup`,
+      },
+    });
+
+    if (error) {
+      const lower = error.message.toLowerCase();
+      if (lower.includes('rate limit') || lower.includes('security purposes') || lower.includes('60 seconds')) {
+        return {
+          success: false,
+          error: 'Please wait 60 seconds before requesting another verification email.',
+        };
+      }
+      return { success: false, error: 'Could not resend verification email right now. Please try again shortly.' };
+    }
+
+    return { success: true };
+  } catch {
+    return { success: false, error: 'Could not resend verification email. Please try again.' };
   }
 }
 
@@ -427,17 +521,430 @@ export async function sendPasswordResetEmail(
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const trimmed = email.trim();
-    if (!trimmed) {
+    if (!trimmed || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
       return { success: false, error: 'Please enter a valid email address.' };
     }
-    const { error } = await supabase.auth.resetPasswordForEmail(trimmed);
+
+    const { error } = await supabase.auth.resetPasswordForEmail(trimmed, {
+      redirectTo: `${getSiteUrl()}/reset-password`,
+    });
+
     if (error) {
-      return { success: false, error: error.message };
+      const lower = error.message.toLowerCase();
+      if (lower.includes('rate limit') || lower.includes('security purposes') || lower.includes('seconds')) {
+        return {
+          success: false,
+          error: 'Please wait a moment before requesting another password reset email.',
+        };
+      }
+      // Return neutral success even on non-existent account errors to prevent account enumeration
+      return { success: true };
     }
+
     return { success: true };
-  } catch (err: any) {
-    return { success: false, error: err?.message || 'Failed to send reset link.' };
+  } catch {
+    return { success: true };
   }
+}
+
+export async function updateUserPasswordWithRecovery(
+  newPassword: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    if (!newPassword || newPassword.length < 6) {
+      return { success: false, error: 'Password must be at least 6 characters.' };
+    }
+
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (!sessionData?.session) {
+      return {
+        success: false,
+        error: 'Your password reset session has expired or is invalid. Please request a new reset link.',
+      };
+    }
+
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    if (error) {
+      const lower = error.message.toLowerCase();
+      if (lower.includes('same as the old') || lower.includes('different from the old')) {
+        return { success: false, error: 'New password must be different from your current password.' };
+      }
+      if (lower.includes('expired') || lower.includes('session')) {
+        return {
+          success: false,
+          error: 'Your reset session has expired. Please request a new password reset link.',
+        };
+      }
+      return { success: false, error: error.message || 'Could not update password.' };
+    }
+
+    return { success: true };
+  } catch {
+    return { success: false, error: 'Could not update password. Please try again.' };
+  }
+}
+
+export async function changeUserPassword(
+  currentPassword: string,
+  newPassword: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    if (!currentPassword) {
+      return { success: false, error: 'Please enter your current password.' };
+    }
+    if (!newPassword || newPassword.length < 6) {
+      return { success: false, error: 'New password must be at least 6 characters.' };
+    }
+    if (currentPassword === newPassword) {
+      return { success: false, error: 'New password must be different from your current password.' };
+    }
+
+    const user = await getCurrentUser();
+    if (!user || !user.email) {
+      return { success: false, error: 'Your session has expired. Please sign in again.' };
+    }
+
+    // Verify current password / re-authenticate session before updating password
+    const { error: verifyErr } = await supabase.auth.signInWithPassword({
+      email: user.email,
+      password: currentPassword,
+    });
+
+    if (verifyErr) {
+      return { success: false, error: 'Current password is incorrect.' };
+    }
+
+    const { error: updateErr } = await supabase.auth.updateUser({
+      password: newPassword,
+    });
+
+    if (updateErr) {
+      return { success: false, error: updateErr.message || 'Could not update password.' };
+    }
+
+    return { success: true };
+  } catch {
+    return { success: false, error: 'Could not change password. Please try again.' };
+  }
+}
+
+export async function changeUserEmail(
+  newEmail: string
+): Promise<{ success: boolean; error?: string; pendingEmail?: string }> {
+  try {
+    const cleanEmail = newEmail.trim().toLowerCase();
+    if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      return { success: false, error: 'Please enter a valid email address.' };
+    }
+
+    const user = await getCurrentUser();
+    if (!user) {
+      return { success: false, error: 'Your session has expired. Please sign in again.' };
+    }
+
+    if (user.email?.toLowerCase() === cleanEmail) {
+      return { success: false, error: 'That is already your current email address.' };
+    }
+
+    const { data, error } = await supabase.auth.updateUser(
+      { email: cleanEmail },
+      { emailRedirectTo: `${getSiteUrl()}/auth/callback?type=email_change` }
+    );
+
+    if (error) {
+      const lower = error.message.toLowerCase();
+      if (lower.includes('already registered') || lower.includes('already been registered')) {
+        return { success: false, error: 'Unable to update to that email address. Please use a different email.' };
+      }
+      if (lower.includes('rate limit') || lower.includes('seconds')) {
+        return { success: false, error: 'Please wait a moment before requesting another email change.' };
+      }
+      return { success: false, error: error.message || 'Could not request email change.' };
+    }
+
+    return {
+      success: true,
+      pendingEmail: data?.user?.new_email || cleanEmail,
+    };
+  } catch {
+    return { success: false, error: 'Could not update email address. Please try again.' };
+  }
+}
+
+export async function sendMagicLink(
+  email: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const cleanEmail = email.trim();
+    if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      return { success: false, error: 'Please enter a valid email address.' };
+    }
+
+    const { error } = await supabase.auth.signInWithOtp({
+      email: cleanEmail,
+      options: {
+        emailRedirectTo: `${getSiteUrl()}/auth/callback?type=magiclink`,
+      },
+    });
+
+    if (error) {
+      const lower = error.message.toLowerCase();
+      if (lower.includes('rate limit') || lower.includes('seconds') || lower.includes('security purposes')) {
+        return {
+          success: false,
+          error: 'Please wait 60 seconds before requesting another magic link.',
+        };
+      }
+      return {
+        success: false,
+        error: 'Could not send magic link right now. Please try signing in with your password.',
+      };
+    }
+
+    return { success: true };
+  } catch {
+    return { success: false, error: 'Could not send magic link. Please try again.' };
+  }
+}
+
+// Idempotent PKCE & OTP callback exchange lock to prevent duplicate exchanges in React StrictMode
+let activeCallbackPromise: Promise<{
+  status: 'verified' | 'recovery' | 'email_change' | 'magiclink' | 'error';
+  message: string;
+  email?: string;
+}> | null = null;
+let lastProcessedCallbackUrl: string | null = null;
+let lastCallbackResult: {
+  status: 'verified' | 'recovery' | 'email_change' | 'magiclink' | 'error';
+  message: string;
+  email?: string;
+} | null = null;
+
+export async function processAuthCallbackUrl(): Promise<{
+  status: 'verified' | 'recovery' | 'email_change' | 'magiclink' | 'error';
+  message: string;
+  email?: string;
+}> {
+  if (typeof window === 'undefined') {
+    return { status: 'error', message: 'Invalid environment.' };
+  }
+
+  const currentUrlKey = `${window.location.search}|${window.location.hash}`;
+  if (lastProcessedCallbackUrl === currentUrlKey && lastCallbackResult) {
+    return lastCallbackResult;
+  }
+  if (activeCallbackPromise) {
+    return activeCallbackPromise;
+  }
+
+  activeCallbackPromise = (async () => {
+    try {
+      const searchParams = new URLSearchParams(window.location.search);
+      const rawHash = window.location.hash.replace(/^#\/?[^?]*\??/, '').replace(/^#/, '');
+      const hashParams = new URLSearchParams(rawHash);
+
+      const errorParam = searchParams.get('error') || hashParams.get('error');
+      const errorCode = searchParams.get('error_code') || hashParams.get('error_code');
+      const errorDesc = searchParams.get('error_description') || hashParams.get('error_description');
+
+      if (errorParam || errorCode) {
+        const lowerDesc = (errorDesc || errorParam || '').toLowerCase();
+        const isExpired =
+          errorCode === 'otp_expired' ||
+          lowerDesc.includes('expired') ||
+          lowerDesc.includes('invalid');
+        return {
+          status: 'error' as const,
+          message: isExpired
+            ? 'This verification or recovery link has expired or has already been used. Please request a fresh link below.'
+            : errorDesc?.replace(/\+/g, ' ') || 'Authentication link is invalid or expired.',
+        };
+      }
+
+      const code = searchParams.get('code');
+      const tokenHash = searchParams.get('token_hash') || hashParams.get('token_hash');
+      const flowType = (
+        searchParams.get('type') ||
+        hashParams.get('type') ||
+        (searchParams.get('next') === '/reset-password' ? 'recovery' : '')
+      ).toLowerCase();
+
+      // 1. Handle PKCE authorization code if present
+      if (code) {
+        const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+        if (error) {
+          // Check if detectSessionInUrl already exchanged it
+          const existing = await getCurrentSession();
+          if (!existing) {
+            return {
+              status: 'error' as const,
+              message:
+                'This authentication link has expired or was already used. Please request a new link.',
+            };
+          }
+          if (existing.user) {
+            await ensureUserProfile(existing.user).catch(() => {});
+          }
+          if (flowType === 'recovery') {
+            return {
+              status: 'recovery' as const,
+              message: 'Recovery verified. You may now set a new password.',
+              email: existing.user?.email,
+            };
+          }
+          return {
+            status:
+              flowType === 'email_change'
+                ? ('email_change' as const)
+                : flowType === 'magiclink'
+                ? ('magiclink' as const)
+                : ('verified' as const),
+            message:
+              flowType === 'email_change'
+                ? 'Your email address has been updated and verified.'
+                : flowType === 'magiclink'
+                ? 'Signed in via Magic Link.'
+                : 'Your email is verified. Welcome to OUTERA!',
+            email: existing.user?.email,
+          };
+        }
+
+        if (data?.user) {
+          await ensureUserProfile(data.user).catch(() => {});
+        }
+
+        if (flowType === 'recovery') {
+          return {
+            status: 'recovery' as const,
+            message: 'Recovery verified. Choose your new password below.',
+            email: data.user?.email,
+          };
+        }
+        if (flowType === 'email_change') {
+          return {
+            status: 'email_change' as const,
+            message: 'Your email change has been confirmed.',
+            email: data.user?.email,
+          };
+        }
+        if (flowType === 'magiclink') {
+          return {
+            status: 'magiclink' as const,
+            message: 'Signed in securely with Magic Link.',
+            email: data.user?.email,
+          };
+        }
+        return {
+          status: 'verified' as const,
+          message: 'Your email address has been verified. Your Scout account is active!',
+          email: data.user?.email,
+        };
+      }
+
+      // 2. Handle token_hash OTP verification if present
+      if (tokenHash && flowType) {
+        const otpType = (
+          ['signup', 'recovery', 'magiclink', 'email_change', 'email', 'invite'].includes(flowType)
+            ? flowType
+            : 'email'
+        ) as any;
+
+        const { data, error } = await supabase.auth.verifyOtp({
+          token_hash: tokenHash,
+          type: otpType,
+        });
+
+        if (error) {
+          return {
+            status: 'error' as const,
+            message:
+              'This verification link has expired or has already been used. Please request a new link.',
+          };
+        }
+
+        if (data?.user) {
+          await ensureUserProfile(data.user).catch(() => {});
+        }
+
+        if (flowType === 'recovery') {
+          return {
+            status: 'recovery' as const,
+            message: 'Recovery session ready. Please set your new password.',
+            email: data?.user?.email,
+          };
+        }
+        if (flowType === 'email_change') {
+          return {
+            status: 'email_change' as const,
+            message: 'Your email address has been updated.',
+            email: data?.user?.email,
+          };
+        }
+        if (flowType === 'magiclink') {
+          return {
+            status: 'magiclink' as const,
+            message: 'Signed in with Magic Link.',
+            email: data?.user?.email,
+          };
+        }
+        return {
+          status: 'verified' as const,
+          message: 'Email verified! Your OUTERA Scout account is ready.',
+          email: data?.user?.email,
+        };
+      }
+
+      // 3. Check if Supabase detectSessionInUrl already established a session from URL hash
+      const session = await getCurrentSession();
+      if (session?.user) {
+        await ensureUserProfile(session.user).catch(() => {});
+        if (flowType === 'recovery') {
+          return {
+            status: 'recovery' as const,
+            message: 'Recovery session active. Set your new password below.',
+            email: session.user.email,
+          };
+        }
+        if (flowType === 'email_change') {
+          return {
+            status: 'email_change' as const,
+            message: 'Your email address change is confirmed.',
+            email: session.user.email,
+          };
+        }
+        return {
+          status: 'verified' as const,
+          message: 'Your account is verified and signed in.',
+          email: session.user.email,
+        };
+      }
+
+      return {
+        status: 'error' as const,
+        message: 'This authentication link is invalid or has expired. Please request a new link.',
+      };
+    } catch {
+      return {
+        status: 'error' as const,
+        message: 'Could not verify authentication link. It may have expired.',
+      };
+    }
+  })();
+
+  const result = await activeCallbackPromise;
+  lastProcessedCallbackUrl = currentUrlKey;
+  lastCallbackResult = result;
+  activeCallbackPromise = null;
+
+  // Clean sensitive tokens/codes from browser URL bar without reloading
+  try {
+    if (typeof window !== 'undefined' && window.history?.replaceState) {
+      const cleanPath = window.location.pathname;
+      window.history.replaceState({}, document.title, cleanPath);
+    }
+  } catch {}
+
+  return result;
 }
 
 export async function fetchUserRealStats(userId: string): Promise<{

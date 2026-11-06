@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { X, Check, AlertCircle, Bus, Send } from 'lucide-react';
+import { X, Check, AlertCircle, Send } from 'lucide-react';
 import { TransportType, Place, FareUnit } from '../types/outera';
 import { submitCommunityFareReport } from '../services/transport';
+import { OuteraLogo } from './OuteraLogo';
 
 interface ReportFareModalProps {
   isOpen: boolean;
@@ -85,22 +86,25 @@ export const ReportFareModal: React.FC<ReportFareModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md"
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-md"
       role="dialog"
       aria-modal="true"
       aria-labelledby="report-fare-modal-title"
     >
-      <div className="w-full max-w-md bg-[#111317] border border-white/[0.1] rounded-3xl p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto no-scrollbar animate-in fade-in zoom-in-95 duration-150">
+      <div className="w-full sm:max-w-md bg-[#111317] border-t sm:border border-white/[0.1] rounded-t-3xl sm:rounded-3xl p-5 sm:p-6 shadow-2xl space-y-4 max-h-[92dvh] overflow-y-auto no-scrollbar animate-in fade-in zoom-in-95 duration-150">
         {/* Header */}
-        <div className="flex items-start justify-between">
+        <div className="flex items-start justify-between gap-3">
           <div>
-            <div className="flex items-center gap-2 mb-1">
-              <span className="font-extrabold text-[10px] tracking-widest text-[#ccff00] uppercase font-mono">
-                OUTERA Transit Scouts
+            <div className="flex items-center gap-2 mb-1.5">
+              <OuteraLogo size="xs" />
+              <span className="text-zinc-600" aria-hidden="true">
+                ·
               </span>
-              <span className="w-1.5 h-1.5 rounded-full bg-[#ccff00]" />
+              <span className="text-[11px] font-semibold text-zinc-400">
+                Transit Scouts
+              </span>
             </div>
-            <h2 id="report-fare-modal-title" className="text-lg sm:text-xl font-black text-white tracking-tight">
+            <h2 id="report-fare-modal-title" className="text-lg sm:text-xl font-extrabold text-white tracking-tight">
               Report Travel Fare
             </h2>
             <p className="text-xs text-zinc-400 mt-0.5">
@@ -111,7 +115,7 @@ export const ReportFareModal: React.FC<ReportFareModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="w-8 h-8 rounded-full bg-white/[0.04] hover:bg-white/[0.08] active:scale-95 flex items-center justify-center text-zinc-400 hover:text-white transition-all border border-white/[0.06] cursor-pointer"
+            className="w-9 h-9 rounded-full bg-white/[0.04] hover:bg-white/[0.08] active:scale-95 flex items-center justify-center text-zinc-400 hover:text-white transition-all border border-white/[0.06] shrink-0 cursor-pointer"
             aria-label="Close"
           >
             <X className="w-4 h-4" />

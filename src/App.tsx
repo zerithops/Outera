@@ -30,6 +30,8 @@ import {
   fetchUserVisits,
   getCurrentUser,
   subscribeToAuthChanges,
+  isEmailVerified,
+  PlacePost,
 } from './services/supabase';
 import { Navbar } from './components/Navbar';
 import { BottomNav, NavTab } from './components/BottomNav';
@@ -46,9 +48,14 @@ import { SavedView } from './components/SavedView';
 import { ProfileView } from './components/ProfileView';
 import { LocationHierarchyModal } from './components/LocationHierarchyModal';
 import { LocationHubView } from './components/LocationHubView';
-import { AuthModal } from './components/AuthModal';
+import { AuthModal, AuthModalMode } from './components/AuthModal';
 import { PlaceSuggestionModal } from './components/PlaceSuggestionModal';
-import { PlacePost } from './services/supabase';
+import {
+  ForgotPasswordPage,
+  ResetPasswordPage,
+  AuthCallbackPage,
+} from './components/AuthPages';
+import { OuteraLogo } from './components/OuteraLogo';
 import { Sparkles, ArrowRight, Compass, ShieldCheck, Globe2, MapPin, Navigation } from 'lucide-react';
 
 const INITIAL_FILTERS: FilterState = {
@@ -83,7 +90,11 @@ export default function App() {
   // Auth state
   const [authUser, setAuthUser] = useState<any>(null);
   const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authModalInitialMode, setAuthModalInitialMode] = useState<AuthModalMode>('signup');
   const [authContextAction, setAuthContextAction] = useState<string | undefined>(undefined);
+  const [authRoute, setAuthRoute] = useState<
+    'none' | 'forgot-password' | 'reset-password' | 'auth-callback'
+  >('none');
 
   // Modals state
   const [locationModalOpen, setLocationModalOpen] = useState(false);
@@ -99,6 +110,71 @@ export default function App() {
   const [selectedPost, setSelectedPost] = useState<PlacePost | null>(null);
   const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
   const [createPostModalOpen, setCreatePostModalOpen] = useState(false);
+
+  const navigateToAuthRoute = (
+    route: 'none' | 'forgot-password' | 'reset-password' | 'auth-callback'
+  ) => {
+    setAuthRoute(route);
+    if (typeof window !== 'undefined' && window.history?.pushState) {
+      const targetPath =
+        route === 'forgot-password'
+          ? '/forgot-password'
+          : route === 'reset-password'
+          ? '/reset-password'
+          : route === 'auth-callback'
+          ? '/auth/callback'
+          : '/';
+      if (window.location.pathname !== targetPath) {
+        window.history.pushState({}, '', targetPath);
+      }
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
+
+  // Detect /forgot-password, /reset-password, /auth/callback and auth URL parameters
+  useEffect(() => {
+    const syncRouteFromLocation = () => {
+      const path = window.location.pathname.toLowerCase().replace(/\/+$/, '') || '/';
+      const hash = window.location.hash.toLowerCase();
+      const search = window.location.search.toLowerCase();
+
+      if (path === '/forgot-password' || hash.startsWith('#/forgot-password') || hash === '#forgot-password') {
+        setAuthRoute('forgot-password');
+        return;
+      }
+      if (
+        path === '/reset-password' ||
+        hash.startsWith('#/reset-password') ||
+        hash === '#reset-password' ||
+        hash.includes('type=recovery') ||
+        search.includes('type=recovery')
+      ) {
+        setAuthRoute('reset-password');
+        return;
+      }
+      if (
+        path === '/auth/callback' ||
+        hash.startsWith('#/auth/callback') ||
+        search.includes('code=') ||
+        search.includes('token_hash=') ||
+        search.includes('error_code=') ||
+        hash.includes('error_code=') ||
+        hash.includes('access_token=')
+      ) {
+        setAuthRoute('auth-callback');
+        return;
+      }
+      setAuthRoute('none');
+    };
+
+    syncRouteFromLocation();
+    window.addEventListener('popstate', syncRouteFromLocation);
+    window.addEventListener('hashchange', syncRouteFromLocation);
+    return () => {
+      window.removeEventListener('popstate', syncRouteFromLocation);
+      window.removeEventListener('hashchange', syncRouteFromLocation);
+    };
+  }, []);
 
   // Listen for #post/<id> in URL hash
   useEffect(() => {
@@ -145,9 +221,12 @@ export default function App() {
       if (isMounted) setAuthUser(user);
     });
 
-    const unsubscribeAuth = subscribeToAuthChanges((user) => {
+    const unsubscribeAuth = subscribeToAuthChanges((user, event) => {
       if (isMounted) {
         setAuthUser(user);
+        if (event === 'PASSWORD_RECOVERY') {
+          setAuthRoute('reset-password');
+        }
         if (user) {
           fetchUserSavedPlaces().then((supabaseSaved) => {
             if (isMounted && supabaseSaved) {
@@ -268,17 +347,33 @@ export default function App() {
     refreshData();
   };
 
-  const handleOpenReportFromDetails = (place: PlaceWithDistance) => {
+  const requireVerifiedScout = (actionLabel: string, onVerified: () => void) => {
     if (!authUser) {
-      setAuthContextAction('share an experience report');
+      setAuthContextAction(actionLabel);
+      setAuthModalInitialMode('signup');
       setAuthModalOpen(true);
       return;
     }
-    setDetailsPlace(null);
-    setFeedbackPlace(place);
+    if (!isEmailVerified(authUser)) {
+      setAuthContextAction(`${actionLabel} (please verify your email first)`);
+      setAuthModalInitialMode('verify_pending');
+      setAuthModalOpen(true);
+      return;
+    }
+    onVerified();
+  };
+
+  const handleOpenReportFromDetails = (place: PlaceWithDistance) => {
+    requireVerifiedScout('share an experience report', () => {
+      setDetailsPlace(null);
+      setFeedbackPlace(place);
+    });
   };
 
   const handleTabChange = (tab: NavTab) => {
+    if (authRoute !== 'none') {
+      navigateToAuthRoute('none');
+    }
     setShowLocationHub(false);
     if ((tab === 'saved' || tab === 'profile') && !authUser) {
       setAuthContextAction(
@@ -286,6 +381,7 @@ export default function App() {
           ? 'view and manage your saved places'
           : 'access your scout profile and stats'
       );
+      setAuthModalInitialMode('signin');
       setAuthModalOpen(true);
     }
     setActiveTab(tab);
@@ -420,12 +516,12 @@ export default function App() {
           </aside>
         )
       ) : (
-        <div className="w-full bg-[#0d0f12] border-b border-white/[0.05] px-4 sm:px-6 py-2">
+        <div className="w-full bg-[#0d0f12] border-b border-white/[0.06] px-4 sm:px-6 py-2">
           <div className="max-w-7xl mx-auto flex items-center justify-between gap-3 text-[11px]">
-            <div className="flex items-center gap-2 truncate">
-              <span className="w-2 h-2 rounded-full bg-[#ccff00] animate-pulse shrink-0" />
-              <span className="font-bold text-white shrink-0">Location detected:</span>
-              <span className="text-zinc-300 truncate">
+            <div className="flex items-center gap-2 min-w-0">
+              <MapPin className="w-3.5 h-3.5 text-[#ccff00] shrink-0" />
+              <span className="font-semibold text-zinc-400 hidden xs:inline shrink-0">Active area:</span>
+              <span className="text-zinc-200 font-medium truncate">
                 {currentLocation.formattedAddress || `${currentLocation.neighborhoodName}, ${currentLocation.district}`}
               </span>
               {currentLocation.accuracyMeters && (
@@ -434,24 +530,24 @@ export default function App() {
                 </span>
               )}
             </div>
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-2.5 shrink-0">
               <button
                 type="button"
                 onClick={handleDetectGPS}
                 disabled={isDetectingGPS}
-                className="text-zinc-400 hover:text-[#ccff00] text-[11px] font-semibold flex items-center gap-1 transition-colors disabled:opacity-50"
+                className="text-zinc-400 hover:text-[#ccff00] text-[11px] font-semibold flex items-center gap-1 transition-colors disabled:opacity-50 cursor-pointer"
                 title="Refresh GPS"
               >
-                <Navigation className={`w-3 h-3 ${isDetectingGPS ? 'animate-spin' : ''}`} />
+                <Navigation className={`w-3 h-3 ${isDetectingGPS ? 'animate-spin text-[#ccff00]' : ''}`} />
                 <span className="hidden sm:inline">Refresh GPS</span>
               </button>
               <span className="text-zinc-700">·</span>
               <button
                 type="button"
                 onClick={() => setLocationModalOpen(true)}
-                className="text-zinc-400 hover:text-white text-[11px] font-semibold transition-colors"
+                className="text-zinc-300 hover:text-white text-[11px] font-semibold transition-colors cursor-pointer"
               >
-                Change
+                Change Area
               </button>
             </div>
           </div>
@@ -460,8 +556,36 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 w-full max-w-7xl mx-auto">
-        {/* Conditional Bangladesh Location Hub View */}
-        {showLocationHub ? (
+        {authRoute === 'forgot-password' ? (
+          <ForgotPasswordPage
+            onBackToSignIn={() => {
+              navigateToAuthRoute('none');
+              setAuthModalInitialMode('signin');
+              setAuthModalOpen(true);
+            }}
+            onGoHome={() => navigateToAuthRoute('none')}
+          />
+        ) : authRoute === 'reset-password' ? (
+          <ResetPasswordPage
+            onBackToSignIn={() => {
+              navigateToAuthRoute('none');
+              setAuthModalInitialMode('signin');
+              setAuthModalOpen(true);
+            }}
+            onGoToForgotPassword={() => navigateToAuthRoute('forgot-password')}
+            onGoHome={() => navigateToAuthRoute('none')}
+          />
+        ) : authRoute === 'auth-callback' ? (
+          <AuthCallbackPage
+            onNavigateToResetPassword={() => navigateToAuthRoute('reset-password')}
+            onNavigateToForgotPassword={() => navigateToAuthRoute('forgot-password')}
+            onNavigateToProfile={() => {
+              navigateToAuthRoute('none');
+              setActiveTab('profile');
+            }}
+            onGoHome={() => navigateToAuthRoute('none')}
+          />
+        ) : showLocationHub ? (
           <div className="space-y-4">
             <div className="px-4 sm:px-6 pt-4 flex items-center justify-between">
               <button
@@ -496,15 +620,14 @@ export default function App() {
                   onExploreNearMe={handleOpenExploreNearMe}
                   onSurpriseMe={() => setActiveTab('surprise')}
                   currentNeighborhood={currentLocation.neighborhoodName}
-                  onSuggestPlace={() => setSuggestionModalOpen(true)}
-                  onCreatePost={() => {
-                    if (!authUser) {
-                      setAuthContextAction('create a community post');
-                      setAuthModalOpen(true);
-                    } else {
-                      setCreatePostModalOpen(true);
-                    }
-                  }}
+                  onSuggestPlace={() =>
+                    requireVerifiedScout('suggest a new place', () => setSuggestionModalOpen(true))
+                  }
+                  onCreatePost={() =>
+                    requireVerifiedScout('create a community post', () =>
+                      setCreatePostModalOpen(true)
+                    )
+                  }
                 />
 
                 {/* Nationwide Bangladesh Gateway Strip */}
@@ -569,7 +692,11 @@ export default function App() {
                     <div className="flex items-center gap-3">
                       <button
                         type="button"
-                        onClick={() => setSuggestionModalOpen(true)}
+                        onClick={() =>
+                          requireVerifiedScout('suggest a new place', () =>
+                            setSuggestionModalOpen(true)
+                          )
+                        }
                         className="h-8 px-3 rounded-lg bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.1] text-xs font-bold text-[#ccff00] transition-all"
                       >
                         + Suggest a Place
@@ -614,7 +741,11 @@ export default function App() {
                       <div className="flex flex-col sm:flex-row items-center justify-center gap-2.5 pt-2">
                         <button
                           type="button"
-                          onClick={() => setSuggestionModalOpen(true)}
+                          onClick={() =>
+                            requireVerifiedScout('suggest a new place', () =>
+                              setSuggestionModalOpen(true)
+                            )
+                          }
                           className="w-full sm:w-auto h-11 px-5 rounded-xl bg-[#ccff00] text-black font-extrabold text-xs uppercase tracking-wider inline-flex items-center justify-center gap-2 hover:bg-[#d8ff33] transition-all"
                         >
                           <span>+ Suggest a Place</span>
@@ -692,17 +823,14 @@ export default function App() {
                 onToggleSave={(e, id) => handleToggleSave(e, id)}
                 onSelectPlace={(place) => setDetailsPlace(place)}
                 onOpenLocationModal={() => setLocationModalOpen(true)}
-                onSuggestPlace={() => setSuggestionModalOpen(true)}
+                onSuggestPlace={() =>
+                  requireVerifiedScout('suggest a new place', () => setSuggestionModalOpen(true))
+                }
                 onRequestGPS={handleDetectGPS}
                 isDetectingGPS={isDetectingGPS}
-                onOpenCreatePost={() => {
-                  if (!authUser) {
-                    setAuthContextAction('share an experience');
-                    setAuthModalOpen(true);
-                  } else {
-                    setCreatePostModalOpen(true);
-                  }
-                }}
+                onOpenCreatePost={() =>
+                  requireVerifiedScout('share an experience', () => setCreatePostModalOpen(true))
+                }
                 onSelectPost={handleOpenPostDetails}
               />
             )}
@@ -715,7 +843,9 @@ export default function App() {
                 isSaved={Boolean(places[0] && savedPlaceIds.includes(places[0].id))}
                 onToggleSave={(id) => handleToggleSave(undefined, id)}
                 onSelectPlace={(place) => setDetailsPlace(place)}
-                onSuggestPlace={() => setSuggestionModalOpen(true)}
+                onSuggestPlace={() =>
+                  requireVerifiedScout('suggest a new place', () => setSuggestionModalOpen(true))
+                }
               />
             )}
 
@@ -754,6 +884,175 @@ export default function App() {
           </>
         )}
       </main>
+
+      {/* Official OUTERA Footer */}
+      <footer className="w-full border-t border-white/[0.07] bg-[#0b0d10] mt-12">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-10 sm:py-12">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-8 pb-8 border-b border-white/[0.06]">
+            {/* Brand Column */}
+            <div className="lg:col-span-5 space-y-3.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowLocationHub(false);
+                  handleTabChange('discover');
+                }}
+                className="inline-flex items-center focus:outline-none cursor-pointer"
+                aria-label="OUTERA Home"
+              >
+                <OuteraLogo size="sm" />
+              </button>
+              <p className="text-xs sm:text-sm text-zinc-400 max-w-sm leading-relaxed">
+                Hyper-local discovery and peer-verified transit intelligence across all 8 divisions of Bangladesh. Real places, real Scout experiences, zero sponsored clutter.
+              </p>
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() =>
+                    requireVerifiedScout('create a community post', () =>
+                      setCreatePostModalOpen(true)
+                    )
+                  }
+                  className="h-9 px-3.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.08] text-xs font-bold text-white transition-all cursor-pointer"
+                >
+                  Create Community Post
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    requireVerifiedScout('suggest a new place', () =>
+                      setSuggestionModalOpen(true)
+                    )
+                  }
+                  className="h-9 px-3.5 rounded-xl bg-[#ccff00]/10 hover:bg-[#ccff00]/15 border border-[#ccff00]/25 text-xs font-bold text-[#ccff00] transition-all cursor-pointer"
+                >
+                  + Suggest a Place
+                </button>
+              </div>
+            </div>
+
+            {/* Navigation Column */}
+            <div className="lg:col-span-3 space-y-2.5">
+              <h3 className="text-[11px] font-bold uppercase tracking-[0.14em] text-zinc-400 font-mono">
+                Navigation
+              </h3>
+              <ul className="space-y-2 text-xs text-zinc-300">
+                <li>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowLocationHub(false);
+                      handleTabChange('discover');
+                    }}
+                    className="hover:text-[#ccff00] transition-colors cursor-pointer"
+                  >
+                    Discover Feed
+                  </button>
+                </li>
+                <li>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowLocationHub(false);
+                      handleTabChange('explore');
+                    }}
+                    className="hover:text-[#ccff00] transition-colors cursor-pointer"
+                  >
+                    Explore Places & Community
+                  </button>
+                </li>
+                <li>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowLocationHub(false);
+                      handleTabChange('surprise');
+                    }}
+                    className="hover:text-[#ccff00] transition-colors cursor-pointer"
+                  >
+                    Surprise Me Generator
+                  </button>
+                </li>
+                <li>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowLocationHub(false);
+                      handleTabChange('saved');
+                    }}
+                    className="hover:text-[#ccff00] transition-colors cursor-pointer"
+                  >
+                    Saved Collections ({savedPlaceIds.length})
+                  </button>
+                </li>
+                <li>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowLocationHub(false);
+                      handleTabChange('profile');
+                    }}
+                    className="hover:text-[#ccff00] transition-colors cursor-pointer"
+                  >
+                    Scout Profile & Security
+                  </button>
+                </li>
+                <li>
+                  <button
+                    type="button"
+                    onClick={() => navigateToAuthRoute('forgot-password')}
+                    className="hover:text-[#ccff00] transition-colors cursor-pointer"
+                  >
+                    Forgot / Reset Password
+                  </button>
+                </li>
+              </ul>
+            </div>
+
+            {/* Divisions Directory Column */}
+            <div className="lg:col-span-4 space-y-2.5">
+              <h3 className="text-[11px] font-bold uppercase tracking-[0.14em] text-zinc-400 font-mono">
+                Bangladesh Divisions
+              </h3>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs text-zinc-300">
+                {(
+                  [
+                    'Dhaka',
+                    'Chattogram',
+                    'Sylhet',
+                    'Rajshahi',
+                    'Khulna',
+                    'Barishal',
+                    'Rangpur',
+                    'Mymensingh',
+                  ] as DivisionName[]
+                ).map((div) => (
+                  <button
+                    key={div}
+                    type="button"
+                    onClick={() => {
+                      setActiveHubDivision(div);
+                      setShowLocationHub(true);
+                      window.location.hash = `#location/${div.toLowerCase()}`;
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }}
+                    className="text-left hover:text-[#ccff00] transition-colors truncate cursor-pointer"
+                  >
+                    {div} Division
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="pt-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-[11px] text-zinc-500">
+            <p>© {new Date().getFullYear()} OUTERA · Hyper-Local Discovery & Transit Network.</p>
+            <p className="font-mono text-zinc-400">
+              Active area: {currentLocation.neighborhoodName}, {currentLocation.division}
+            </p>
+          </div>
+        </div>
+      </footer>
 
       {/* Place Details Modal View */}
       <PlaceDetailsModal
@@ -838,11 +1137,13 @@ export default function App() {
       <AuthModal
         isOpen={authModalOpen}
         onClose={() => setAuthModalOpen(false)}
+        initialMode={authModalInitialMode}
         contextAction={authContextAction}
         onAuthSuccess={() => {
           setAuthModalOpen(false);
           getCurrentUser().then((u) => setAuthUser(u));
         }}
+        onOpenForgotPasswordPage={() => navigateToAuthRoute('forgot-password')}
       />
 
       {/* Place Suggestion Modal */}

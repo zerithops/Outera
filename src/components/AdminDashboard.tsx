@@ -30,6 +30,7 @@ import {
   Phone,
   Hotel,
 } from 'lucide-react';
+import { OuteraLogo } from './OuteraLogo';
 import {
   fetchAdminOverviewStats,
   fetchAdminPlacePosts,
@@ -523,15 +524,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
             <ArrowLeft className="w-4 h-4" />
           </button>
           <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-base sm:text-lg font-black text-white tracking-tight">
-                OUTERA Moderation System
+            <div className="flex flex-wrap items-center gap-2.5">
+              <OuteraLogo size="xs" />
+              <span className="text-zinc-700 hidden sm:inline">·</span>
+              <h1 className="text-sm sm:text-base font-black text-white tracking-tight">
+                Moderation System
               </h1>
-              <span className="text-[10px] font-extrabold text-[#ccff00] bg-[#ccff00]/10 px-2 py-0.5 rounded-full border border-[#ccff00]/30 uppercase">
+              <span className="text-[10px] font-extrabold text-[#ccff00] bg-[#ccff00]/10 px-2 py-0.5 rounded-md border border-[#ccff00]/30 uppercase tracking-wider">
                 Admin
               </span>
             </div>
-            <p className="text-xs text-zinc-400 mt-0.5 font-mono truncate">
+            <p className="text-xs text-zinc-400 mt-1 font-mono truncate">
               Signed in as {adminEmail || 'admin'} · Database RLS Active
             </p>
           </div>

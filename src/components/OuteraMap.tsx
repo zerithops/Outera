@@ -455,7 +455,7 @@ export const OuteraMap: React.FC<OuteraMapProps> = ({
       )}
 
       {/* Map Canvas Container */}
-      <div className="relative aspect-[16/10] sm:aspect-[21/9] w-full rounded-2xl bg-zinc-950 border border-white/[0.08] overflow-hidden">
+      <div className="relative h-[300px] sm:h-[400px] lg:h-[460px] w-full rounded-2xl bg-zinc-950 border border-white/[0.08] overflow-hidden">
         <div ref={mapContainerRef} className="w-full h-full z-0" />
 
         {/* Empty state overlay if no places on map */}
@@ -470,8 +470,8 @@ export const OuteraMap: React.FC<OuteraMapProps> = ({
         )}
 
         {/* Privacy badge */}
-        <div className="absolute bottom-2 left-2 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/85 border border-white/10 text-[10px] text-zinc-400 pointer-events-none z-10">
-          <ShieldCheck className="w-3 h-3 text-[#ccff00]" />
+        <div className="absolute bottom-2.5 left-2.5 flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-black/85 border border-white/10 text-[10px] text-zinc-400 pointer-events-none z-10">
+          <ShieldCheck className="w-3 h-3 text-[#ccff00] shrink-0" />
           <span>Real-time GPS · Never stored to database</span>
         </div>
       </div>
@@ -480,28 +480,22 @@ export const OuteraMap: React.FC<OuteraMapProps> = ({
       {activePlace && (
         <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/[0.08] flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-in fade-in duration-150">
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 text-xs font-semibold mb-1 flex-wrap">
-              <span className="text-[#ccff00] uppercase font-bold">{activePlace.category}</span>
+            <div className="flex items-center gap-1.5 text-xs font-medium mb-1 flex-wrap text-zinc-400">
+              <span className="text-[#ccff00] font-bold">{activePlace.category}</span>
               <span className="text-zinc-600">·</span>
-              <span className="text-zinc-400">
+              <span className="truncate max-w-[200px]">
                 {activePlace.address || `${activePlace.district}, ${activePlace.division}`}
               </span>
               {activePlace.distanceKm !== undefined && activePlace.distanceKm !== null && (
                 <>
                   <span className="text-zinc-600">·</span>
-                  <span className="text-zinc-200 font-mono font-bold">
+                  <span className="text-zinc-200 font-mono tabular-nums font-bold">
                     {formatDistance(activePlace.distanceKm)}
                   </span>
                 </>
               )}
               <span className="text-zinc-600">·</span>
-              <span
-                className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                  activePlace.communityConfidence === 'High'
-                    ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
-                    : 'bg-amber-500/10 text-amber-300 border-amber-500/30'
-                }`}
-              >
+              <span className="text-zinc-300">
                 {activePlace.communityConfidence} Confidence
               </span>
             </div>
@@ -514,12 +508,14 @@ export const OuteraMap: React.FC<OuteraMapProps> = ({
               {activePlace.shortDescription || activePlace.whyPick}
             </p>
 
-            <div className="flex items-center gap-3 text-xs text-zinc-300 mt-2 font-medium">
-              <span>{activePlace.priceLevel.label}</span>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-300 mt-2 font-medium">
+              <span className="font-mono tabular-nums">{activePlace.priceLevel.label}</span>
               <span className="text-zinc-600">·</span>
-              <span className="text-[#ccff00] font-mono">{activePlace.communityScore}% worth it</span>
+              <span className="text-[#ccff00] font-mono tabular-nums">
+                {activePlace.communityScore}% worth it
+              </span>
               <span className="text-zinc-600">·</span>
-              <span>{activePlace.verifiedVisitorsCount} visited</span>
+              <span className="font-mono tabular-nums">{activePlace.verifiedVisitorsCount} visited</span>
             </div>
           </div>
 
@@ -527,7 +523,7 @@ export const OuteraMap: React.FC<OuteraMapProps> = ({
             <button
               type="button"
               onClick={() => onSelectPlace(activePlace)}
-              className="w-full sm:w-auto h-11 px-4 rounded-xl bg-[#ccff00] text-black font-extrabold text-xs tracking-wider uppercase flex items-center justify-center gap-1.5 hover:bg-[#d4ff1a] active:scale-[0.98] transition-all"
+              className="w-full sm:w-auto h-11 px-4 rounded-xl bg-[#ccff00] text-black font-extrabold text-xs tracking-wider uppercase flex items-center justify-center gap-1.5 hover:bg-[#d4ff1a] active:scale-[0.98] transition-all cursor-pointer whitespace-nowrap"
             >
               <span>View Spot Details</span>
               <ArrowRight className="w-3.5 h-3.5" />

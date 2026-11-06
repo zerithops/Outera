@@ -20,6 +20,7 @@ import {
   PlacePost,
 } from '../services/supabase';
 import { Place } from '../types/outera';
+import { OuteraLogo } from './OuteraLogo';
 
 interface CreatePostModalProps {
   isOpen: boolean;
@@ -305,32 +306,31 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
       role="dialog"
       aria-modal="true"
     >
-      <div className="w-full sm:max-w-lg bg-[#111317] border-t sm:border border-white/[0.1] rounded-t-3xl sm:rounded-2xl p-5 sm:p-6 shadow-2xl max-h-[92vh] overflow-y-auto no-scrollbar animate-in fade-in slide-in-from-bottom-4 duration-200 space-y-4">
+      <div className="w-full sm:max-w-lg bg-[#111317] border-t sm:border border-white/[0.1] rounded-t-3xl sm:rounded-2xl p-5 sm:p-6 shadow-2xl max-h-[92dvh] overflow-y-auto no-scrollbar animate-in fade-in slide-in-from-bottom-4 duration-200 space-y-4">
         {/* Header */}
-        <div className="flex items-center justify-between pb-3 border-b border-white/[0.08]">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-full bg-[#ccff00]/10 flex items-center justify-center text-[#ccff00]">
-              <Sparkles className="w-4 h-4" />
+        <div className="flex items-start justify-between gap-3 pb-3 border-b border-white/[0.08]">
+          <div>
+            <div className="flex items-center gap-2 mb-1.5">
+              <OuteraLogo size="xs" />
+              <span className="text-zinc-600" aria-hidden="true">
+                ·
+              </span>
+              <span className="text-[11px] font-semibold text-[#ccff00]">
+                Scout Review
+              </span>
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-base font-bold text-white tracking-tight">
-                  {activeEditingPost ? 'Edit Community Post' : 'Create Community Post'}
-                </h2>
-                <span className="px-2 py-0.5 rounded-md bg-[#ccff00]/10 border border-[#ccff00]/25 text-[9px] font-black uppercase tracking-wider text-[#ccff00]">
-                  Scout Review
-                </span>
-              </div>
-              <p className="text-[11px] text-zinc-400">
-                {defaultPlaceName ? defaultPlaceName : 'Share your real experience or review about an existing place'}
-              </p>
-            </div>
+            <h2 className="text-base sm:text-lg font-extrabold text-white tracking-tight">
+              {activeEditingPost ? 'Edit Community Post' : 'Create Community Post'}
+            </h2>
+            <p className="text-[11px] text-zinc-400 mt-0.5">
+              {defaultPlaceName ? defaultPlaceName : 'Share your real experience or review about an existing place'}
+            </p>
           </div>
 
           <button
             type="button"
             onClick={onClose}
-            className="w-8 h-8 rounded-full bg-white/[0.06] hover:bg-white/[0.12] flex items-center justify-center text-zinc-400 hover:text-white transition-all"
+            className="w-9 h-9 rounded-full bg-white/[0.06] hover:bg-white/[0.12] flex items-center justify-center text-zinc-400 hover:text-white transition-all shrink-0 cursor-pointer"
             aria-label="Close modal"
           >
             <X className="w-4 h-4" />
