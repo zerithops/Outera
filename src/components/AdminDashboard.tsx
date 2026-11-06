@@ -26,6 +26,9 @@ import {
   Coins,
   ShieldCheck,
   Calendar,
+  Edit3,
+  Phone,
+  Hotel,
 } from 'lucide-react';
 import {
   fetchAdminOverviewStats,
@@ -37,7 +40,6 @@ import {
   adminDeletePlaceSuggestion,
   PlacePost,
   PlaceSuggestion,
-  isCurrentUserAdmin,
   getCurrentUser,
   fetchProfile,
 } from '../services/supabase';
@@ -48,6 +50,10 @@ import {
   fetchAllCommunityFareReports,
   moderateCommunityFareReport,
   deleteCommunityFareReport,
+  fetchAdminLocalTransportContacts,
+  moderateLocalTransportContact,
+  fetchAdminNearbyServices,
+  moderateNearbyService,
   AdminTransportItem,
 } from '../services/transport';
 import {
@@ -55,6 +61,8 @@ import {
   FareConfidence,
   FareSourceType,
   CommunityFareReport,
+  LocalTransportContact,
+  NearbyServiceItem,
 } from '../types/outera';
 import { BANGLADESH_DIVISIONS } from '../data/bangladeshLocations';
 
@@ -84,7 +92,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
   // Transport & Fares State
   const [transportRoutes, setTransportRoutes] = useState<AdminTransportItem[]>([]);
   const [fareReports, setFareReports] = useState<CommunityFareReport[]>([]);
-  const [transportSubTab, setTransportSubTab] = useState<'routes' | 'reports'>('routes');
+  const [localContacts, setLocalContacts] = useState<LocalTransportContact[]>([]);
+  const [nearbyServices, setNearbyServices] = useState<NearbyServiceItem[]>([]);
+  const [transportSubTab, setTransportSubTab] = useState<'routes' | 'reports' | 'contacts' | 'nearby'>('routes');
   const [showAddRouteModal, setShowAddRouteModal] = useState<boolean>(false);
   const [expandedRouteId, setExpandedRouteId] = useState<string | null>(null);
 
@@ -124,6 +134,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
   } | null>(null);
   const [moderationNoteInput, setModerationNoteInput] = useState('');
 
+  // Place Suggestion Edit & Moderation Modal State
+  const [editingSuggestion, setEditingSuggestion] = useState<PlaceSuggestion | null>(null);
+  const [sugEditName, setSugEditName] = useState('');
+  const [sugEditCategory, setSugEditCategory] = useState('Chill');
+  const [sugEditDivision, setSugEditDivision] = useState('Dhaka');
+  const [sugEditDistrict, setSugEditDistrict] = useState('Dhaka');
+  const [sugEditUpazila, setSugEditUpazila] = useState('');
+  const [sugEditArea, setSugEditArea] = useState('');
+  const [sugEditAddress, setSugEditAddress] = useState('');
+  const [sugEditShortDesc, setSugEditShortDesc] = useState('');
+  const [sugEditWhyWorth, setSugEditWhyWorth] = useState('');
+  const [sugEditBudgetMin, setSugEditBudgetMin] = useState<string>('');
+  const [sugEditBudgetMax, setSugEditBudgetMax] = useState<string>('');
+  const [sugEditBestTime, setSugEditBestTime] = useState('');
+  const [sugEditLat, setSugEditLat] = useState<string>('');
+  const [sugEditLng, setSugEditLng] = useState<string>('');
+  const [sugEditModNote, setSugEditModNote] = useState('');
+
   const [deletingPost, setDeletingPost] = useState<PlacePost | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -155,18 +183,30 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
     }
 
     try {
-      const [overviewStats, fetchedPosts, fetchedSuggestions, fetchedRoutes, fetchedFareReports] = await Promise.all([
+      const [
+        overviewStats,
+        fetchedPosts,
+        fetchedSuggestions,
+        fetchedRoutes,
+        fetchedFareReports,
+        fetchedContacts,
+        fetchedNearby,
+      ] = await Promise.all([
         fetchAdminOverviewStats(),
         fetchAdminPlacePosts(activeTab),
         fetchAdminPlaceSuggestions(activeTab),
         fetchAdminTransportRoutes(),
         fetchAllCommunityFareReports(),
+        fetchAdminLocalTransportContacts(),
+        fetchAdminNearbyServices(),
       ]);
       setStats(overviewStats);
       setPosts(fetchedPosts);
       setSuggestions(fetchedSuggestions);
       setTransportRoutes(fetchedRoutes);
       setFareReports(fetchedFareReports);
+      setLocalContacts(fetchedContacts);
+      setNearbyServices(fetchedNearby);
     } catch (err) {
       console.warn('Failed to load admin data:', err);
     } finally {
@@ -236,30 +276,108 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
     }
   };
 
-  // Handle Place Suggestions Actions
-  const handleApproveSuggestion = async (sug: PlaceSuggestion) => {
+  const openEditSuggestionModal = (sug: PlaceSuggestion) => {
+    setEditingSuggestion(sug);
+    setSugEditName(sug.name || '');
+    setSugEditCategory(sug.category || 'Chill');
+    setSugEditDivision(sug.division || 'Dhaka');
+    setSugEditDistrict(sug.district || 'Dhaka');
+    setSugEditUpazila(sug.upazila || '');
+    setSugEditArea(sug.area || '');
+    setSugEditAddress(sug.address || '');
+    setSugEditShortDesc(sug.short_description || '');
+    setSugEditWhyWorth(sug.why_worth_visiting || sug.description || '');
+    setSugEditBudgetMin(sug.estimated_budget_min !== null && sug.estimated_budget_min !== undefined ? String(sug.estimated_budget_min) : '');
+    setSugEditBudgetMax(sug.estimated_budget_max !== null && sug.estimated_budget_max !== undefined ? String(sug.estimated_budget_max) : '');
+    setSugEditBestTime(sug.best_time_to_visit || '');
+    setSugEditLat(sug.latitude !== null && sug.latitude !== undefined ? String(sug.latitude) : '');
+    setSugEditLng(sug.longitude !== null && sug.longitude !== undefined ? String(sug.longitude) : '');
+    setSugEditModNote(sug.moderation_note || '');
+  };
+
+  // Handle Place Suggestions Actions (Approve, Reject, Hide, Edit)
+  const handleApproveSuggestion = async (sug: PlaceSuggestion, withEdits?: boolean) => {
     setActionLoadingId(sug.id);
-    const res = await moderatePlaceSuggestion(sug.id, 'approve');
+    const editsPayload = withEdits
+      ? {
+          name: sugEditName.trim(),
+          category: sugEditCategory,
+          division: sugEditDivision,
+          district: sugEditDistrict,
+          upazila: sugEditUpazila.trim() || undefined,
+          area: sugEditArea.trim() || undefined,
+          address: sugEditAddress.trim() || undefined,
+          short_description: sugEditShortDesc.trim() || undefined,
+          why_worth_visiting: sugEditWhyWorth.trim() || undefined,
+          estimated_budget_min: sugEditBudgetMin !== '' ? Number(sugEditBudgetMin) : null,
+          estimated_budget_max: sugEditBudgetMax !== '' ? Number(sugEditBudgetMax) : null,
+          best_time_to_visit: sugEditBestTime.trim() || undefined,
+          latitude: sugEditLat !== '' ? Number(sugEditLat) : sug.latitude,
+          longitude: sugEditLng !== '' ? Number(sugEditLng) : sug.longitude,
+        }
+      : undefined;
+
+    const res = await moderatePlaceSuggestion(
+      sug.id,
+      'approve',
+      withEdits ? sugEditModNote.trim() || undefined : sug.moderation_note || undefined,
+      editsPayload
+    );
     setActionLoadingId(null);
+    setEditingSuggestion(null);
 
     if (res.success) {
-      showToast(`Place suggestion "${sug.name}" approved!`);
+      showToast(`Place suggestion "${sug.name}" approved and published to OUTERA!`);
       loadData();
     } else {
       showToast(`Error: ${res.error || 'Failed to approve suggestion'}`);
     }
   };
 
-  const handleRejectSuggestion = async (sug: PlaceSuggestion) => {
+  const handleModerateSuggestionStatus = async (
+    sug: PlaceSuggestion,
+    action: 'reject' | 'hide' | 'edit',
+    customNote?: string
+  ) => {
     setActionLoadingId(sug.id);
-    const res = await moderatePlaceSuggestion(sug.id, 'reject');
+    const editsPayload =
+      action === 'edit' || editingSuggestion?.id === sug.id
+        ? {
+            name: sugEditName.trim() || sug.name,
+            category: sugEditCategory || sug.category,
+            division: sugEditDivision || sug.division,
+            district: sugEditDistrict || sug.district,
+            upazila: sugEditUpazila.trim() || sug.upazila,
+            area: sugEditArea.trim() || sug.area,
+            address: sugEditAddress.trim() || sug.address,
+            short_description: sugEditShortDesc.trim() || sug.short_description,
+            why_worth_visiting: sugEditWhyWorth.trim() || sug.why_worth_visiting,
+            estimated_budget_min: sugEditBudgetMin !== '' ? Number(sugEditBudgetMin) : sug.estimated_budget_min,
+            estimated_budget_max: sugEditBudgetMax !== '' ? Number(sugEditBudgetMax) : sug.estimated_budget_max,
+            best_time_to_visit: sugEditBestTime.trim() || sug.best_time_to_visit,
+            latitude: sugEditLat !== '' ? Number(sugEditLat) : sug.latitude,
+            longitude: sugEditLng !== '' ? Number(sugEditLng) : sug.longitude,
+          }
+        : undefined;
+
+    const res = await moderatePlaceSuggestion(
+      sug.id,
+      action,
+      customNote !== undefined ? customNote : sugEditModNote.trim() || undefined,
+      editsPayload
+    );
     setActionLoadingId(null);
+    setEditingSuggestion(null);
 
     if (res.success) {
-      showToast(`Place suggestion "${sug.name}" marked as rejected.`);
+      showToast(
+        action === 'edit'
+          ? `Suggestion "${sug.name}" details & moderation note updated.`
+          : `Place suggestion "${sug.name}" marked as ${action === 'reject' ? 'rejected' : 'hidden'}.`
+      );
       loadData();
     } else {
-      showToast(`Error: ${res.error || 'Failed to reject suggestion'}`);
+      showToast(`Error: ${res.error || 'Failed to update suggestion'}`);
     }
   };
 
@@ -588,9 +706,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
       {adminSection !== 'transport' ? (
         <div className="flex rounded-xl bg-white/[0.03] p-1 border border-white/[0.06] overflow-x-auto no-scrollbar">
           {(['pending', 'approved', 'rejected', 'hidden', 'all'] as const).map((tab) => {
-            // Hide 'hidden' tab for place suggestions as suggestions use pending/approved/rejected
-            if (adminSection === 'suggestions' && tab === 'hidden') return null;
-
             const isActive = activeTab === tab;
             const badgeCount =
               adminSection === 'posts'
@@ -610,7 +725,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                 key={tab}
                 type="button"
                 onClick={() => setActiveTab(tab)}
-                className={`flex-1 min-w-[90px] py-2 px-3 text-xs font-bold rounded-lg transition-all capitalize flex items-center justify-center gap-1.5 ${
+                className={`flex-1 min-w-[90px] py-2 px-3 text-xs font-bold rounded-lg transition-all capitalize flex items-center justify-center gap-1.5 cursor-pointer ${
                   isActive
                     ? 'bg-[#ccff00] text-black font-extrabold shadow-sm'
                     : 'text-zinc-400 hover:text-white'
@@ -633,11 +748,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
       ) : (
         /* Transport Sub-Navigation Bar */
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-1.5 rounded-2xl bg-white/[0.02] border border-white/[0.06]">
-          <div className="flex p-1 bg-white/[0.03] rounded-xl border border-white/[0.06] w-fit">
+          <div className="flex p-1 bg-white/[0.03] rounded-xl border border-white/[0.06] w-fit overflow-x-auto no-scrollbar">
             <button
               type="button"
               onClick={() => setTransportSubTab('routes')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
                 transportSubTab === 'routes'
                   ? 'bg-[#ccff00] text-black font-extrabold'
                   : 'text-zinc-400 hover:text-white'
@@ -649,21 +764,45 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
             <button
               type="button"
               onClick={() => setTransportSubTab('reports')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
                 transportSubTab === 'reports'
                   ? 'bg-[#ccff00] text-black font-extrabold'
                   : 'text-zinc-400 hover:text-white'
               }`}
             >
               <Coins className="w-3.5 h-3.5" />
-              <span>Community Reports ({fareReports.length})</span>
+              <span>Fare Reports ({fareReports.length})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setTransportSubTab('contacts')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+                transportSubTab === 'contacts'
+                  ? 'bg-[#ccff00] text-black font-extrabold'
+                  : 'text-zinc-400 hover:text-white'
+              }`}
+            >
+              <Phone className="w-3.5 h-3.5" />
+              <span>Local Transport ({localContacts.length})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setTransportSubTab('nearby')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+                transportSubTab === 'nearby'
+                  ? 'bg-[#ccff00] text-black font-extrabold'
+                  : 'text-zinc-400 hover:text-white'
+              }`}
+            >
+              <Hotel className="w-3.5 h-3.5" />
+              <span>Stay & Eat Nearby ({nearbyServices.length})</span>
             </button>
           </div>
 
           <button
             type="button"
             onClick={() => setShowAddRouteModal(true)}
-            className="h-9 px-4 rounded-xl bg-[#ccff00] hover:bg-[#d8ff33] text-black font-extrabold text-xs flex items-center justify-center gap-1.5 transition-all shadow-md shadow-[#ccff00]/15"
+            className="h-9 px-4 rounded-xl bg-[#ccff00] hover:bg-[#d8ff33] text-black font-extrabold text-xs flex items-center justify-center gap-1.5 transition-all shadow-md shadow-[#ccff00]/15 cursor-pointer shrink-0"
           >
             <Plus className="w-4 h-4 stroke-[3]" />
             <span>Add Transport Route</span>
@@ -760,7 +899,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                 </div>
 
                 {/* Post Body & Rating */}
-                <div className="space-y-1.5">
+                <div className="space-y-2">
                   <div className="flex items-center gap-2">
                     <h3 className="text-sm sm:text-base font-bold text-white tracking-tight">
                       {post.title}
@@ -775,6 +914,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                   <p className="text-xs text-zinc-300 leading-relaxed whitespace-pre-wrap">
                     {post.content}
                   </p>
+
+                  {/* Post Photos (Max 2) */}
+                  {post.images && post.images.length > 0 && (
+                    <div className="grid grid-cols-2 gap-2.5 pt-2">
+                      {post.images.slice(0, 2).map((imgUrl, idx) => (
+                        <div key={idx} className="relative rounded-xl overflow-hidden border border-white/10 aspect-[16/10] bg-black">
+                          <img src={imgUrl} alt={`Post photo ${idx + 1}`} className="w-full h-full object-cover" />
+                          <span className="absolute top-2 left-2 px-2 py-0.5 rounded bg-black/75 text-[10px] font-bold text-[#ccff00]">
+                            {idx === 0 ? 'Photo 1 · Primary' : 'Photo 2 · Secondary'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {/* Moderation Note Display if available */}
@@ -800,7 +953,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                         type="button"
                         onClick={() => handleApprove(post)}
                         disabled={isActing}
-                        className="h-8 px-3.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-extrabold text-xs flex items-center gap-1.5 transition-all disabled:opacity-50"
+                        className="h-8 px-3.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-extrabold text-xs flex items-center gap-1.5 transition-all disabled:opacity-50 cursor-pointer"
                       >
                         <CheckCircle className="w-3.5 h-3.5" />
                         <span>Approve</span>
@@ -816,7 +969,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                           setModerationNoteInput(post.moderation_note || '');
                         }}
                         disabled={isActing}
-                        className="h-8 px-3 rounded-lg bg-white/[0.06] hover:bg-rose-500/20 text-rose-300 hover:text-rose-200 border border-rose-500/30 text-xs font-bold flex items-center gap-1.5 transition-all disabled:opacity-50"
+                        className="h-8 px-3 rounded-lg bg-white/[0.06] hover:bg-rose-500/20 text-rose-300 hover:text-rose-200 border border-rose-500/30 text-xs font-bold flex items-center gap-1.5 transition-all disabled:opacity-50 cursor-pointer"
                       >
                         <XCircle className="w-3.5 h-3.5" />
                         <span>Reject</span>
@@ -832,7 +985,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                           setModerationNoteInput(post.moderation_note || '');
                         }}
                         disabled={isActing}
-                        className="h-8 px-3 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] text-zinc-300 border border-white/[0.08] text-xs font-semibold flex items-center gap-1.5 transition-all disabled:opacity-50"
+                        className="h-8 px-3 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] text-zinc-300 border border-white/[0.08] text-xs font-semibold flex items-center gap-1.5 transition-all disabled:opacity-50 cursor-pointer"
                       >
                         <EyeOff className="w-3.5 h-3.5" />
                         <span>Hide</span>
@@ -844,7 +997,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                       type="button"
                       onClick={() => setDeletingPost(post)}
                       disabled={isActing}
-                      className="w-8 h-8 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 flex items-center justify-center transition-all disabled:opacity-50"
+                      className="w-8 h-8 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 flex items-center justify-center transition-all disabled:opacity-50 cursor-pointer"
                       title="Permanently Delete Post"
                       aria-label="Permanently Delete Post"
                     >
@@ -875,6 +1028,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                 pending: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
                 approved: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
                 rejected: 'bg-rose-500/15 text-rose-300 border-rose-500/30',
+                hidden: 'bg-zinc-800 text-zinc-400 border-zinc-700',
               };
 
               return (
@@ -889,7 +1043,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                         {sug.name ? sug.name.slice(0, 2) : 'PL'}
                       </div>
                       <div className="min-w-0">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <h3 className="text-base font-black text-white truncate">{sug.name}</h3>
                           {sug.category && (
                             <span className="text-[10px] font-bold text-[#ccff00] bg-[#ccff00]/10 px-2 py-0.5 rounded-full border border-[#ccff00]/20 shrink-0">
@@ -898,7 +1052,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                           )}
                         </div>
                         <p className="text-[11px] text-zinc-400 mt-0.5 font-mono truncate">
-                          Suggested by {sug.author_name} ({sug.author_handle}) · User UUID: {sug.user_id.slice(0, 8)}...
+                          Scout: <strong className="text-zinc-200">{sug.author_name}</strong> ({sug.author_handle}) · UUID: {sug.user_id.slice(0, 8)}...
                         </p>
                       </div>
                     </div>
@@ -914,47 +1068,132 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                     </div>
                   </div>
 
-                  {/* Address / Location */}
-                  {sug.address && (
-                    <div className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.05] flex items-center gap-2 text-xs">
-                      <MapPin className="w-3.5 h-3.5 text-[#ccff00] shrink-0" />
-                      <span className="text-zinc-300 font-medium">{sug.address}</span>
-                    </div>
-                  )}
-
-                  {/* Description / Why Worth Going Out */}
-                  {sug.description && (
-                    <div className="space-y-1">
-                      <p className="text-[11px] font-semibold text-zinc-400">Why worth going out for:</p>
-                      <p className="text-xs text-zinc-200 leading-relaxed whitespace-pre-wrap bg-white/[0.01] p-3 rounded-xl border border-white/[0.04]">
-                        {sug.description}
+                  {/* Structured Location, Coordinates, Budget & Best Time */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+                    <div className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.05] space-y-1">
+                      <div className="flex items-center gap-1.5 text-[#ccff00] font-bold text-[11px]">
+                        <MapPin className="w-3.5 h-3.5 shrink-0" />
+                        <span>Location & Coordinates</span>
+                      </div>
+                      <p className="text-zinc-200 font-medium">
+                        {[sug.area, sug.upazila, sug.district, sug.division].filter(Boolean).join(', ')}
                       </p>
+                      {sug.address && <p className="text-zinc-400 text-[11px]">Address: {sug.address}</p>}
+                      {sug.latitude !== null && sug.longitude !== null && (
+                        <p className="text-[10px] font-mono text-zinc-400">
+                          GPS: {Number(sug.latitude).toFixed(5)}, {Number(sug.longitude).toFixed(5)}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.05] space-y-1">
+                      <div className="flex items-center gap-1.5 text-[#ccff00] font-bold text-[11px]">
+                        <Coins className="w-3.5 h-3.5 shrink-0" />
+                        <span>Budget & Best Time</span>
+                      </div>
+                      <p className="text-zinc-200 font-medium">
+                        Budget:{' '}
+                        {sug.estimated_budget_min !== null && sug.estimated_budget_min !== undefined
+                          ? `৳${sug.estimated_budget_min} – ৳${sug.estimated_budget_max || sug.estimated_budget_min}`
+                          : 'Not specified'}
+                      </p>
+                      {sug.best_time_to_visit && (
+                        <p className="text-zinc-400 text-[11px]">Best Time: {sug.best_time_to_visit}</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Short Description & Why Worth Visiting */}
+                  <div className="space-y-2">
+                    {sug.short_description && (
+                      <div className="p-3 rounded-xl bg-white/[0.015] border border-white/[0.04] text-xs">
+                        <span className="text-[10px] uppercase font-bold text-zinc-400 block mb-0.5">
+                          Short Description
+                        </span>
+                        <p className="text-zinc-200">{sug.short_description}</p>
+                      </div>
+                    )}
+
+                    {(sug.why_worth_visiting || sug.description) && (
+                      <div className="p-3 rounded-xl bg-white/[0.015] border border-white/[0.04] text-xs">
+                        <span className="text-[10px] uppercase font-bold text-zinc-400 block mb-0.5">
+                          Why Worth Visiting
+                        </span>
+                        <p className="text-zinc-200 whitespace-pre-wrap">
+                          {sug.why_worth_visiting || sug.description}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Suggestion Photos (Up to 2) */}
+                  {sug.images && sug.images.length > 0 && (
+                    <div className="grid grid-cols-2 gap-2.5">
+                      {sug.images.slice(0, 2).map((imgUrl, idx) => (
+                        <div
+                          key={idx}
+                          className="relative rounded-xl overflow-hidden border border-white/10 aspect-[16/10] bg-black"
+                        >
+                          <img
+                            src={imgUrl}
+                            alt={`${sug.name} photo ${idx + 1}`}
+                            className="w-full h-full object-cover"
+                          />
+                          <span className="absolute top-2 left-2 px-2 py-0.5 rounded bg-black/75 text-[10px] font-bold text-[#ccff00]">
+                            {idx === 0 ? 'Photo 1 · Primary' : 'Photo 2 · Secondary'}
+                          </span>
+                        </div>
+                      ))}
                     </div>
                   )}
 
-                  {/* Footer Toolbar: Date, UUID, Actions */}
+                  {/* Moderation Note if present */}
+                  {sug.moderation_note && (
+                    <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200 flex items-start gap-2">
+                      <MessageSquare className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
+                      <div>
+                        <span className="font-bold">Moderation Note:</span> {sug.moderation_note}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Footer Toolbar: Date, Actions (Approve, Reject, Hide, Edit/Note, Delete) */}
                   <div className="pt-2 border-t border-white/[0.06] flex flex-wrap items-center justify-between gap-2.5">
                     <div className="text-[11px] text-zinc-500 font-mono">
-                      Created: {new Date(sug.created_at).toLocaleDateString([], {
+                      Submitted: {new Date(sug.created_at).toLocaleDateString([], {
                         month: 'short',
                         day: 'numeric',
                         year: 'numeric',
                         hour: '2-digit',
                         minute: '2-digit',
                       })}
+                      {sug.promoted_place_id && (
+                        <span className="ml-2 text-emerald-400">· Live Place ID: {sug.promoted_place_id.slice(0, 8)}</span>
+                      )}
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {/* Edit / Add Note Button */}
+                      <button
+                        type="button"
+                        onClick={() => openEditSuggestionModal(sug)}
+                        disabled={isActing}
+                        className="h-8 px-3 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] text-zinc-200 border border-white/[0.1] text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+                      >
+                        <Edit3 className="w-3.5 h-3.5 text-[#ccff00]" />
+                        <span>Edit / Note</span>
+                      </button>
+
                       {/* Approve Suggestion */}
                       {sug.status !== 'approved' && (
                         <button
                           type="button"
                           onClick={() => handleApproveSuggestion(sug)}
                           disabled={isActing}
-                          className="h-8 px-3.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-extrabold text-xs flex items-center gap-1.5 transition-all disabled:opacity-50"
+                          className="h-8 px-3.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-extrabold text-xs flex items-center gap-1.5 transition-all disabled:opacity-50 cursor-pointer"
                         >
                           <CheckCircle className="w-3.5 h-3.5" />
-                          <span>Approve</span>
+                          <span>Approve & Publish</span>
                         </button>
                       )}
 
@@ -962,12 +1201,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                       {sug.status !== 'rejected' && (
                         <button
                           type="button"
-                          onClick={() => handleRejectSuggestion(sug)}
+                          onClick={() => handleModerateSuggestionStatus(sug, 'reject')}
                           disabled={isActing}
-                          className="h-8 px-3 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 text-xs font-semibold flex items-center gap-1.5 transition-all disabled:opacity-50"
+                          className="h-8 px-3 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 text-xs font-semibold flex items-center gap-1.5 transition-all disabled:opacity-50 cursor-pointer"
                         >
                           <XCircle className="w-3.5 h-3.5" />
                           <span>Reject</span>
+                        </button>
+                      )}
+
+                      {/* Hide Suggestion */}
+                      {sug.status !== 'hidden' && (
+                        <button
+                          type="button"
+                          onClick={() => handleModerateSuggestionStatus(sug, 'hide')}
+                          disabled={isActing}
+                          className="h-8 px-3 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] text-zinc-300 border border-white/[0.08] text-xs font-semibold flex items-center gap-1.5 transition-all disabled:opacity-50 cursor-pointer"
+                        >
+                          <EyeOff className="w-3.5 h-3.5" />
+                          <span>Hide</span>
                         </button>
                       )}
 
@@ -976,7 +1228,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                         type="button"
                         onClick={() => handleDeleteSuggestion(sug)}
                         disabled={isActing}
-                        className="w-8 h-8 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 flex items-center justify-center transition-all disabled:opacity-50"
+                        className="w-8 h-8 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 flex items-center justify-center transition-all disabled:opacity-50 cursor-pointer"
                         title="Permanently Delete Suggestion"
                         aria-label="Permanently Delete Suggestion"
                       >
@@ -1043,7 +1295,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                           {/* Fare & Duration Pill */}
                           <div className="flex sm:flex-col items-center sm:items-end justify-between gap-1 shrink-0 bg-white/[0.03] sm:bg-transparent p-2 sm:p-0 rounded-xl">
                             <span className="text-base font-black text-[#ccff00] font-mono">
-                              ৳{route.minFare} – ৳{route.maxFare}
+                              ৳{route.minFare} – ৳{route.maxFare} ({route.fareUnit || 'per person'})
                             </span>
                             <span className="text-[11px] text-zinc-400 font-mono">
                               ~{Math.floor(route.estimatedDurationMin / 60)}h {route.estimatedDurationMin % 60}m · {route.distanceKm} km
@@ -1152,7 +1404,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                   })}
                 </div>
               )
-            ) : (
+            ) : transportSubTab === 'reports' ? (
               /* Community Fare Reports List */
               fareReports.length === 0 ? (
                 <div className="py-20 text-center space-y-2 bg-[#111317] border border-white/[0.08] rounded-2xl p-6">
@@ -1193,7 +1445,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
 
                           <div className="flex items-center gap-2 shrink-0">
                             <span className="text-base font-black text-[#ccff00] font-mono">
-                              ৳{report.farePaid}
+                              ৳{report.farePaid} ({report.fareUnit || 'per person'})
                             </span>
                             <span
                               className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border ${
@@ -1258,10 +1510,353 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                   })}
                 </div>
               )
+            ) : transportSubTab === 'contacts' ? (
+              /* Local Transport Contacts Moderation */
+              localContacts.length === 0 ? (
+                <div className="py-16 text-center space-y-2 bg-[#111317] border border-white/[0.08] rounded-2xl p-6">
+                  <Phone className="w-7 h-7 text-[#ccff00]/60 mx-auto mb-1" />
+                  <h3 className="text-sm font-bold text-white">No Local Transport Contacts Submitted</h3>
+                  <p className="text-xs text-zinc-400 max-w-sm mx-auto">
+                    Submitted local CNG, Rickshaw, Easy Bike, Car, and Boat contacts appear here for moderation.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {localContacts.map((c) => (
+                    <div key={c.id} className="p-4 rounded-2xl bg-[#111317] border border-white/[0.08] space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-[#ccff00]/15 text-[#ccff00] font-bold">
+                            {c.vehicleType}
+                          </span>
+                          <h4 className="text-sm font-bold text-white mt-1">
+                            {c.name} · <span className="text-zinc-400 font-normal">{c.serviceArea} ({c.district})</span>
+                          </h4>
+                        </div>
+                        <span className="text-[10px] uppercase font-mono px-2.5 py-1 rounded-full bg-white/[0.06] text-zinc-300">
+                          {c.status}
+                        </span>
+                      </div>
+                      <div className="text-xs text-zinc-300 flex flex-wrap gap-3">
+                        <span>Phone: {c.phone || 'N/A'}</span>
+                        <span>WhatsApp: {c.whatsapp || 'N/A'}</span>
+                        <span>Public Permission: {c.phonePublicPermission ? 'Yes' : 'No'}</span>
+                        {c.rateNote && <span>Rate Note: {c.rateNote}</span>}
+                      </div>
+                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-white/[0.06]">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            await moderateLocalTransportContact(c.id, {
+                              status: 'approved',
+                              contactVerified: true,
+                              outeraVerified: true,
+                            });
+                            showToast(`Approved & verified ${c.name}`);
+                            loadData();
+                          }}
+                          className="h-8 px-3 rounded-lg bg-emerald-500 text-black font-extrabold text-xs cursor-pointer"
+                        >
+                          Approve & Verify
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            await moderateLocalTransportContact(c.id, { status: 'rejected' });
+                            showToast(`Rejected ${c.name}`);
+                            loadData();
+                          }}
+                          className="h-8 px-3 rounded-lg bg-rose-500/20 text-rose-300 text-xs font-bold cursor-pointer"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )
+            ) : (
+              /* Nearby Services (Stay & Eat) Moderation */
+              nearbyServices.length === 0 ? (
+                <div className="py-16 text-center space-y-2 bg-[#111317] border border-white/[0.08] rounded-2xl p-6">
+                  <Hotel className="w-7 h-7 text-[#ccff00]/60 mx-auto mb-1" />
+                  <h3 className="text-sm font-bold text-white">No Nearby Stays or Eat Spots Submitted</h3>
+                  <p className="text-xs text-zinc-400 max-w-sm mx-auto">
+                    Submitted nearby hotels, resorts, restaurants, and cafes appear here for verification.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {nearbyServices.map((s) => (
+                    <div key={s.id} className="p-4 rounded-2xl bg-[#111317] border border-white/[0.08] space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-[#ccff00]/15 text-[#ccff00] font-bold">
+                            {(s.serviceGroup || s.category_group || 'stay').toUpperCase()} · {s.category || s.service_type}
+                          </span>
+                          <h4 className="text-sm font-bold text-white mt-1">
+                            {s.name} ({s.district})
+                          </h4>
+                        </div>
+                        <span className="text-[10px] uppercase font-mono px-2.5 py-1 rounded-full bg-white/[0.06] text-zinc-300">
+                          {s.status}
+                        </span>
+                      </div>
+                      <div className="text-xs text-zinc-300 flex flex-wrap gap-3">
+                        {s.priceRange && <span>Price: {s.priceRange}</span>}
+                        {s.foodType && <span>Food: {s.foodType}</span>}
+                        {s.contactPhone && <span>Phone: {s.contactPhone}</span>}
+                        {s.directionsNote && <span>Directions: {s.directionsNote}</span>}
+                      </div>
+                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-white/[0.06]">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            await moderateNearbyService(s.id, {
+                              status: 'approved',
+                              outeraVerified: true,
+                              contactVerified: Boolean(s.contactPhone),
+                              communityConfidence: 'Medium',
+                            });
+                            showToast(`Approved & verified ${s.name}`);
+                            loadData();
+                          }}
+                          className="h-8 px-3 rounded-lg bg-emerald-500 text-black font-extrabold text-xs cursor-pointer"
+                        >
+                          Approve & Verify
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            await moderateNearbyService(s.id, { status: 'rejected' });
+                            showToast(`Rejected ${s.name}`);
+                            loadData();
+                          }}
+                          className="h-8 px-3 rounded-lg bg-rose-500/20 text-rose-300 text-xs font-bold cursor-pointer"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )
             )}
           </div>
         )}
       </div>
+
+      {/* Edit / Moderate Place Suggestion Modal */}
+      {editingSuggestion && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="w-full max-w-2xl bg-[#111317] border border-white/[0.1] rounded-3xl p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto no-scrollbar">
+            <div className="flex items-center justify-between border-b border-white/[0.08] pb-3">
+              <div>
+                <span className="text-[10px] font-mono uppercase text-[#ccff00] font-bold">
+                  Scout Attribution Preserved: {editingSuggestion.author_name} ({editingSuggestion.author_handle})
+                </span>
+                <h3 className="text-base font-black text-white">
+                  Edit & Review Place Suggestion
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingSuggestion(null)}
+                className="text-zinc-400 hover:text-white text-xs font-mono cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              <div>
+                <label className="block text-[11px] font-semibold text-zinc-400 mb-1">Place Name</label>
+                <input
+                  type="text"
+                  value={sugEditName}
+                  onChange={(e) => setSugEditName(e.target.value)}
+                  className="w-full h-9 px-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-white"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-zinc-400 mb-1">Category</label>
+                <input
+                  type="text"
+                  value={sugEditCategory}
+                  onChange={(e) => setSugEditCategory(e.target.value)}
+                  className="w-full h-9 px-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-white"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-zinc-400 mb-1">Division</label>
+                <input
+                  type="text"
+                  value={sugEditDivision}
+                  onChange={(e) => setSugEditDivision(e.target.value)}
+                  className="w-full h-9 px-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-white"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-zinc-400 mb-1">District</label>
+                <input
+                  type="text"
+                  value={sugEditDistrict}
+                  onChange={(e) => setSugEditDistrict(e.target.value)}
+                  className="w-full h-9 px-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-white"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-zinc-400 mb-1">Upazila / City</label>
+                <input
+                  type="text"
+                  value={sugEditUpazila}
+                  onChange={(e) => setSugEditUpazila(e.target.value)}
+                  className="w-full h-9 px-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-white"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-zinc-400 mb-1">Area / Neighborhood</label>
+                <input
+                  type="text"
+                  value={sugEditArea}
+                  onChange={(e) => setSugEditArea(e.target.value)}
+                  className="w-full h-9 px-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-white"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+              <div>
+                <label className="block text-[11px] font-semibold text-zinc-400 mb-1">Address</label>
+                <input
+                  type="text"
+                  value={sugEditAddress}
+                  onChange={(e) => setSugEditAddress(e.target.value)}
+                  className="w-full h-9 px-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-white"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-zinc-400 mb-1">Latitude</label>
+                <input
+                  type="number"
+                  step="any"
+                  value={sugEditLat}
+                  onChange={(e) => setSugEditLat(e.target.value)}
+                  className="w-full h-9 px-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-white font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-zinc-400 mb-1">Longitude</label>
+                <input
+                  type="number"
+                  step="any"
+                  value={sugEditLng}
+                  onChange={(e) => setSugEditLng(e.target.value)}
+                  className="w-full h-9 px-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-white font-mono"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+              <div>
+                <label className="block text-[11px] font-semibold text-zinc-400 mb-1">Budget Min (৳)</label>
+                <input
+                  type="number"
+                  value={sugEditBudgetMin}
+                  onChange={(e) => setSugEditBudgetMin(e.target.value)}
+                  className="w-full h-9 px-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-white font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-zinc-400 mb-1">Budget Max (৳)</label>
+                <input
+                  type="number"
+                  value={sugEditBudgetMax}
+                  onChange={(e) => setSugEditBudgetMax(e.target.value)}
+                  className="w-full h-9 px-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-white font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-zinc-400 mb-1">Best Time to Visit</label>
+                <input
+                  type="text"
+                  value={sugEditBestTime}
+                  onChange={(e) => setSugEditBestTime(e.target.value)}
+                  className="w-full h-9 px-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-white"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2 text-xs">
+              <div>
+                <label className="block text-[11px] font-semibold text-zinc-400 mb-1">Short Description</label>
+                <textarea
+                  rows={2}
+                  value={sugEditShortDesc}
+                  onChange={(e) => setSugEditShortDesc(e.target.value)}
+                  className="w-full p-2.5 rounded-xl bg-white/[0.04] border border-white/[0.08] text-white resize-none"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-zinc-400 mb-1">Why Worth Visiting</label>
+                <textarea
+                  rows={2}
+                  value={sugEditWhyWorth}
+                  onChange={(e) => setSugEditWhyWorth(e.target.value)}
+                  className="w-full p-2.5 rounded-xl bg-white/[0.04] border border-white/[0.08] text-white resize-none"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-zinc-400 mb-1">
+                  Moderation Note (Visible to Scout in Profile)
+                </label>
+                <textarea
+                  rows={2}
+                  value={sugEditModNote}
+                  onChange={(e) => setSugEditModNote(e.target.value)}
+                  placeholder="Add verification note, reason for rejection, or feedback for the Scout..."
+                  className="w-full p-2.5 rounded-xl bg-white/[0.04] border border-white/[0.08] text-white resize-none"
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-end gap-2 pt-3 border-t border-white/[0.08]">
+              <button
+                type="button"
+                onClick={() => setEditingSuggestion(null)}
+                className="h-9 px-4 rounded-xl bg-white/[0.05] text-zinc-300 text-xs font-bold cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => handleModerateSuggestionStatus(editingSuggestion, 'edit')}
+                className="h-9 px-4 rounded-xl bg-white/[0.1] hover:bg-white/[0.15] text-white text-xs font-bold cursor-pointer"
+              >
+                Save Edits & Note Only
+              </button>
+              <button
+                type="button"
+                onClick={() => handleModerateSuggestionStatus(editingSuggestion, 'reject')}
+                className="h-9 px-4 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-xs font-bold cursor-pointer"
+              >
+                Reject with Note
+              </button>
+              <button
+                type="button"
+                onClick={() => handleApproveSuggestion(editingSuggestion, true)}
+                className="h-9 px-5 rounded-xl bg-[#ccff00] hover:bg-[#d8ff33] text-black font-extrabold text-xs uppercase tracking-wider cursor-pointer"
+              >
+                Approve & Publish Place
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Moderation Note Modal (Reject / Hide) */}
       {moderatingPost && (

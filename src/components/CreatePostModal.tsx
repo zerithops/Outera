@@ -6,16 +6,16 @@ import {
   AlertCircle,
   Send,
   Sparkles,
-  Image as ImageIcon,
   Camera,
-  Trash2,
   Loader2,
+  Edit3,
 } from 'lucide-react';
 import {
   createPlacePost,
   updateUserPendingPost,
   fetchPlacesFromSupabase,
   uploadPlacePostImages,
+  checkUserExistingPostForPlace,
   getCurrentUser,
   PlacePost,
 } from '../services/supabase';
@@ -36,6 +36,8 @@ interface PhotoPreview {
   previewUrl: string;
 }
 
+const MAX_POST_PHOTOS = 2;
+
 export const CreatePostModal: React.FC<CreatePostModalProps> = ({
   isOpen,
   onClose,
@@ -52,7 +54,12 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
   const [rating, setRating] = useState(5);
   const [isVisited, setIsVisited] = useState(true);
 
-  // Direct device photo uploads
+  // Track if user is switching into editing their existing post for this place
+  const [activeEditingPost, setActiveEditingPost] = useState<PlacePost | null>(editingPost || null);
+  const [existingPlacePost, setExistingPlacePost] = useState<PlacePost | null>(null);
+  const [checkingExisting, setCheckingExisting] = useState(false);
+
+  // Direct device photo uploads (strictly max 2)
   const [selectedPhotos, setSelectedPhotos] = useState<PhotoPreview[]>([]);
   const [photoError, setPhotoError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -64,6 +71,8 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
 
   useEffect(() => {
     if (isOpen) {
+      setActiveEditingPost(editingPost || null);
+      setExistingPlacePost(null);
       if (editingPost) {
         setSelectedPlaceId(editingPost.place_id);
         setTitle(editingPost.title);
@@ -83,15 +92,38 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
       setSuccessNotice(null);
       setUploadStatus(null);
 
-      // Load places from Supabase
       fetchPlacesFromSupabase().then((p) => {
         setPlaces(p || []);
-        if (!selectedPlaceId && p && p.length > 0) {
+        if (!defaultPlaceId && !editingPost && p && p.length > 0) {
           setSelectedPlaceId(p[0].id);
         }
       });
     }
   }, [isOpen, editingPost, defaultPlaceId, defaultPlaceName]);
+
+  // Check if user already has a post for the selected place (1 post per place rule)
+  useEffect(() => {
+    let active = true;
+    const targetPlaceId = selectedPlaceId || defaultPlaceId;
+    if (!isOpen || activeEditingPost || !targetPlaceId) {
+      setExistingPlacePost(null);
+      return;
+    }
+
+    setCheckingExisting(true);
+    checkUserExistingPostForPlace(targetPlaceId)
+      .then((found) => {
+        if (!active) return;
+        setExistingPlacePost(found);
+      })
+      .finally(() => {
+        if (active) setCheckingExisting(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [isOpen, selectedPlaceId, defaultPlaceId, activeEditingPost]);
 
   // Clean up object URLs on unmount/change
   useEffect(() => {
@@ -102,28 +134,45 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
 
   if (!isOpen) return null;
 
+  const handleSwitchToEditExisting = (postToEdit: PlacePost) => {
+    setActiveEditingPost(postToEdit);
+    setSelectedPlaceId(postToEdit.place_id);
+    setTitle(postToEdit.title);
+    setContent(postToEdit.content);
+    setRating(postToEdit.rating);
+    setIsVisited(postToEdit.is_visited);
+    setExistingPlacePost(null);
+    setErrorMessage(null);
+  };
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setPhotoError(null);
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
 
-    const remainingSlots = 5 - selectedPhotos.length;
+    const remainingSlots = MAX_POST_PHOTOS - selectedPhotos.length;
     if (remainingSlots <= 0) {
-      setPhotoError('You can upload a maximum of 5 photos.');
+      setPhotoError('Maximum 2 photos are allowed per community post (3rd photo is blocked).');
+      if (fileInputRef.current) fileInputRef.current.value = '';
       return;
+    }
+
+    if (files.length > remainingSlots) {
+      setPhotoError(
+        `Maximum 2 photos allowed per post. Only the first ${remainingSlots} photo${remainingSlots > 1 ? 's' : ''} can be added.`
+      );
     }
 
     const validNewPreviews: PhotoPreview[] = [];
     for (const file of files.slice(0, remainingSlots)) {
-      // Check 5MB limit
       if (file.size > 5 * 1024 * 1024) {
         setPhotoError(`"${file.name}" exceeds the 5MB file size limit.`);
         continue;
       }
-      // Check file types
       const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
-      if (!validTypes.includes(file.type.toLowerCase())) {
-        setPhotoError(`Only JPG, PNG, and WEBP formats are supported.`);
+      const ext = file.name.split('.').pop()?.toLowerCase() || '';
+      if (!validTypes.includes(file.type.toLowerCase()) && !['jpg', 'jpeg', 'png', 'webp'].includes(ext)) {
+        setPhotoError('Only JPG, JPEG, PNG, and WEBP formats are supported.');
         continue;
       }
 
@@ -133,8 +182,7 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
       });
     }
 
-    setSelectedPhotos((prev) => [...prev, ...validNewPreviews].slice(0, 5));
-    // Reset file input value so same file can be re-selected if removed
+    setSelectedPhotos((prev) => [...prev, ...validNewPreviews].slice(0, MAX_POST_PHOTOS));
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -156,7 +204,7 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
     const currentUser = await getCurrentUser();
     if (!currentUser) {
       if (onRequireAuth) {
-        onRequireAuth('share your experience');
+        onRequireAuth('share your community post');
         return;
       }
       setErrorMessage('You must be signed in to submit a post.');
@@ -168,15 +216,19 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
       return;
     }
     if (!content.trim()) {
-      setErrorMessage('Please share some details about your experience.');
+      setErrorMessage('Please share your experience or review.');
+      return;
+    }
+    if (selectedPhotos.length > MAX_POST_PHOTOS) {
+      setErrorMessage('Maximum 2 photos are allowed per community post.');
       return;
     }
 
     setLoading(true);
 
-    if (editingPost) {
+    if (activeEditingPost) {
       setUploadStatus('Updating post...');
-      const res = await updateUserPendingPost(editingPost.id, {
+      const res = await updateUserPendingPost(activeEditingPost.id, {
         title: title.trim(),
         content: content.trim(),
         rating,
@@ -187,7 +239,7 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
       if (!res.success) {
         setErrorMessage(res.error || 'Failed to update post.');
       } else {
-        setSuccessNotice('Pending post updated successfully.');
+        setSuccessNotice('Your community post has been updated and queued for moderation.');
         setTimeout(() => {
           if (onPostSubmitted) onPostSubmitted();
           onClose();
@@ -197,11 +249,17 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
       const placeIdToUse = selectedPlaceId || defaultPlaceId;
       if (!placeIdToUse) {
         setLoading(false);
-        setErrorMessage('Please select a place for your post.');
+        setErrorMessage('Please select an existing place for your community post.');
         return;
       }
 
-      setUploadStatus('Creating experience record...');
+      if (existingPlacePost) {
+        setLoading(false);
+        setErrorMessage('You can only create 1 post/review per place. Click "Edit My Existing Post" above to update it.');
+        return;
+      }
+
+      setUploadStatus('Creating community post...');
       const res = await createPlacePost({
         place_id: placeIdToUse,
         title: title.trim(),
@@ -212,23 +270,28 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
 
       if (!res.success || !res.data) {
         setLoading(false);
+        if (res.existingPost) {
+          setExistingPlacePost(res.existingPost);
+        }
         setErrorMessage(res.error || 'Failed to submit post.');
         return;
       }
 
-      // If user provided device photos, upload them directly to Supabase storage
       if (selectedPhotos.length > 0) {
-        setUploadStatus(`Uploading ${selectedPhotos.length} photo(s)...`);
-        const filesToUpload = selectedPhotos.map((p) => p.file);
+        const filesToUpload = selectedPhotos.slice(0, MAX_POST_PHOTOS).map((p) => p.file);
+        setUploadStatus(`Uploading ${filesToUpload.length} photo(s)...`);
         try {
-          await uploadPlacePostImages(currentUser.id, res.data.id, filesToUpload);
+          const uploadRes = await uploadPlacePostImages(currentUser.id, res.data.id, filesToUpload);
+          if (!uploadRes.success && uploadRes.error) {
+            console.warn('Photo upload notice:', uploadRes.error);
+          }
         } catch (uploadErr) {
           console.warn('Photo upload warning:', uploadErr);
         }
       }
 
       setLoading(false);
-      setSuccessNotice('Experience shared! Your post is pending moderation and will appear once approved.');
+      setSuccessNotice('Experience shared! Your post starts as Pending and becomes publicly visible once approved.');
       setTimeout(() => {
         if (onPostSubmitted) onPostSubmitted();
         onClose();
@@ -250,11 +313,16 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
               <Sparkles className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-white tracking-tight">
-                {editingPost ? 'Edit Pending Post' : 'Share Place Experience'}
-              </h2>
+              <div className="flex items-center gap-2">
+                <h2 className="text-base font-bold text-white tracking-tight">
+                  {activeEditingPost ? 'Edit Community Post' : 'Create Community Post'}
+                </h2>
+                <span className="px-2 py-0.5 rounded-md bg-[#ccff00]/10 border border-[#ccff00]/25 text-[9px] font-black uppercase tracking-wider text-[#ccff00]">
+                  Scout Review
+                </span>
+              </div>
               <p className="text-[11px] text-zinc-400">
-                {defaultPlaceName ? defaultPlaceName : 'Contribute to the OUTERA community'}
+                {defaultPlaceName ? defaultPlaceName : 'Share your real experience or review about an existing place'}
               </p>
             </div>
           </div>
@@ -271,11 +339,36 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
 
         {/* Status Notice */}
         <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200">
-          <p className="font-semibold text-white">Community Review Policy:</p>
+          <p className="font-semibold text-white">Community Post Rules (1 Post Per Place):</p>
           <p className="text-zinc-300 mt-0.5">
-            Posts start in <span className="text-amber-300 font-bold">Pending</span> status. Once approved by an OUTERA moderator, your photos and review appear publicly on the feed and spot page.
+            Every registered user is an OUTERA Scout. New posts start as <span className="text-amber-300 font-bold">Pending</span> and become publicly visible once approved. Maximum 2 direct photos per post.
           </p>
         </div>
+
+        {/* Existing Post Warning (1 post per user per place rule) */}
+        {!activeEditingPost && existingPlacePost && (
+          <div className="p-3.5 rounded-xl bg-amber-500/15 border border-amber-500/30 space-y-2">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <div className="text-xs text-zinc-200">
+                <p className="font-bold text-amber-300">
+                  You already have a post for this place (Status: {existingPlacePost.status.toUpperCase()})
+                </p>
+                <p className="text-[11px] text-zinc-300 mt-0.5">
+                  Each Scout can create 1 community post/review per place. You can edit your existing post below:
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => handleSwitchToEditExisting(existingPlacePost)}
+              className="w-full h-8 rounded-lg bg-amber-400 hover:bg-amber-300 text-black font-extrabold text-[11px] flex items-center justify-center gap-1.5 transition-all"
+            >
+              <Edit3 className="w-3.5 h-3.5" />
+              <span>Edit My Existing Post ("{existingPlacePost.title}")</span>
+            </button>
+          </div>
+        )}
 
         {errorMessage && (
           <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-300 flex items-center gap-2">
@@ -293,10 +386,10 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
 
         <form onSubmit={handleSubmit} className="space-y-4">
           {/* Place Selection if not predetermined */}
-          {!defaultPlaceId && places.length > 0 && (
+          {!defaultPlaceId && !activeEditingPost && places.length > 0 && (
             <div>
               <label className="block text-[11px] font-semibold text-zinc-400 mb-1">
-                Select Place
+                Select Existing OUTERA Place
               </label>
               <select
                 value={selectedPlaceId}
@@ -328,31 +421,30 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
           {/* Content */}
           <div>
             <label className="block text-[11px] font-semibold text-zinc-400 mb-1">
-              Your Experience
+              Your Review / Experience
             </label>
             <textarea
               rows={4}
               required
               value={content}
               onChange={(e) => setContent(e.target.value)}
-              placeholder="What made this place special? How was the atmosphere, crowd, and pricing? Any tips for someone going for the first time?"
+              placeholder="What made this place special? How was the atmosphere, crowd, and pricing? Any honest tips for first-time visitors?"
               className="w-full p-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#ccff00] resize-none"
             />
           </div>
 
-          {/* Direct Photo Upload Section */}
-          {!editingPost && (
+          {/* Direct Photo Upload Section — MAXIMUM 2 PHOTOS */}
+          {!activeEditingPost && (
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <label className="block text-[11px] font-semibold text-zinc-400">
-                  Photos from Your Visit (Optional)
+                  Direct Photo Upload (Maximum 2 Photos)
                 </label>
-                <span className="text-[10px] text-zinc-500">
-                  {selectedPhotos.length}/5 photos
+                <span className="text-[10px] font-mono text-zinc-400">
+                  {selectedPhotos.length}/{MAX_POST_PHOTOS} photos
                 </span>
               </div>
 
-              {/* Hidden file input */}
               <input
                 ref={fileInputRef}
                 type="file"
@@ -362,35 +454,44 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
                 className="hidden"
               />
 
-              {/* Thumbnails preview */}
+              {/* Thumbnails preview with Primary / Secondary labels */}
               {selectedPhotos.length > 0 && (
-                <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 pt-1">
+                <div className="grid grid-cols-2 gap-3 pt-1">
                   {selectedPhotos.map((photo, idx) => (
                     <div
                       key={idx}
-                      className="relative aspect-square rounded-xl overflow-hidden bg-white/[0.04] border border-white/[0.1] group"
+                      className="relative aspect-[4/3] rounded-xl overflow-hidden bg-white/[0.04] border border-white/[0.12] group"
                     >
                       <img
                         src={photo.previewUrl}
                         alt={`Upload preview ${idx + 1}`}
                         className="w-full h-full object-cover"
                       />
+                      <span
+                        className={`absolute bottom-1.5 left-1.5 px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider ${
+                          idx === 0
+                            ? 'bg-[#ccff00] text-black'
+                            : 'bg-black/80 text-white border border-white/15'
+                        }`}
+                      >
+                        {idx === 0 ? 'Photo 1 · Primary / Cover' : 'Photo 2 · Secondary'}
+                      </span>
                       <button
                         type="button"
                         onClick={() => handleRemovePhoto(idx)}
-                        className="absolute top-1 right-1 p-1 rounded-full bg-black/80 hover:bg-red-500 text-white transition-colors"
+                        className="absolute top-1.5 right-1.5 p-1.5 rounded-full bg-black/80 hover:bg-red-500 text-white transition-colors"
                         title="Remove photo"
                         aria-label="Remove photo"
                       >
-                        <X className="w-3 h-3" />
+                        <X className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   ))}
                 </div>
               )}
 
-              {/* Upload trigger button */}
-              {selectedPhotos.length < 5 && (
+              {/* Upload trigger button or 3rd photo blocked notice */}
+              {selectedPhotos.length < MAX_POST_PHOTOS ? (
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
@@ -398,12 +499,25 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
                 >
                   <Camera className="w-4 h-4 text-[#ccff00] group-hover:scale-110 transition-transform" />
                   <span className="font-semibold">
-                    {selectedPhotos.length === 0 ? 'Select Device Photos' : 'Add More Photos'}
+                    {selectedPhotos.length === 0
+                      ? 'Upload Photo 1 (Primary Cover)'
+                      : 'Add Photo 2 (Secondary Image)'}
                   </span>
                   <span className="text-[10px] text-zinc-500 font-mono">
                     (JPG, PNG, WEBP · max 5MB)
                   </span>
                 </button>
+              ) : (
+                <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.08] text-[11px] text-zinc-400 flex items-center justify-between">
+                  <span>Maximum 2 photos selected (3rd photo blocked).</span>
+                  <button
+                    type="button"
+                    onClick={() => handleRemovePhoto(1)}
+                    className="text-[#ccff00] hover:underline font-bold"
+                  >
+                    Reselect
+                  </button>
+                </div>
               )}
 
               {photoError && (
@@ -412,9 +526,11 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
             </div>
           )}
 
-          {/* Rating */}
+          {/* Rating 1-5 */}
           <div>
-            <label className="block text-[11px] font-semibold text-zinc-400 mb-1.5">Rating</label>
+            <label className="block text-[11px] font-semibold text-zinc-400 mb-1.5">
+              Rating (1–5)
+            </label>
             <div className="flex items-center gap-2">
               {[1, 2, 3, 4, 5].map((star) => (
                 <button
@@ -444,7 +560,7 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
                 className="rounded border-white/20 bg-white/5 text-[#ccff00] focus:ring-[#ccff00]"
               />
               <span className="text-xs text-zinc-300">
-                I have personally visited this place (Verified visitor badge)
+                I have personally visited this place (Visited badge)
               </span>
             </label>
           </div>
@@ -453,7 +569,7 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
           <div className="pt-2">
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || checkingExisting || Boolean(!activeEditingPost && existingPlacePost)}
               className="w-full h-11 rounded-xl bg-[#ccff00] hover:bg-[#d8ff33] text-black font-extrabold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all disabled:opacity-50 active:scale-[0.99] shadow-lg shadow-[#ccff00]/10"
             >
               {loading ? (
@@ -465,7 +581,7 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
                 <>
                   <Send className="w-3.5 h-3.5" />
                   <span>
-                    {editingPost ? 'Update Pending Post' : 'Submit for Moderation'}
+                    {activeEditingPost ? 'Save Post Changes' : 'Submit Community Post'}
                   </span>
                 </>
               )}
@@ -476,3 +592,4 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
     </div>
   );
 };
+

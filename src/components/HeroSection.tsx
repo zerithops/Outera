@@ -1,16 +1,20 @@
 import React from 'react';
-import { Navigation, Sparkles } from 'lucide-react';
+import { Navigation, Sparkles, Plus, MessageSquarePlus } from 'lucide-react';
 
 interface HeroSectionProps {
   onExploreNearMe: () => void;
   onSurpriseMe: () => void;
   currentNeighborhood: string;
+  onSuggestPlace?: () => void;
+  onCreatePost?: () => void;
 }
 
 export const HeroSection: React.FC<HeroSectionProps> = ({
   onExploreNearMe,
   onSurpriseMe,
   currentNeighborhood,
+  onSuggestPlace,
+  onCreatePost,
 }) => {
   return (
     <section className="relative px-4 sm:px-6 pt-7 pb-6 sm:pt-12 sm:pb-8 flex flex-col items-start overflow-hidden">
@@ -41,7 +45,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
         Discover places, experiences and things to do around you. Not generic ratings — real community vibes.
       </p>
 
-      {/* CTAs */}
+      {/* Primary CTAs */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 mt-6 w-full sm:w-auto">
         <button
           type="button"
@@ -61,6 +65,36 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
           <span>Surprise Me</span>
         </button>
       </div>
+
+      {/* Separate Scout Contribution Actions */}
+      {(onSuggestPlace || onCreatePost) && (
+        <div className="flex flex-wrap items-center gap-2.5 mt-4 pt-3 border-t border-white/[0.06] w-full sm:w-auto">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 mr-1">
+            Scout Actions:
+          </span>
+          {onCreatePost && (
+            <button
+              type="button"
+              onClick={onCreatePost}
+              className="h-8 px-3 rounded-lg bg-white/[0.04] hover:bg-white/[0.09] border border-white/[0.1] text-zinc-200 hover:text-white text-xs font-bold flex items-center gap-1.5 transition-all"
+            >
+              <MessageSquarePlus className="w-3.5 h-3.5 text-[#ccff00]" />
+              <span>Create Community Post</span>
+            </button>
+          )}
+          {onSuggestPlace && (
+            <button
+              type="button"
+              onClick={onSuggestPlace}
+              className="h-8 px-3 rounded-lg bg-[#ccff00]/10 hover:bg-[#ccff00]/20 border border-[#ccff00]/30 text-[#ccff00] text-xs font-extrabold flex items-center gap-1.5 transition-all"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>+ Suggest a Place</span>
+            </button>
+          )}
+        </div>
+      )}
     </section>
   );
 };
+

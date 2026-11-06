@@ -413,15 +413,17 @@ export function getAugmentedPlaces(basePlaces: Place[] = []): Place[] {
       const totalResponses = mostly + partly + notReally;
       const mostlyRatio = totalResponses > 0 ? mostly / totalResponses : 1;
 
-      let confidence: 'High' | 'Mixed' | 'Low' | 'Insufficient Data' = 'High';
-      if (totalResponses < 3) {
+      let confidence: CommunityConfidenceLevel = 'Insufficient Data';
+      if (totalResponses === 0) {
         confidence = 'Insufficient Data';
-      } else if (mostlyRatio >= 0.75) {
+      } else if (totalResponses < 3) {
+        confidence = 'Limited';
+      } else if (mostlyRatio >= 0.75 && totalResponses >= 5) {
         confidence = 'High';
-      } else if (mostlyRatio >= 0.45) {
-        confidence = 'Mixed';
+      } else if (mostlyRatio >= 0.5) {
+        confidence = 'Medium';
       } else {
-        confidence = 'Low';
+        confidence = 'Limited';
       }
 
       const commonDifferences: { reason: DifferenceReason; count: number }[] = [];
@@ -445,6 +447,7 @@ export function getAugmentedPlaces(basePlaces: Place[] = []): Place[] {
     const isUserVisited = visitedPlaceIds.includes(place.id);
     const effectiveVerifiedCount = place.verifiedVisitorsCount + (isUserVisited ? 1 : 0);
 
+    const totalReportsAndPosts = augmentedExperienceReports.length + (place.approvedPostsCount || 0);
     const totalVerifications = augmentedExperienceReports.reduce(
       (sum, r) => sum + r.verification.totalResponses,
       0
@@ -455,16 +458,21 @@ export function getAugmentedPlaces(basePlaces: Place[] = []): Place[] {
     );
 
     let communityConfidence: CommunityConfidenceLevel = place.communityConfidence;
-    if (totalVerifications > 10) {
-      const agreementRate = mostlyTotal / totalVerifications;
-      if (agreementRate >= 0.8) communityConfidence = 'High';
-      else if (agreementRate >= 0.5) communityConfidence = 'Mixed';
-      else communityConfidence = 'Low';
+    if (totalReportsAndPosts === 0 && effectiveVerifiedCount === 0) {
+      communityConfidence = 'Insufficient Data';
+    } else if (totalReportsAndPosts >= 4 || (totalReportsAndPosts >= 2 && effectiveVerifiedCount >= 3)) {
+      const agreementRate = totalVerifications > 0 ? mostlyTotal / totalVerifications : 0.85;
+      communityConfidence = agreementRate >= 0.75 ? 'High' : 'Medium';
+    } else if (totalReportsAndPosts >= 2 || effectiveVerifiedCount >= 2) {
+      communityConfidence = 'Medium';
+    } else {
+      communityConfidence = 'Limited';
     }
 
     return {
       ...place,
       verifiedVisitorsCount: effectiveVerifiedCount,
+      totalReports: totalReportsAndPosts,
       communityConfidence,
       experienceReports: augmentedExperienceReports,
     };

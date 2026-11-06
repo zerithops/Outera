@@ -5,6 +5,7 @@ export interface DistrictInfo {
   division: DivisionName;
   coords: Coordinates;
   popularAreas: string[];
+  upazilas?: { name: string }[];
 }
 
 export interface DivisionInfo {

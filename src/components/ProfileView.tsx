@@ -10,11 +10,10 @@ import {
   Shield,
   Plus,
   Trash2,
-  AlertCircle,
   Star,
   MapPin,
-  Clock,
   Sparkles,
+  ThumbsUp,
 } from 'lucide-react';
 import { UserLocation } from '../types/outera';
 import {
@@ -35,8 +34,10 @@ import {
   subscribeToAuthChanges,
   isUsernameAvailable,
   fetchUserPlacePosts,
+  fetchUserPlaceSuggestions,
   deleteUserPost,
   PlacePost,
+  PlaceSuggestion,
 } from '../services/supabase';
 import { AdminDashboard } from './AdminDashboard';
 import { CreatePostModal } from './CreatePostModal';
@@ -48,11 +49,13 @@ interface ProfileViewProps {
   reportCount: number;
   onOpenAuthModal?: () => void;
   onSelectPost?: (post: PlacePost) => void;
+  onOpenSuggestionModal?: () => void;
 }
 
 export const ProfileView: React.FC<ProfileViewProps> = ({
   onOpenAuthModal,
   onSelectPost,
+  onOpenSuggestionModal,
 }) => {
   const [authUser, setAuthUser] = useState<any>(null);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -64,12 +67,19 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     saved: 0,
     visited: 0,
     verifications: 0,
+    placesSuggested: 0,
+    communityPosts: 0,
+    helpfulReports: 0,
   });
 
-  const [activeTab, setActiveTab] = useState<'preferences' | 'visited' | 'activity' | 'posts' | 'admin'>('preferences');
+  const [activeTab, setActiveTab] = useState<
+    'preferences' | 'posts' | 'suggestions' | 'visited' | 'activity' | 'admin'
+  >('posts');
   const [activities, setActivities] = useState<any[]>([]);
   const [userPosts, setUserPosts] = useState<PlacePost[]>([]);
+  const [userSuggestions, setUserSuggestions] = useState<PlaceSuggestion[]>([]);
   const [loadingPosts, setLoadingPosts] = useState(false);
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
 
   // Edit Profile Modal
   const [showEditModal, setShowEditModal] = useState(false);
@@ -96,6 +106,18 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     }
   }, []);
 
+  const loadUserSuggestions = useCallback(async (userId: string) => {
+    setLoadingSuggestions(true);
+    try {
+      const sugs = await fetchUserPlaceSuggestions(userId);
+      setUserSuggestions(sugs || []);
+    } catch (err) {
+      console.warn('Failed to load user suggestions:', err);
+    } finally {
+      setLoadingSuggestions(false);
+    }
+  }, []);
+
   // Load auth state, genuine user profile, and real stats
   useEffect(() => {
     let isMounted = true;
@@ -103,18 +125,26 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     const loadUserData = async (user: any) => {
       setAuthUser(user);
       if (user) {
-        // Fast-load from per-user cache to avoid UI flicker
         const cached = getCachedUserProfile(user.id);
         if (cached && isMounted) {
           setProfile(cached);
         }
 
-        // Fetch or ensure genuine DB profile strictly for user.id
         const dbProfile = await ensureUserProfile(user);
         if (isMounted && dbProfile) {
           const loadedProfile: UserProfile = {
-            name: dbProfile.display_name || user.user_metadata?.display_name || user.user_metadata?.name || user.email?.split('@')[0] || 'Scout',
-            handle: `@${dbProfile.username || user.user_metadata?.username || user.email?.split('@')[0] || 'scout'}`,
+            name:
+              dbProfile.display_name ||
+              user.user_metadata?.display_name ||
+              user.user_metadata?.name ||
+              user.email?.split('@')[0] ||
+              'Scout',
+            handle: `@${
+              dbProfile.username ||
+              user.user_metadata?.username ||
+              user.email?.split('@')[0] ||
+              'scout'
+            }`,
             vibePreference: cached?.vibePreference || 'Chill & Social',
             budgetPreference: cached?.budgetPreference || 'Under ৳500',
             avatarSeed: cached?.avatarSeed || 'scout-1',
@@ -123,25 +153,25 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           setProfile(loadedProfile);
           setCachedUserProfile(user.id, loadedProfile);
 
-          // Check if admin from database role
           const hasAdminRole = dbProfile.role === 'admin';
           setIsAdmin(hasAdminRole);
         }
 
-        // Fetch genuine stats from Supabase
+        // Fetch genuine stats from Supabase (never hardcoded)
         const realStats = await fetchUserRealStats(user.id);
         if (isMounted) {
           setStats(realStats);
         }
 
-        // Load user's own posts
+        // Load user's own posts and place suggestions
         loadUserPosts(user.id);
+        loadUserSuggestions(user.id);
       } else {
-        // Guest user: starts with genuine 0 across all metrics and neutral guest state
         if (isMounted) {
           setProfile(EMPTY_GUEST_PROFILE);
           setIsAdmin(false);
           setUserPosts([]);
+          setUserSuggestions([]);
           setStats({
             explored: 0,
             shared: 0,
@@ -149,6 +179,9 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             saved: 0,
             visited: 0,
             verifications: 0,
+            placesSuggested: 0,
+            communityPosts: 0,
+            helpfulReports: 0,
           });
         }
       }
@@ -170,7 +203,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       isMounted = false;
       unsubscribe();
     };
-  }, [loadUserPosts]);
+  }, [loadUserPosts, loadUserSuggestions]);
 
   const handleSignOut = async () => {
     const userId = authUser?.id;
@@ -179,6 +212,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     setAuthUser(null);
     setIsAdmin(false);
     setUserPosts([]);
+    setUserSuggestions([]);
     setProfile(EMPTY_GUEST_PROFILE);
     setActiveTab('preferences');
     setStats({
@@ -188,11 +222,19 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       saved: 0,
       visited: 0,
       verifications: 0,
+      placesSuggested: 0,
+      communityPosts: 0,
+      helpfulReports: 0,
     });
   };
 
   const handleOpenEdit = () => {
-    setEditName(profile.name || authUser?.user_metadata?.display_name || authUser?.user_metadata?.name || '');
+    setEditName(
+      profile.name ||
+        authUser?.user_metadata?.display_name ||
+        authUser?.user_metadata?.name ||
+        ''
+    );
     setEditHandle(profile.handle.replace(/^@/, ''));
     setEditBio(profile.bio || '');
     setEditAvatarSeed(profile.avatarSeed || 'scout-1');
@@ -221,7 +263,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       return;
     }
 
-    // Check availability if username was changed
     const currentUsername = profile.handle.replace(/^@/, '').toLowerCase();
     if (cleanUsername !== currentUsername) {
       const available = await isUsernameAvailable(cleanUsername, authUser.id);
@@ -260,6 +301,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     const res = await deleteUserPost(postId);
     if (res.success && authUser) {
       loadUserPosts(authUser.id);
+      fetchUserRealStats(authUser.id).then(setStats);
     }
   };
 
@@ -283,13 +325,12 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const vibeOptions = ['Chill & Social', 'Quiet & Focused', 'High Energy & Active', 'Spontaneous'];
   const budgetOptions = ['Under ৳300', 'Under ৳500', 'Under ৳1,000', 'No Limit'];
 
-  // If Admin Dashboard tab is chosen, display it full width
   if (activeTab === 'admin' && isAdmin) {
-    return <AdminDashboard onClose={() => setActiveTab('preferences')} />;
+    return <AdminDashboard onClose={() => setActiveTab('posts')} />;
   }
 
   return (
-    <div className="w-full px-4 sm:px-6 py-6 max-w-xl mx-auto space-y-6">
+    <div className="w-full px-4 sm:px-6 py-6 max-w-2xl mx-auto space-y-6">
       {/* Header Profile Lockup */}
       <div className="p-5 rounded-2xl bg-[#111317] border border-white/[0.08] flex items-center justify-between gap-4">
         <div className="flex items-center gap-4 min-w-0">
@@ -297,35 +338,35 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             {profile.name ? profile.name.slice(0, 2) : 'OUT'}
           </div>
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-base sm:text-lg font-bold text-white tracking-tight truncate">
-                {profile.name || (authUser ? 'OUTERA Scout' : 'Guest Scout')}
+                {profile.name || (authUser ? 'OUTERA Scout' : 'Guest Visitor')}
               </h1>
               {isAdmin ? (
                 <span className="text-[10px] font-extrabold text-[#ccff00] bg-[#ccff00]/15 px-2 py-0.5 rounded-full border border-[#ccff00]/30 uppercase shrink-0 flex items-center gap-1">
                   <Shield className="w-2.5 h-2.5" />
-                  <span>Admin</span>
+                  <span>Admin · Scout</span>
                 </span>
               ) : authUser ? (
-                <span className="text-[10px] font-bold text-zinc-300 bg-white/[0.06] px-2 py-0.5 rounded-full border border-white/[0.1] uppercase shrink-0">
-                  Scout
+                <span className="text-[10px] font-extrabold text-[#ccff00] bg-[#ccff00]/10 px-2 py-0.5 rounded-full border border-[#ccff00]/30 uppercase shrink-0">
+                  ✓ Active Scout
                 </span>
               ) : null}
             </div>
             <p className="text-xs text-zinc-400 mt-0.5 truncate font-mono">
-              {profile.handle || authUser?.email || 'Sign in to create your scout handle'}
+              {profile.handle || authUser?.email || 'Every registered user is automatically an OUTERA Scout'}
             </p>
           </div>
         </div>
 
-        {/* Action button */}
+        {/* Action buttons */}
         <div className="shrink-0 flex items-center gap-2">
           {authUser ? (
             <>
               <button
                 type="button"
                 onClick={handleOpenEdit}
-                className="p-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] active:scale-95 border border-white/[0.08] text-zinc-300 hover:text-white transition-all"
+                className="p-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] active:scale-95 border border-white/[0.08] text-zinc-300 hover:text-white transition-all cursor-pointer"
                 title="Edit profile"
                 aria-label="Edit profile"
               >
@@ -334,7 +375,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               <button
                 type="button"
                 onClick={handleSignOut}
-                className="px-3 py-1.5 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] active:scale-95 border border-white/[0.08] text-xs font-semibold text-zinc-300 hover:text-white flex items-center gap-1.5 transition-all"
+                className="px-3 py-1.5 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] active:scale-95 border border-white/[0.08] text-xs font-semibold text-zinc-300 hover:text-white flex items-center gap-1.5 transition-all cursor-pointer"
               >
                 <LogOut className="w-3.5 h-3.5 text-red-400" />
                 <span className="hidden sm:inline">Sign Out</span>
@@ -344,67 +385,88 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             <button
               type="button"
               onClick={onOpenAuthModal}
-              className="px-4 py-2 rounded-xl bg-[#ccff00] hover:bg-[#d8ff33] active:scale-95 text-black text-xs font-extrabold flex items-center gap-1.5 transition-all shadow-md shadow-[#ccff00]/10"
+              className="px-4 py-2 rounded-xl bg-[#ccff00] hover:bg-[#d8ff33] active:scale-95 text-black text-xs font-extrabold flex items-center gap-1.5 transition-all shadow-md shadow-[#ccff00]/10 cursor-pointer"
             >
               <LogIn className="w-3.5 h-3.5" />
-              <span>Join OUTERA</span>
+              <span>Join as Scout</span>
             </button>
           )}
         </div>
       </div>
 
-      {/* Guest Prompt Banner if not logged in */}
-      {!authUser && (
-        <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/[0.06] flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-          <div>
-            <p className="font-bold text-white">Create an account to build your scout reputation</p>
-            <p className="text-zinc-400 mt-0.5">
-              Save favorite hangouts, share real crowd reports, and contribute to peer verification.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onOpenAuthModal}
-            className="px-3 py-1.5 rounded-xl bg-[#ccff00] text-black font-extrabold text-xs self-start sm:self-auto shrink-0 hover:bg-[#d8ff33] transition-all"
-          >
-            Sign In / Register
-          </button>
-        </div>
-      )}
+      {/* Two Separate Scout Actions Bar: Create Community Post vs + Suggest a Place */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <button
+          type="button"
+          onClick={() => {
+            if (!authUser) {
+              if (onOpenAuthModal) onOpenAuthModal();
+              return;
+            }
+            setEditingPost(null);
+            setShowCreatePostModal(true);
+          }}
+          className="h-11 px-4 rounded-2xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.1] text-white font-extrabold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer"
+        >
+          <MessageSquareHeart className="w-4 h-4 text-[#ccff00]" />
+          <span>Create Community Post</span>
+        </button>
 
-      {/* Genuine Contribution Stats (Starts at 0 for new accounts, never fake values) */}
+        <button
+          type="button"
+          onClick={() => {
+            if (!authUser) {
+              if (onOpenAuthModal) onOpenAuthModal();
+              return;
+            }
+            if (onOpenSuggestionModal) onOpenSuggestionModal();
+          }}
+          className="h-11 px-4 rounded-2xl bg-[#ccff00] hover:bg-[#d8ff33] text-black font-extrabold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all shadow-lg shadow-[#ccff00]/10 cursor-pointer"
+        >
+          <Sparkles className="w-4 h-4" />
+          <span>+ Suggest a Place</span>
+        </button>
+      </div>
+
+      {/* SECTION 13: PROFILE SCOUT STATS (Real counts only, never hardcoded) */}
       <div className="grid grid-cols-3 gap-2 sm:gap-3">
-        <div className="p-3 sm:p-4 rounded-xl bg-white/[0.03] border border-white/[0.06] text-center">
+        <div
+          onClick={() => setActiveTab('suggestions')}
+          className="p-3 sm:p-4 rounded-2xl bg-white/[0.03] border border-white/[0.06] hover:border-[#ccff00]/30 transition-all text-center cursor-pointer"
+        >
           <div className="flex items-center justify-center gap-1 text-[11px] text-zinc-400 mb-1">
-            <Compass className="w-3.5 h-3.5 text-[#ccff00]" />
-            <span>Explored</span>
+            <Sparkles className="w-3.5 h-3.5 text-[#ccff00]" />
+            <span>Places Suggested</span>
           </div>
           <p className="text-xl sm:text-2xl font-extrabold text-white font-mono tabular-nums">
-            {stats.explored}
+            {userSuggestions.length || stats.placesSuggested}
           </p>
-          <p className="text-[10px] text-zinc-500 mt-0.5">places visited</p>
+          <p className="text-[10px] text-zinc-500 mt-0.5">scout proposals</p>
         </div>
 
-        <div className="p-3 sm:p-4 rounded-xl bg-white/[0.03] border border-white/[0.06] text-center">
+        <div
+          onClick={() => setActiveTab('posts')}
+          className="p-3 sm:p-4 rounded-2xl bg-white/[0.03] border border-white/[0.06] hover:border-[#ccff00]/30 transition-all text-center cursor-pointer"
+        >
           <div className="flex items-center justify-center gap-1 text-[11px] text-zinc-400 mb-1">
             <MessageSquareHeart className="w-3.5 h-3.5 text-[#ccff00]" />
-            <span>Shared</span>
+            <span>Community Posts</span>
           </div>
           <p className="text-xl sm:text-2xl font-extrabold text-white font-mono tabular-nums">
-            {userPosts.length || stats.shared}
+            {userPosts.length || stats.communityPosts}
           </p>
-          <p className="text-[10px] text-zinc-500 mt-0.5">experiences</p>
+          <p className="text-[10px] text-zinc-500 mt-0.5">place reviews</p>
         </div>
 
-        <div className="p-3 sm:p-4 rounded-xl bg-white/[0.03] border border-white/[0.06] text-center">
+        <div className="p-3 sm:p-4 rounded-2xl bg-white/[0.03] border border-white/[0.06] text-center">
           <div className="flex items-center justify-center gap-1 text-[11px] text-zinc-400 mb-1">
-            <CheckCircle2 className="w-3.5 h-3.5 text-[#ccff00]" />
-            <span>Confirmed</span>
+            <ThumbsUp className="w-3.5 h-3.5 text-[#ccff00]" />
+            <span>Helpful Reports</span>
           </div>
           <p className="text-xl sm:text-2xl font-extrabold text-white font-mono tabular-nums">
-            {stats.confirmed}
+            {stats.helpfulReports}
           </p>
-          <p className="text-[10px] text-zinc-500 mt-0.5">verifications</p>
+          <p className="text-[10px] text-zinc-500 mt-0.5">helpful & verified</p>
         </div>
       </div>
 
@@ -418,14 +480,14 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-xs font-black text-white uppercase tracking-wider">
-                  Admin System
+                  Admin Moderation Dashboard
                 </span>
                 <span className="text-[10px] font-bold text-black bg-[#ccff00] px-1.5 py-0.2 rounded-full">
-                  Staff
+                  Admin
                 </span>
               </div>
               <p className="text-[11px] text-zinc-400 mt-0.5">
-                Review pending posts, manage public visibility & moderation actions.
+                Moderate Community Posts, Place Suggestions, Local Transport & Fares.
               </p>
             </div>
           </div>
@@ -433,7 +495,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           <button
             type="button"
             onClick={() => setActiveTab('admin')}
-            className="h-9 px-3.5 rounded-xl bg-[#ccff00] hover:bg-[#d8ff33] text-black font-extrabold text-xs transition-all shrink-0 shadow-md shadow-[#ccff00]/10"
+            className="h-9 px-3.5 rounded-xl bg-[#ccff00] hover:bg-[#d8ff33] text-black font-extrabold text-xs transition-all shrink-0 shadow-md shadow-[#ccff00]/10 cursor-pointer"
           >
             Open Dashboard
           </button>
@@ -444,8 +506,48 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       <div className="flex rounded-xl bg-white/[0.03] p-1 border border-white/[0.06] overflow-x-auto no-scrollbar">
         <button
           type="button"
+          onClick={() => setActiveTab('posts')}
+          className={`flex-1 min-w-[95px] py-2 px-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+            activeTab === 'posts'
+              ? 'bg-[#ccff00] text-black font-extrabold'
+              : 'text-zinc-400 hover:text-white'
+          }`}
+        >
+          <span>My Posts</span>
+          <span
+            className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+              activeTab === 'posts' ? 'bg-black text-[#ccff00]' : 'bg-white/[0.08] text-zinc-300'
+            }`}
+          >
+            {userPosts.length}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('suggestions')}
+          className={`flex-1 min-w-[115px] py-2 px-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+            activeTab === 'suggestions'
+              ? 'bg-[#ccff00] text-black font-extrabold'
+              : 'text-zinc-400 hover:text-white'
+          }`}
+        >
+          <span>My Suggestions</span>
+          <span
+            className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+              activeTab === 'suggestions'
+                ? 'bg-black text-[#ccff00]'
+                : 'bg-white/[0.08] text-zinc-300'
+            }`}
+          >
+            {userSuggestions.length}
+          </span>
+        </button>
+
+        <button
+          type="button"
           onClick={() => setActiveTab('preferences')}
-          className={`flex-1 min-w-[85px] py-2 text-xs font-bold rounded-lg transition-all ${
+          className={`flex-1 min-w-[85px] py-2 px-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
             activeTab === 'preferences'
               ? 'bg-[#ccff00] text-black font-extrabold'
               : 'text-zinc-400 hover:text-white'
@@ -456,29 +558,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
         <button
           type="button"
-          onClick={() => setActiveTab('posts')}
-          className={`flex-1 min-w-[85px] py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
-            activeTab === 'posts'
-              ? 'bg-[#ccff00] text-black font-extrabold'
-              : 'text-zinc-400 hover:text-white'
-          }`}
-        >
-          <span>My Posts</span>
-          {userPosts.length > 0 && (
-            <span
-              className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
-                activeTab === 'posts' ? 'bg-black text-[#ccff00]' : 'bg-white/[0.08] text-zinc-300'
-              }`}
-            >
-              {userPosts.length}
-            </span>
-          )}
-        </button>
-
-        <button
-          type="button"
           onClick={() => setActiveTab('visited')}
-          className={`flex-1 min-w-[85px] py-2 text-xs font-bold rounded-lg transition-all ${
+          className={`flex-1 min-w-[85px] py-2 px-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
             activeTab === 'visited'
               ? 'bg-[#ccff00] text-black font-extrabold'
               : 'text-zinc-400 hover:text-white'
@@ -486,44 +567,18 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         >
           Visited ({stats.visited})
         </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('activity')}
-          className={`flex-1 min-w-[85px] py-2 text-xs font-bold rounded-lg transition-all ${
-            activeTab === 'activity'
-              ? 'bg-[#ccff00] text-black font-extrabold'
-              : 'text-zinc-400 hover:text-white'
-          }`}
-        >
-          Activity
-        </button>
       </div>
 
-      {/* Tab: My Posts (Normal user post lifecycle) */}
+      {/* Tab: My Posts */}
       {activeTab === 'posts' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-sm font-bold text-white tracking-tight">Your Community Posts</h2>
               <p className="text-[11px] text-zinc-400">
-                Track status from pending review to public community visibility.
+                1 review per place · Up to 2 photos · Approved posts are publicly visible.
               </p>
             </div>
-
-            {authUser && (
-              <button
-                type="button"
-                onClick={() => {
-                  setEditingPost(null);
-                  setShowCreatePostModal(true);
-                }}
-                className="h-8 px-3 rounded-xl bg-[#ccff00] hover:bg-[#d8ff33] text-black font-extrabold text-xs flex items-center gap-1.5 transition-all shadow-md shadow-[#ccff00]/10 shrink-0"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Create Post</span>
-              </button>
-            )}
           </div>
 
           {loadingPosts ? (
@@ -531,58 +586,18 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               Loading your posts...
             </div>
           ) : userPosts.length === 0 ? (
-            <div className="py-12 px-4 rounded-2xl bg-white/[0.02] border border-white/[0.06] text-center max-w-sm mx-auto space-y-3">
-              <Sparkles className="w-7 h-7 text-zinc-500 mx-auto" />
+            <div className="py-10 px-4 rounded-2xl bg-white/[0.02] border border-white/[0.06] text-center max-w-sm mx-auto space-y-3">
+              <MessageSquareHeart className="w-7 h-7 text-zinc-500 mx-auto" />
               <div>
-                <p className="text-sm font-bold text-white">No posts shared yet</p>
+                <p className="text-sm font-bold text-white">No community posts yet</p>
                 <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
-                  Visited a spot in Bangladesh? Share your experience, spend, and vibes with the community.
+                  Share an honest review and up to 2 photos for any existing place on OUTERA.
                 </p>
               </div>
-              {authUser ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEditingPost(null);
-                    setShowCreatePostModal(true);
-                  }}
-                  className="h-9 px-4 rounded-xl bg-[#ccff00] text-black text-xs font-extrabold inline-flex items-center gap-1.5"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Share your first post</span>
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={onOpenAuthModal}
-                  className="h-9 px-4 rounded-xl bg-[#ccff00] text-black text-xs font-extrabold inline-flex items-center gap-1.5"
-                >
-                  <LogIn className="w-3.5 h-3.5" />
-                  <span>Sign in to post</span>
-                </button>
-              )}
             </div>
           ) : (
             <div className="space-y-3">
-              <div className="flex items-center justify-between pb-1">
-                <span className="text-xs font-bold uppercase tracking-wider text-zinc-400">
-                  My Posts ({userPosts.length})
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEditingPost(null);
-                    setShowCreatePostModal(true);
-                  }}
-                  className="h-8 px-3 rounded-xl bg-[#ccff00] text-black font-extrabold text-xs flex items-center gap-1.5 shadow-sm active:scale-95 transition-all"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Create Post</span>
-                </button>
-              </div>
-
               {userPosts.map((post) => {
-                const isPending = post.status === 'pending';
                 const statusStyles: Record<string, string> = {
                   pending: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
                   approved: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
@@ -610,7 +625,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                       <div className="flex items-center gap-1.5 shrink-0">
                         {post.images && post.images.length > 0 && (
                           <span className="text-[10px] font-bold text-purple-300 bg-purple-500/10 px-2 py-0.5 rounded-full border border-purple-500/20">
-                            📷 {post.images.length}
+                            📷 {post.images.length}/2
                           </span>
                         )}
                         <span
@@ -626,50 +641,48 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                     <p className="text-xs text-zinc-300 leading-relaxed line-clamp-2">{post.content}</p>
 
                     {post.images && post.images.length > 0 && (
-                      <div className="flex items-center gap-1.5 pt-0.5 overflow-x-auto no-scrollbar">
-                        {post.images.slice(0, 4).map((img, i) => (
+                      <div className="flex items-center gap-2 pt-0.5">
+                        {post.images.slice(0, 2).map((img, i) => (
                           <img
                             key={i}
                             src={img}
-                            alt="Photo thumbnail"
-                            className="w-12 h-12 rounded-lg object-cover border border-white/[0.06]"
+                            alt="Post photo"
+                            className="w-16 h-12 rounded-lg object-cover border border-white/[0.08]"
                           />
                         ))}
-                        {post.images.length > 4 && (
-                          <span className="text-[11px] text-zinc-400 font-medium self-center">
-                            +{post.images.length - 4} more
-                          </span>
-                        )}
                       </div>
                     )}
 
                     <div className="flex items-center justify-between text-xs text-zinc-400 pt-1">
-                      <div className="flex items-center gap-1 text-amber-400">
-                        <Star className="w-3.5 h-3.5 fill-amber-400" />
-                        <span className="font-mono font-bold text-white">{post.rating}/5</span>
+                      <div className="flex items-center gap-2">
+                        <span className="flex items-center gap-1 text-amber-400">
+                          <Star className="w-3.5 h-3.5 fill-amber-400" />
+                          <span className="font-mono font-bold text-white">{post.rating}/5</span>
+                        </span>
+                        <span className="text-[11px] text-zinc-500">
+                          · Helpful: {post.helpful_count || 0}
+                        </span>
                       </div>
 
                       <div className="flex items-center gap-2">
-                        {isPending && (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setEditingPost(post);
-                              setShowCreatePostModal(true);
-                            }}
-                            className="text-xs font-bold text-[#ccff00] hover:underline px-1 py-0.5"
-                          >
-                            Edit
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditingPost(post);
+                            setShowCreatePostModal(true);
+                          }}
+                          className="text-xs font-bold text-[#ccff00] hover:underline px-1.5 py-0.5 cursor-pointer"
+                        >
+                          Edit
+                        </button>
                         <button
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
                             handleDeletePost(post.id);
                           }}
-                          className="text-xs text-red-400 hover:text-red-300 p-1 rounded hover:bg-red-500/10 transition-colors"
+                          className="text-xs text-red-400 hover:text-red-300 p-1 rounded hover:bg-red-500/10 transition-colors cursor-pointer"
                           title="Delete post"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -677,7 +690,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                       </div>
                     </div>
 
-                    {/* Moderation note if rejected or hidden */}
                     {post.moderation_note && (
                       <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200">
                         <span className="font-bold">Moderator Feedback:</span> {post.moderation_note}
@@ -691,10 +703,125 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         </div>
       )}
 
+      {/* Tab: My Place Suggestions (Status tracking in Profile) */}
+      {activeTab === 'suggestions' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-bold text-white tracking-tight">Your Place Suggestions</h2>
+              <p className="text-[11px] text-zinc-400">
+                Track your proposed places (`pending`, `approved`, `rejected`, `hidden`). Approved places go live with your Scout attribution.
+              </p>
+            </div>
+          </div>
+
+          {loadingSuggestions ? (
+            <div className="py-12 text-center text-xs text-zinc-400 font-mono">
+              Loading your place suggestions...
+            </div>
+          ) : userSuggestions.length === 0 ? (
+            <div className="py-10 px-4 rounded-2xl bg-white/[0.02] border border-white/[0.06] text-center max-w-sm mx-auto space-y-3">
+              <Sparkles className="w-7 h-7 text-[#ccff00] mx-auto" />
+              <div>
+                <p className="text-sm font-bold text-white">No places suggested yet</p>
+                <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
+                  Know a great spot that isn't on OUTERA yet? Propose it and earn Scout attribution when approved!
+                </p>
+              </div>
+              {onOpenSuggestionModal && (
+                <button
+                  type="button"
+                  onClick={onOpenSuggestionModal}
+                  className="h-9 px-4 rounded-xl bg-[#ccff00] text-black text-xs font-extrabold inline-flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>+ Suggest a Place</span>
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {userSuggestions.map((sug) => {
+                const statusStyles: Record<string, string> = {
+                  pending: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
+                  approved: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
+                  rejected: 'bg-rose-500/15 text-rose-300 border-rose-500/30',
+                  hidden: 'bg-zinc-800 text-zinc-400 border-zinc-700',
+                };
+
+                return (
+                  <div
+                    key={sug.id}
+                    className="p-4 rounded-2xl bg-[#111317] border border-white/[0.08] space-y-2.5"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h3 className="text-sm font-black text-white">{sug.name}</h3>
+                          {sug.category && (
+                            <span className="text-[10px] font-bold text-[#ccff00] bg-[#ccff00]/10 px-2 py-0.5 rounded-full border border-[#ccff00]/20">
+                              {sug.category}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-zinc-400 mt-0.5">
+                          {[sug.area, sug.upazila, sug.district, sug.division]
+                            .filter(Boolean)
+                            .join(', ') || sug.address}
+                        </p>
+                      </div>
+
+                      <span
+                        className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full border shrink-0 ${
+                          statusStyles[sug.status] || statusStyles.pending
+                        }`}
+                      >
+                        {sug.status}
+                      </span>
+                    </div>
+
+                    {(sug.short_description || sug.why_worth_visiting) && (
+                      <p className="text-xs text-zinc-300 line-clamp-2">
+                        {sug.short_description || sug.why_worth_visiting}
+                      </p>
+                    )}
+
+                    {sug.images && sug.images.length > 0 && (
+                      <div className="flex items-center gap-2">
+                        {sug.images.slice(0, 2).map((imgUrl, idx) => (
+                          <img
+                            key={idx}
+                            src={imgUrl}
+                            alt={`${sug.name} ${idx + 1}`}
+                            className="w-16 h-12 rounded-lg object-cover border border-white/10"
+                          />
+                        ))}
+                      </div>
+                    )}
+
+                    {sug.moderation_note && (
+                      <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200">
+                        <span className="font-bold">Admin Moderation Note:</span> {sug.moderation_note}
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between text-[10px] text-zinc-500 pt-1 border-t border-white/[0.05] font-mono">
+                      <span>Submitted {new Date(sug.created_at).toLocaleDateString()}</span>
+                      {sug.status === 'approved' && (
+                        <span className="text-emerald-400 font-bold">✓ Live on OUTERA with Scout Attribution</span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Tab: Preferences */}
       {activeTab === 'preferences' && (
         <div className="space-y-5">
-          {/* Vibe Preference */}
           <div className="space-y-2">
             <span className="text-xs font-bold text-white block">Default Discovery Vibe</span>
             <div className="grid grid-cols-2 gap-2">
@@ -703,7 +830,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                   key={v}
                   type="button"
                   onClick={() => handleUpdateVibe(v)}
-                  className={`p-3 rounded-xl border text-xs font-medium text-left transition-all ${
+                  className={`p-3 rounded-xl border text-xs font-medium text-left transition-all cursor-pointer ${
                     profile.vibePreference === v
                       ? 'bg-[#ccff00]/10 border-[#ccff00] text-white font-bold'
                       : 'bg-white/[0.02] border-white/[0.06] text-zinc-400 hover:text-white'
@@ -715,7 +842,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             </div>
           </div>
 
-          {/* Budget Preference */}
           <div className="space-y-2">
             <span className="text-xs font-bold text-white block">Typical Outing Budget</span>
             <div className="grid grid-cols-2 gap-2">
@@ -724,7 +850,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                   key={b}
                   type="button"
                   onClick={() => handleUpdateBudget(b)}
-                  className={`p-3 rounded-xl border text-xs font-medium text-left transition-all ${
+                  className={`p-3 rounded-xl border text-xs font-medium text-left transition-all cursor-pointer ${
                     profile.budgetPreference === b
                       ? 'bg-[#ccff00]/10 border-[#ccff00] text-white font-bold'
                       : 'bg-white/[0.02] border-white/[0.06] text-zinc-400 hover:text-white'
@@ -761,42 +887,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               <p className="font-semibold text-white">You have marked {stats.visited} place visits.</p>
               <p className="text-zinc-500 mt-1">
                 Your feedback on these places is given stronger weight in community confidence calculations.
-              </p>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Tab: Activity Stream */}
-      {activeTab === 'activity' && (
-        <div className="space-y-3">
-          {activities.length > 0 ? (
-            <div className="space-y-2">
-              {activities.map((act, i) => (
-                <div
-                  key={act.id || i}
-                  className="p-3.5 rounded-xl bg-[#111317] border border-white/[0.08] flex items-center justify-between gap-3 text-xs"
-                >
-                  <div className="min-w-0">
-                    <p className="font-semibold text-white truncate">
-                      {act.target_title || `${act.activity_type.toUpperCase()} recorded`}
-                    </p>
-                    <p className="text-[11px] text-zinc-400 capitalize">
-                      {act.activity_type} ·{' '}
-                      {new Date(act.created_at).toLocaleTimeString([], {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="py-12 px-4 rounded-2xl bg-white/[0.02] border border-white/[0.06] text-center max-w-sm mx-auto space-y-1">
-              <p className="text-sm font-bold text-white">Nothing here yet.</p>
-              <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
-                Start exploring or verifying places to build your OUTERA scout profile.
               </p>
             </div>
           )}
@@ -899,7 +989,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         }}
         editingPost={editingPost}
         onPostSubmitted={() => {
-          if (authUser) loadUserPosts(authUser.id);
+          if (authUser) {
+            loadUserPosts(authUser.id);
+            fetchUserRealStats(authUser.id).then(setStats);
+          }
         }}
       />
     </div>

@@ -496,6 +496,15 @@ export default function App() {
                   onExploreNearMe={handleOpenExploreNearMe}
                   onSurpriseMe={() => setActiveTab('surprise')}
                   currentNeighborhood={currentLocation.neighborhoodName}
+                  onSuggestPlace={() => setSuggestionModalOpen(true)}
+                  onCreatePost={() => {
+                    if (!authUser) {
+                      setAuthContextAction('create a community post');
+                      setAuthModalOpen(true);
+                    } else {
+                      setCreatePostModalOpen(true);
+                    }
+                  }}
                 />
 
                 {/* Nationwide Bangladesh Gateway Strip */}
@@ -547,7 +556,7 @@ export default function App() {
 
                 {/* Curated Drop: Trending / Closest Spots */}
                 <section className="px-4 sm:px-6 py-2" aria-labelledby="curated-heading">
-                  <div className="flex items-center justify-between mb-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                     <div>
                       <h2 id="curated-heading" className="text-lg sm:text-xl font-black text-white tracking-tight">
                         Worth Going To Right Now
@@ -557,16 +566,25 @@ export default function App() {
                       </p>
                     </div>
 
-                    {rankedPlaces.length > 0 && (
+                    <div className="flex items-center gap-3">
                       <button
                         type="button"
-                        onClick={() => setActiveTab('explore')}
-                        className="text-xs font-bold text-[#ccff00] hover:underline flex items-center gap-1"
+                        onClick={() => setSuggestionModalOpen(true)}
+                        className="h-8 px-3 rounded-lg bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.1] text-xs font-bold text-[#ccff00] transition-all"
                       >
-                        <span>See all ({rankedPlaces.length})</span>
-                        <ArrowRight className="w-3.5 h-3.5" />
+                        + Suggest a Place
                       </button>
-                    )}
+                      {rankedPlaces.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab('explore')}
+                          className="text-xs font-bold text-[#ccff00] hover:underline flex items-center gap-1"
+                        >
+                          <span>See all ({rankedPlaces.length})</span>
+                          <ArrowRight className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   {/* Cards Grid OR Clean Empty State */}
@@ -599,7 +617,7 @@ export default function App() {
                           onClick={() => setSuggestionModalOpen(true)}
                           className="w-full sm:w-auto h-11 px-5 rounded-xl bg-[#ccff00] text-black font-extrabold text-xs uppercase tracking-wider inline-flex items-center justify-center gap-2 hover:bg-[#d8ff33] transition-all"
                         >
-                          <span>Suggest a place</span>
+                          <span>+ Suggest a Place</span>
                           <ArrowRight className="w-4 h-4" />
                         </button>
                         <button
@@ -730,6 +748,7 @@ export default function App() {
                   setAuthModalOpen(true);
                 }}
                 onSelectPost={handleOpenPostDetails}
+                onOpenSuggestionModal={() => setSuggestionModalOpen(true)}
               />
             )}
           </>
@@ -754,6 +773,11 @@ export default function App() {
         onSelectPost={handleOpenPostDetails}
         currentUserId={authUser?.id}
         isAdmin={authUser?.role === 'admin'}
+        allPlaces={places}
+        onSelectAnotherPlace={(p) => {
+          const foundRanked = rankedPlaces.find((rp) => rp.id === p.id);
+          setDetailsPlace(foundRanked || (p as PlaceWithDistance));
+        }}
       />
 
       {/* Community Post Details Modal View */}
@@ -768,7 +792,7 @@ export default function App() {
         }}
         onSelectPlace={(placeId) => {
           handleClosePostDetails();
-          const target = places.find((p) => p.id === placeId);
+          const target = rankedPlaces.find((p) => p.id === placeId) || places.find((p) => p.id === placeId);
           if (target) {
             setDetailsPlace(target as PlaceWithDistance);
           }
@@ -830,6 +854,13 @@ export default function App() {
         onOpenAuthModal={() => {
           setAuthContextAction('suggest a new place');
           setAuthModalOpen(true);
+        }}
+        existingPlaces={places}
+        onSelectExistingPlace={(placeId) => {
+          const found = rankedPlaces.find((p) => p.id === placeId) || places.find((p) => p.id === placeId);
+          if (found) {
+            setDetailsPlace(found as PlaceWithDistance);
+          }
         }}
       />
 

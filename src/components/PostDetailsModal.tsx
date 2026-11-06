@@ -6,17 +6,19 @@ import {
   Trash2,
   Star,
   MapPin,
-  Calendar,
   CheckCircle2,
   MessageSquare,
   Send,
-  Sparkles,
   ChevronLeft,
   ChevronRight,
   AlertCircle,
   ExternalLink,
   Shield,
   Loader2,
+  ThumbsUp,
+  Flag,
+  Edit3,
+  Check,
 } from 'lucide-react';
 import {
   PlacePost,
@@ -26,6 +28,9 @@ import {
   fetchPostComments,
   addPostComment,
   deletePostComment,
+  togglePostHelpful,
+  submitReportToSupabase,
+  updateUserPendingPost,
 } from '../services/supabase';
 
 interface PostDetailsModalProps {
@@ -56,8 +61,28 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isNotFound, setIsNotFound] = useState(false);
 
-  // Photos Lightbox
+  // Photos Lightbox & Mobile Swipe state
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const [mobileSlideIdx, setMobileSlideIdx] = useState(0);
+
+  // Helpful state
+  const [helpfulCount, setHelpfulCount] = useState(0);
+  const [userMarkedHelpful, setUserMarkedHelpful] = useState(false);
+  const [togglingHelpful, setTogglingHelpful] = useState(false);
+
+  // Report Post modal state
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportReason, setReportReason] = useState<'Outdated info' | 'Spam or promotional' | 'Inaccurate details' | 'Closed permanently'>('Inaccurate details');
+  const [reportComment, setReportComment] = useState('');
+  const [submittingReport, setSubmittingReport] = useState(false);
+  const [reportSuccess, setReportSuccess] = useState(false);
+
+  // Owner Inline Edit state
+  const [isEditing, setIsEditing] = useState(false);
+  const [editTitle, setEditTitle] = useState('');
+  const [editContent, setEditContent] = useState('');
+  const [editRating, setEditRating] = useState(5);
+  const [savingEdit, setSavingEdit] = useState(false);
 
   // Comments state
   const [comments, setComments] = useState<PlacePostComment[]>([]);
@@ -87,6 +112,8 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
         setCurrentPost(null);
       } else {
         setCurrentPost(fetched);
+        setHelpfulCount(fetched.helpful_count || 0);
+        setUserMarkedHelpful(Boolean(fetched.user_marked_helpful));
         if (fetched.comments) {
           setComments(fetched.comments);
         } else {
@@ -116,16 +143,21 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       setLightboxIndex(null);
+      setMobileSlideIdx(0);
       setShowDeleteConfirm(false);
+      setShowReportModal(false);
+      setReportSuccess(false);
+      setIsEditing(false);
       setCommentError(null);
       setNewCommentText('');
 
       if (initialPost) {
         setCurrentPost(initialPost);
+        setHelpfulCount(initialPost.helpful_count || 0);
+        setUserMarkedHelpful(Boolean(initialPost.user_marked_helpful));
         setComments(initialPost.comments || []);
         setIsNotFound(false);
         setErrorMessage(null);
-        // Refresh comments in background
         loadComments(initialPost.id);
       } else if (postId) {
         loadPostData(postId);
@@ -140,9 +172,76 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
 
   if (!isOpen) return null;
 
-  const canDelete =
-    Boolean(currentPost) &&
-    (isAdmin || (currentUserId && currentPost?.user_id === currentUserId));
+  const isOwner = Boolean(currentPost && currentUserId && currentPost.user_id === currentUserId);
+  const canDelete = Boolean(currentPost) && (isAdmin || isOwner);
+
+  const handleToggleHelpful = async () => {
+    if (!currentPost) return;
+    if (!currentUserId) {
+      if (onRequireAuth) onRequireAuth('mark community posts as helpful');
+      return;
+    }
+    setTogglingHelpful(true);
+    const res = await togglePostHelpful(currentPost.id);
+    setTogglingHelpful(false);
+    if (res.success) {
+      setUserMarkedHelpful(res.markedHelpful);
+      setHelpfulCount(res.helpfulCount);
+    }
+  };
+
+  const handleSubmitReport = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentPost) return;
+    if (!currentUserId) {
+      if (onRequireAuth) onRequireAuth('report content');
+      return;
+    }
+    setSubmittingReport(true);
+    await submitReportToSupabase({
+      targetType: 'post',
+      targetId: currentPost.id,
+      reason: reportReason,
+      comment: reportComment.trim() || undefined,
+    });
+    setSubmittingReport(false);
+    setReportSuccess(true);
+    setTimeout(() => {
+      setShowReportModal(false);
+      setReportSuccess(false);
+      setReportComment('');
+    }, 1200);
+  };
+
+  const handleStartEdit = () => {
+    if (!currentPost) return;
+    setEditTitle(currentPost.title);
+    setEditContent(currentPost.content);
+    setEditRating(currentPost.rating);
+    setIsEditing(true);
+  };
+
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentPost || !editTitle.trim() || !editContent.trim()) return;
+    setSavingEdit(true);
+    const res = await updateUserPendingPost(currentPost.id, {
+      title: editTitle.trim(),
+      content: editContent.trim(),
+      rating: editRating,
+    });
+    setSavingEdit(false);
+    if (res.success) {
+      setCurrentPost({
+        ...currentPost,
+        title: editTitle.trim(),
+        content: editContent.trim(),
+        rating: editRating,
+        status: 'pending',
+      });
+      setIsEditing(false);
+    }
+  };
 
   const handleDeletePost = async () => {
     if (!currentPost) return;
@@ -154,7 +253,7 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
       if (onPostDeleted) onPostDeleted(currentPost.id);
       onClose();
     } else {
-      alert(res.error || 'Failed to delete post.');
+      setErrorMessage(res.error || 'Failed to delete post.');
     }
   };
 
@@ -242,7 +341,8 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
     }
   };
 
-  const images = currentPost?.images || [];
+  // Strictly maximum 2 photos: Photo 1 = primary/cover, Photo 2 = secondary
+  const images = (currentPost?.images || []).slice(0, 2);
 
   return (
     <div
@@ -277,6 +377,18 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
                 </span>
               )}
             </button>
+
+            {isOwner && !isEditing && (
+              <button
+                type="button"
+                onClick={handleStartEdit}
+                className="p-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] text-zinc-300 hover:text-white transition-all border border-white/[0.06]"
+                title="Edit post"
+                aria-label="Edit post"
+              >
+                <Edit3 className="w-4 h-4" />
+              </button>
+            )}
 
             {canDelete && (
               <button
@@ -415,14 +527,17 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
                     )}
                   </div>
                   <div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <h3 className="text-sm font-bold text-white">
                         {currentPost.author_name || 'OUTERA Scout'}
                       </h3>
+                      <span className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-white/[0.06] text-zinc-300 border border-white/[0.08]">
+                        Scout
+                      </span>
                       {currentPost.is_visited && (
                         <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
                           <CheckCircle2 className="w-3 h-3" />
-                          <span>Verified Visit</span>
+                          <span>Visited</span>
                         </span>
                       )}
                     </div>
@@ -437,7 +552,7 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
                 </div>
 
                 {/* Rating Badge */}
-                <div className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400">
+                <div className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400 shrink-0">
                   <Star className="w-3.5 h-3.5 fill-amber-400" />
                   <span className="font-mono font-bold text-xs text-white">
                     {currentPost.rating}/5
@@ -470,55 +585,267 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
                 </div>
               )}
 
-              {/* Post Title & Text Content */}
-              <div className="space-y-2">
-                <h2 className="text-lg sm:text-xl font-extrabold text-white tracking-tight leading-snug">
-                  {currentPost.title}
-                </h2>
-                <p className="text-sm text-zinc-300 leading-relaxed whitespace-pre-line font-normal">
-                  {currentPost.content}
-                </p>
-              </div>
+              {/* Post Title & Text Content (or Owner Edit Form) */}
+              {isEditing ? (
+                <form onSubmit={handleSaveEdit} className="p-4 rounded-2xl bg-white/[0.03] border border-white/[0.08] space-y-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-zinc-400 mb-1">Title</label>
+                    <input
+                      type="text"
+                      required
+                      value={editTitle}
+                      onChange={(e) => setEditTitle(e.target.value)}
+                      className="w-full h-9 px-3 rounded-xl bg-black/40 border border-white/10 text-xs text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-zinc-400 mb-1">Review</label>
+                    <textarea
+                      rows={4}
+                      required
+                      value={editContent}
+                      onChange={(e) => setEditContent(e.target.value)}
+                      className="w-full p-3 rounded-xl bg-black/40 border border-white/10 text-xs text-white resize-none"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1">
+                      {[1, 2, 3, 4, 5].map((s) => (
+                        <button
+                          key={s}
+                          type="button"
+                          onClick={() => setEditRating(s)}
+                          className="p-1"
+                        >
+                          <Star className={`w-4 h-4 ${s <= editRating ? 'fill-amber-400 text-amber-400' : 'text-zinc-600'}`} />
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setIsEditing(false)}
+                        className="h-8 px-3 rounded-lg bg-white/[0.06] text-xs font-bold text-zinc-300"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={savingEdit}
+                        className="h-8 px-3.5 rounded-lg bg-[#ccff00] text-black font-extrabold text-xs"
+                      >
+                        {savingEdit ? 'Saving...' : 'Save'}
+                      </button>
+                    </div>
+                  </div>
+                </form>
+              ) : (
+                <div className="space-y-2">
+                  <h2 className="text-lg sm:text-xl font-extrabold text-white tracking-tight leading-snug">
+                    {currentPost.title}
+                  </h2>
+                  <p className="text-sm text-zinc-300 leading-relaxed whitespace-pre-line font-normal">
+                    {currentPost.content}
+                  </p>
+                </div>
+              )}
 
-              {/* Photos Gallery Grid */}
+              {/* Photos Gallery — Max 2 Photos (Desktop: Primary Large + Second Smaller; Mobile: Swipeable Gallery) */}
               {images.length > 0 && (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-xs text-zinc-400">
                     <span className="font-bold uppercase tracking-wider text-[11px] text-zinc-400">
-                      Photos ({images.length})
+                      {images.length === 1 ? 'Visitor Photo (1)' : 'Visitor Photos (2)'}
                     </span>
                     <span className="text-[11px]">Tap to enlarge</span>
                   </div>
 
-                  <div
-                    className={`grid gap-2 ${
-                      images.length === 1
-                        ? 'grid-cols-1'
-                        : images.length === 2
-                        ? 'grid-cols-2'
-                        : images.length === 3
-                        ? 'grid-cols-3'
-                        : 'grid-cols-2 sm:grid-cols-3'
+                  {/* Single Photo View (Desktop & Mobile) */}
+                  {images.length === 1 && (
+                    <button
+                      type="button"
+                      onClick={() => setLightboxIndex(0)}
+                      className="relative w-full aspect-[16/10] rounded-2xl overflow-hidden bg-white/[0.04] border border-white/[0.08] hover:border-[#ccff00]/50 transition-all group block"
+                    >
+                      <img
+                        src={images[0]}
+                        alt="Primary post photo"
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                        loading="lazy"
+                      />
+                    </button>
+                  )}
+
+                  {/* 2 Photos View: Desktop (Primary large, Second smaller) + Mobile (Swipeable gallery) */}
+                  {images.length === 2 && (
+                    <>
+                      {/* Desktop Layout: Primary image large (2/3 width), Second image smaller (1/3 width) */}
+                      <div className="hidden sm:grid sm:grid-cols-3 gap-2.5 h-64">
+                        <button
+                          type="button"
+                          onClick={() => setLightboxIndex(0)}
+                          className="col-span-2 relative h-full rounded-2xl overflow-hidden bg-white/[0.04] border border-white/[0.08] hover:border-[#ccff00]/50 transition-all group"
+                        >
+                          <img
+                            src={images[0]}
+                            alt="Primary cover photo"
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                            loading="lazy"
+                          />
+                          <span className="absolute bottom-2 left-2 px-2 py-0.5 rounded bg-black/75 text-[10px] font-bold text-[#ccff00] border border-white/10">
+                            Primary
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setLightboxIndex(1)}
+                          className="col-span-1 relative h-full rounded-2xl overflow-hidden bg-white/[0.04] border border-white/[0.08] hover:border-[#ccff00]/50 transition-all group"
+                        >
+                          <img
+                            src={images[1]}
+                            alt="Secondary photo"
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                            loading="lazy"
+                          />
+                          <span className="absolute bottom-2 left-2 px-2 py-0.5 rounded bg-black/75 text-[10px] font-bold text-zinc-200 border border-white/10">
+                            Photo 2
+                          </span>
+                        </button>
+                      </div>
+
+                      {/* Mobile Layout: Swipeable Gallery */}
+                      <div className="sm:hidden space-y-2">
+                        <div className="relative rounded-2xl overflow-hidden aspect-[4/3] bg-white/[0.04] border border-white/[0.08]">
+                          <img
+                            src={images[mobileSlideIdx]}
+                            alt={`Photo ${mobileSlideIdx + 1}`}
+                            onClick={() => setLightboxIndex(mobileSlideIdx)}
+                            className="w-full h-full object-cover cursor-pointer"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setMobileSlideIdx((prev) => (prev === 0 ? 1 : 0))}
+                            className="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/70 text-white flex items-center justify-center"
+                            aria-label="Previous photo"
+                          >
+                            <ChevronLeft className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setMobileSlideIdx((prev) => (prev === 0 ? 1 : 0))}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/70 text-white flex items-center justify-center"
+                            aria-label="Next photo"
+                          >
+                            <ChevronRight className="w-4 h-4" />
+                          </button>
+                          <span className="absolute bottom-2 right-2 px-2 py-0.5 rounded-full bg-black/75 text-[10px] font-mono text-white">
+                            {mobileSlideIdx + 1} / 2
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-center gap-1.5">
+                          {[0, 1].map((idx) => (
+                            <button
+                              key={idx}
+                              type="button"
+                              onClick={() => setMobileSlideIdx(idx)}
+                              className={`h-1.5 rounded-full transition-all ${
+                                mobileSlideIdx === idx ? 'w-5 bg-[#ccff00]' : 'w-1.5 bg-zinc-600'
+                              }`}
+                              aria-label={`View photo ${idx + 1}`}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* Helpful & Report Action Bar */}
+              <div className="flex items-center justify-between pt-2 border-t border-white/[0.06]">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={togglingHelpful}
+                    onClick={handleToggleHelpful}
+                    className={`h-9 px-3.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition-all ${
+                      userMarkedHelpful
+                        ? 'bg-[#ccff00]/15 border-[#ccff00]/40 text-[#ccff00]'
+                        : 'bg-white/[0.03] hover:bg-white/[0.07] border-white/[0.08] text-zinc-300 hover:text-white'
                     }`}
                   >
-                    {images.map((imgUrl, idx) => (
-                      <button
-                        key={idx}
-                        type="button"
-                        onClick={() => setLightboxIndex(idx)}
-                        className="relative aspect-square sm:aspect-[4/3] rounded-xl overflow-hidden bg-white/[0.04] border border-white/[0.08] hover:border-[#ccff00]/50 transition-all group"
-                      >
-                        <img
-                          src={imgUrl}
-                          alt={`Experience photo ${idx + 1}`}
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                          loading="lazy"
-                        />
-                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors" />
-                      </button>
-                    ))}
-                  </div>
+                    <ThumbsUp className={`w-3.5 h-3.5 ${userMarkedHelpful ? 'fill-[#ccff00]' : ''}`} />
+                    <span>Helpful</span>
+                    {helpfulCount > 0 && (
+                      <span className="ml-0.5 px-1.5 py-0.2 rounded bg-black/30 font-mono text-[11px]">
+                        {helpfulCount}
+                      </span>
+                    )}
+                  </button>
                 </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowReportModal((prev) => !prev)}
+                  className="h-8 px-2.5 rounded-lg bg-white/[0.02] hover:bg-white/[0.06] border border-white/[0.06] text-[11px] font-semibold text-zinc-400 hover:text-rose-300 flex items-center gap-1 transition-all"
+                >
+                  <Flag className="w-3 h-3" />
+                  <span>Report</span>
+                </button>
+              </div>
+
+              {/* Inline Report Form */}
+              {showReportModal && (
+                <form
+                  onSubmit={handleSubmitReport}
+                  className="p-3.5 rounded-xl bg-white/[0.03] border border-white/[0.08] space-y-2.5"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-white">Report Community Post</span>
+                    <button
+                      type="button"
+                      onClick={() => setShowReportModal(false)}
+                      className="text-zinc-400 hover:text-white"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  {reportSuccess ? (
+                    <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-300 flex items-center gap-1.5">
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Thank you. Our moderators will review this report.</span>
+                    </div>
+                  ) : (
+                    <>
+                      <select
+                        value={reportReason}
+                        onChange={(e) => setReportReason(e.target.value as any)}
+                        className="w-full h-9 px-2.5 rounded-lg bg-[#14171d] border border-white/10 text-xs text-white"
+                      >
+                        <option value="Inaccurate details">Inaccurate details</option>
+                        <option value="Outdated info">Outdated info</option>
+                        <option value="Spam or promotional">Spam or promotional</option>
+                        <option value="Closed permanently">Place closed permanently</option>
+                      </select>
+                      <input
+                        type="text"
+                        value={reportComment}
+                        onChange={(e) => setReportComment(e.target.value)}
+                        placeholder="Optional context for moderators..."
+                        className="w-full h-9 px-2.5 rounded-lg bg-[#14171d] border border-white/10 text-xs text-white placeholder-zinc-500"
+                      />
+                      <div className="flex justify-end">
+                        <button
+                          type="submit"
+                          disabled={submittingReport}
+                          className="h-8 px-3 rounded-lg bg-rose-500 hover:bg-rose-600 text-white text-xs font-bold"
+                        >
+                          {submittingReport ? 'Submitting...' : 'Submit Report'}
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </form>
               )}
 
               {/* Community Comments Section */}
@@ -729,3 +1056,4 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
     </div>
   );
 };
+

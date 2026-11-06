@@ -13,6 +13,14 @@ import {
   Calendar,
   Heart,
   Building2,
+  Star,
+  ThumbsUp,
+  MessageCircle,
+  Flag,
+  Clock,
+  Wallet,
+  Sun,
+  ShieldCheck,
 } from 'lucide-react';
 import { PlaceWithDistance } from '../services/discoveryEngine';
 import { formatDistance } from '../services/location';
@@ -22,11 +30,12 @@ import {
   toggleWantToTryInSupabase,
   submitBusinessClaim,
   fetchPublicPlacePosts,
+  togglePostHelpful,
   PlacePost,
 } from '../services/supabase';
 import { CreatePostModal } from './CreatePostModal';
 import { HowToGetThereSection } from './HowToGetThereSection';
-import { UserLocation } from '../types/outera';
+import { Place, UserLocation } from '../types/outera';
 
 interface PlaceDetailsModalProps {
   place: PlaceWithDistance | null;
@@ -43,6 +52,8 @@ interface PlaceDetailsModalProps {
   onDeletePost?: (postId: string) => void;
   currentUserId?: string;
   isAdmin?: boolean;
+  allPlaces?: Place[];
+  onSelectAnotherPlace?: (place: Place) => void;
 }
 
 export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
@@ -57,9 +68,8 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
   onRequireAuth,
   userLocation,
   onSelectPost,
-  onDeletePost,
-  currentUserId,
-  isAdmin = false,
+  allPlaces = [],
+  onSelectAnotherPlace,
 }) => {
   const [copied, setCopied] = useState(false);
   const [activeTab, setActiveTab] = useState<'overview' | 'experiences' | 'transit'>('overview');
@@ -67,23 +77,57 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
   const [showClaimModal, setShowClaimModal] = useState(false);
   const [claimPhone, setClaimPhone] = useState('');
   const [claimEmail, setClaimEmail] = useState('');
-  const [claimRole, setClaimRole] = useState('Owner / Manager');
+  const [claimRole] = useState('Owner / Manager');
   const [claimSuccess, setClaimSuccess] = useState(false);
 
   const [publicPosts, setPublicPosts] = useState<PlacePost[]>([]);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [mobileHeroIdx, setMobileHeroIdx] = useState(0);
+
+  const loadPlacePosts = React.useCallback(async () => {
+    if (!place) return;
+    const posts = await fetchPublicPlacePosts(place.id);
+    setPublicPosts(posts || []);
+  }, [place]);
 
   React.useEffect(() => {
     if (isOpen && place) {
-      fetchPublicPlacePosts(place.id).then((posts) => {
-        setPublicPosts(posts || []);
-      });
+      setMobileHeroIdx(0);
+      loadPlacePosts();
     }
-  }, [isOpen, place]);
+  }, [isOpen, place, loadPlacePosts]);
 
   if (!isOpen || !place) return null;
 
   const userHasVisited = isPlaceVisitedByUser(place.id);
+  const reports = place.experienceReports || [];
+
+  // Calculate real community rating & counts from approved posts + experience reports
+  const ratedPosts = publicPosts.filter((p) => typeof p.rating === 'number' && p.rating >= 1);
+  const computedAvgRating =
+    ratedPosts.length > 0
+      ? Number(
+          (
+            ratedPosts.reduce((acc, p) => acc + Number(p.rating || 0), 0) / ratedPosts.length
+          ).toFixed(1)
+        )
+      : place.communityRating && place.communityRating > 0
+      ? place.communityRating
+      : null;
+
+  const totalCommunityEntries = reports.length + publicPosts.length;
+  const effectiveConfidence =
+    totalCommunityEntries >= 8
+      ? 'High'
+      : totalCommunityEntries >= 3
+      ? 'Medium'
+      : totalCommunityEntries >= 1
+      ? 'Limited'
+      : place.communityConfidence || 'Insufficient Data';
+
+  const heroImages = (place.images && place.images.length > 0 ? place.images : [place.image])
+    .filter(Boolean)
+    .slice(0, 2);
 
   const handleToggleVisited = () => {
     if (!isAuthenticated && onRequireAuth) {
@@ -102,6 +146,28 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
     const next = !wantToTry;
     setWantToTry(next);
     toggleWantToTryInSupabase(place.id);
+  };
+
+  const handleQuickHelpful = async (e: React.MouseEvent, post: PlacePost) => {
+    e.stopPropagation();
+    if (!isAuthenticated && onRequireAuth) {
+      onRequireAuth('mark a community review as helpful');
+      return;
+    }
+    const res = await togglePostHelpful(post.id);
+    if (res.success) {
+      setPublicPosts((prev) =>
+        prev.map((p) =>
+          p.id === post.id
+            ? {
+                ...p,
+                helpful_count: res.helpfulCount,
+                user_marked_helpful: res.markedHelpful,
+              }
+            : p
+        )
+      );
+    }
   };
 
   const handleClaimSubmit = async (e: React.FormEvent) => {
@@ -148,11 +214,16 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
   };
 
   const openGoogleMaps = () => {
-    const query = encodeURIComponent(`${place.name}, ${place.address}`);
-    window.open(`https://www.google.com/maps/search/?api=1&query=${query}`, '_blank', 'noopener,noreferrer');
+    const query =
+      place.coordinates?.lat && place.coordinates?.lng
+        ? `${place.coordinates.lat},${place.coordinates.lng}`
+        : encodeURIComponent(`${place.name}, ${place.address}`);
+    window.open(
+      `https://www.google.com/maps/search/?api=1&query=${query}`,
+      '_blank',
+      'noopener,noreferrer'
+    );
   };
-
-  const reports = place.experienceReports || [];
 
   return (
     <div
@@ -161,24 +232,27 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
       aria-modal="true"
       aria-labelledby="place-details-title"
     >
-      <div className="w-full sm:max-w-2xl max-h-[92vh] sm:max-h-[88vh] bg-[#101216] border-t sm:border border-white/[0.1] rounded-t-3xl sm:rounded-2xl overflow-y-auto no-scrollbar shadow-2xl flex flex-col animate-in fade-in slide-in-from-bottom-6 duration-200">
-        {/* Sticky Mobile Drag & Close Bar */}
+      <div className="w-full sm:max-w-3xl max-h-[92vh] sm:max-h-[90vh] bg-[#101216] border-t sm:border border-white/[0.1] rounded-t-3xl sm:rounded-2xl overflow-y-auto no-scrollbar shadow-2xl flex flex-col animate-in fade-in slide-in-from-bottom-6 duration-200">
+        {/* Sticky Top Bar */}
         <div className="sticky top-0 z-20 bg-[#101216]/95 backdrop-blur-md px-4 py-3 border-b border-white/[0.08] flex items-center justify-between">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="text-xs font-semibold uppercase tracking-wider text-[#ccff00]">
               {place.category}
             </span>
             <span className="text-zinc-600">·</span>
             <span className="text-xs text-zinc-400 font-mono">{formatDistance(place.distanceKm)}</span>
             <span className="text-zinc-600">·</span>
-            <span className="text-xs text-zinc-400 font-medium">{place.district}</span>
+            <span className="text-xs text-zinc-400 font-medium">
+              {place.upazila ? `${place.upazila}, ` : ''}
+              {place.district}
+            </span>
           </div>
 
           <div className="flex items-center gap-1.5">
             <button
               type="button"
               onClick={handleShare}
-              className="w-9 h-9 rounded-full bg-white/[0.05] hover:bg-white/[0.1] flex items-center justify-center text-zinc-300 hover:text-white transition-all"
+              className="w-9 h-9 rounded-full bg-white/[0.05] hover:bg-white/[0.1] flex items-center justify-center text-zinc-300 hover:text-white transition-all cursor-pointer"
               aria-label="Share spot"
               title="Share"
             >
@@ -187,7 +261,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
             <button
               type="button"
               onClick={() => onToggleSave(place.id)}
-              className={`w-9 h-9 rounded-full flex items-center justify-center transition-all ${
+              className={`w-9 h-9 rounded-full flex items-center justify-center transition-all cursor-pointer ${
                 isSaved ? 'bg-[#ccff00] text-black' : 'bg-white/[0.05] text-zinc-300 hover:text-white'
               }`}
               aria-label={isSaved ? 'Saved' : 'Save'}
@@ -197,7 +271,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="w-9 h-9 rounded-full bg-white/[0.05] hover:bg-white/[0.1] flex items-center justify-center text-zinc-400 hover:text-white ml-1"
+              className="w-9 h-9 rounded-full bg-white/[0.05] hover:bg-white/[0.1] flex items-center justify-center text-zinc-400 hover:text-white ml-1 cursor-pointer"
               aria-label="Close"
             >
               <X className="w-4 h-4" />
@@ -205,74 +279,143 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
           </div>
         </div>
 
-        {/* Hero Media Container */}
-        <div className="relative aspect-[16/9] w-full bg-zinc-900 overflow-hidden shrink-0">
-          <img
-            src={place.images[0]}
-            alt={place.name}
-            className="w-full h-full object-cover"
-            referrerPolicy="no-referrer"
-          />
-          <div className="absolute inset-0 bg-gradient-to-t from-[#101216] via-transparent to-black/30 pointer-events-none" />
+        {/* Hero Media Container (Supports 1 or 2 photos: Desktop large primary + smaller secondary, Mobile swipeable) */}
+        <div className="relative w-full bg-zinc-900 overflow-hidden shrink-0">
+          {heroImages.length === 1 ? (
+            <div className="relative aspect-[16/9] w-full">
+              <img
+                src={heroImages[0]}
+                alt={place.name}
+                className="w-full h-full object-cover"
+                referrerPolicy="no-referrer"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-[#101216] via-transparent to-black/30 pointer-events-none" />
+            </div>
+          ) : (
+            <>
+              {/* Desktop: Primary large + Secondary smaller */}
+              <div className="hidden sm:grid sm:grid-cols-3 gap-1.5 aspect-[21/9] w-full bg-black">
+                <div className="col-span-2 relative overflow-hidden">
+                  <img
+                    src={heroImages[0]}
+                    alt={`${place.name} primary`}
+                    className="w-full h-full object-cover"
+                    referrerPolicy="no-referrer"
+                  />
+                </div>
+                <div className="col-span-1 relative overflow-hidden">
+                  <img
+                    src={heroImages[1]}
+                    alt={`${place.name} secondary`}
+                    className="w-full h-full object-cover"
+                    referrerPolicy="no-referrer"
+                  />
+                </div>
+                <div className="absolute inset-0 bg-gradient-to-t from-[#101216] via-transparent to-black/25 pointer-events-none" />
+              </div>
+
+              {/* Mobile: Swipeable Gallery */}
+              <div className="sm:hidden relative aspect-[16/9] w-full">
+                <div
+                  className="flex w-full h-full overflow-x-auto snap-x snap-mandatory no-scrollbar"
+                  onScroll={(e) => {
+                    const el = e.currentTarget;
+                    const idx = Math.round(el.scrollLeft / el.clientWidth);
+                    setMobileHeroIdx(idx);
+                  }}
+                >
+                  {heroImages.map((imgUrl, idx) => (
+                    <div key={idx} className="w-full h-full shrink-0 snap-center relative">
+                      <img
+                        src={imgUrl}
+                        alt={`${place.name} ${idx + 1}`}
+                        className="w-full h-full object-cover"
+                        referrerPolicy="no-referrer"
+                      />
+                    </div>
+                  ))}
+                </div>
+                <div className="absolute bottom-3 right-3 px-2 py-0.5 rounded-full bg-black/75 text-[10px] font-mono text-white border border-white/15">
+                  {mobileHeroIdx + 1} / {heroImages.length}
+                </div>
+              </div>
+            </>
+          )}
 
           {/* Opening Status Badge */}
           <div className="absolute bottom-4 left-4 flex items-center gap-2 text-xs font-semibold px-3 py-1.5 rounded-full bg-black/75 backdrop-blur-md border border-white/10 text-white">
             <span
               className={`w-2 h-2 rounded-full ${
-                place.openingHours.openNow ? 'bg-[#ccff00]' : 'bg-red-400'
+                place.openingHours?.openNow ? 'bg-[#ccff00]' : 'bg-red-400'
               }`}
             />
-            <span>{place.openingHours.openNow ? 'Open Now' : 'Closed Right Now'}</span>
+            <span>{place.openingHours?.openNow ? 'Open Now' : 'Closed Right Now'}</span>
             <span className="text-zinc-500">·</span>
-            <span className="text-zinc-300 font-normal">{place.openingHours.hoursText}</span>
+            <span className="text-zinc-300 font-normal">
+              {typeof place.openingHours?.hoursText === 'string' && place.openingHours.hoursText
+                ? place.openingHours.hoursText
+                : 'Hours vary'}
+            </span>
           </div>
 
-          {/* Confidence Badge */}
-          <div className="absolute top-4 left-4 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/75 backdrop-blur-md border border-white/10 text-[11px] font-bold text-white">
-            <span className="text-[#ccff00] font-mono">{place.communityScore}%</span>
-            <span>·</span>
-            <span>{place.communityConfidence} Confidence</span>
+          {/* Real Community Rating & Confidence Badge */}
+          <div className="absolute top-4 left-4 flex items-center gap-2 px-3 py-1 rounded-full bg-black/80 backdrop-blur-md border border-white/15 text-[11px] font-bold text-white">
+            {computedAvgRating ? (
+              <>
+                <span className="flex items-center gap-1 text-[#ccff00] font-mono">
+                  <Star className="w-3.5 h-3.5 fill-[#ccff00] text-[#ccff00]" />
+                  <span>{computedAvgRating} / 5</span>
+                </span>
+                <span className="text-zinc-500">·</span>
+              </>
+            ) : place.communityScore > 0 ? (
+              <>
+                <span className="text-[#ccff00] font-mono">{place.communityScore}% Worth It</span>
+                <span className="text-zinc-500">·</span>
+              </>
+            ) : null}
+            <span>Confidence: {effectiveConfidence}</span>
           </div>
         </div>
 
-        {/* Header Tabs: Overview vs Community Experiences vs Transit */}
+        {/* Header Tabs */}
         <div className="px-5 pt-3 border-b border-white/[0.06] flex items-center gap-4 overflow-x-auto no-scrollbar">
           <button
             type="button"
             onClick={() => setActiveTab('overview')}
-            className={`pb-2.5 text-xs font-bold border-b-2 transition-colors whitespace-nowrap ${
+            className={`pb-2.5 text-xs font-bold border-b-2 transition-colors whitespace-nowrap cursor-pointer ${
               activeTab === 'overview'
                 ? 'border-[#ccff00] text-white'
                 : 'border-transparent text-zinc-400 hover:text-zinc-200'
             }`}
           >
-            Overview & Vibe
+            Place Details & What to Expect
           </button>
           <button
             type="button"
             onClick={() => setActiveTab('experiences')}
-            className={`pb-2.5 text-xs font-bold border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${
+            className={`pb-2.5 text-xs font-bold border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
               activeTab === 'experiences'
                 ? 'border-[#ccff00] text-white'
                 : 'border-transparent text-zinc-400 hover:text-zinc-200'
             }`}
           >
-            <span>Community Experiences</span>
+            <span>Community Posts & Reviews</span>
             <span className="px-1.5 py-0.2 rounded-full bg-white/[0.08] text-[10px] font-mono">
-              {reports.length}
+              {publicPosts.length + reports.length}
             </span>
           </button>
           <button
             type="button"
             onClick={() => setActiveTab('transit')}
-            className={`pb-2.5 text-xs font-bold border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${
+            className={`pb-2.5 text-xs font-bold border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
               activeTab === 'transit'
                 ? 'border-[#ccff00] text-white'
                 : 'border-transparent text-zinc-400 hover:text-zinc-200'
             }`}
           >
             <Navigation className="w-3.5 h-3.5 text-[#ccff00]" />
-            <span>How to Get There</span>
+            <span>Tourist Guide & Getting There</span>
           </button>
         </div>
 
@@ -284,19 +427,118 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
             </div>
           )}
 
-          {/* Title & Core Location Info */}
-          <div>
-            <h1 id="place-details-title" className="text-xl sm:text-2xl font-black text-white tracking-tight">
-              {place.name}
-            </h1>
-            <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-400 mt-2 font-medium">
-              <span className="text-zinc-200 font-semibold">{place.neighborhood}</span>
-              <span aria-hidden="true" className="text-zinc-600">·</span>
-              <span className="text-zinc-300">{place.district}, {place.division}</span>
-              <span aria-hidden="true" className="text-zinc-600">·</span>
-              <span className="text-[#ccff00] font-semibold">{place.priceLevel.label}</span>
-              <span aria-hidden="true" className="text-zinc-600">·</span>
-              <span>{place.environment}</span>
+          {/* Title, Location & Scout Attribution */}
+          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 id="place-details-title" className="text-xl sm:text-2xl font-black text-white tracking-tight">
+                  {place.name}
+                </h1>
+                {place.suggestedByScoutName && (
+                  <span className="px-2.5 py-0.5 rounded-full bg-[#ccff00]/15 border border-[#ccff00]/30 text-[#ccff00] text-[10px] font-bold">
+                    Scout Suggested by {place.suggestedByScoutName}
+                  </span>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-400 mt-1.5 font-medium">
+                <span className="text-zinc-200 font-semibold">{place.neighborhood}</span>
+                {place.upazila && (
+                  <>
+                    <span aria-hidden="true" className="text-zinc-600">·</span>
+                    <span>{place.upazila}</span>
+                  </>
+                )}
+                <span aria-hidden="true" className="text-zinc-600">·</span>
+                <span className="text-zinc-300">
+                  {place.district}, {place.division}
+                </span>
+                <span aria-hidden="true" className="text-zinc-600">·</span>
+                <span className="text-[#ccff00] font-semibold">
+                  {place.priceLabel || place.priceLevel.label}
+                </span>
+              </div>
+            </div>
+
+            {/* Quick Action: Create Community Post */}
+            <button
+              type="button"
+              onClick={() => {
+                if (!isAuthenticated && onRequireAuth) {
+                  onRequireAuth('write a community post');
+                  return;
+                }
+                setShowCreateModal(true);
+              }}
+              className="h-9 px-3.5 rounded-xl bg-[#ccff00] hover:bg-[#d8ff33] text-black font-extrabold text-xs uppercase tracking-wider flex items-center gap-1.5 shrink-0 self-start cursor-pointer shadow-md shadow-[#ccff00]/10"
+            >
+              <MessageSquarePlus className="w-3.5 h-3.5" />
+              <span>Create Community Post</span>
+            </button>
+          </div>
+
+          {/* Core Structured Info Grid: Budget, Best Time, Distance, Suitable For, Indoor/Outdoor, Crowd Level, Visitors */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+            <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+              <span className="text-[10px] uppercase font-bold text-zinc-400 flex items-center gap-1">
+                <Wallet className="w-3 h-3 text-[#ccff00]" />
+                <span>Budget</span>
+              </span>
+              <p className="text-xs font-bold text-white mt-1">
+                {place.priceLabel || place.priceLevel.label}
+              </p>
+            </div>
+
+            <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+              <span className="text-[10px] uppercase font-bold text-zinc-400 flex items-center gap-1">
+                <Clock className="w-3 h-3 text-[#ccff00]" />
+                <span>Best Time</span>
+              </span>
+              <p className="text-xs font-bold text-white mt-1">
+                {place.bestTimeToVisit ||
+                  (place.timeOfDaySuitability && place.timeOfDaySuitability.length > 0
+                    ? place.timeOfDaySuitability.join(', ')
+                    : 'Late Afternoon / Evening')}
+              </p>
+            </div>
+
+            <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+              <span className="text-[10px] uppercase font-bold text-zinc-400 flex items-center gap-1">
+                <Navigation className="w-3 h-3 text-[#ccff00]" />
+                <span>Distance</span>
+              </span>
+              <p className="text-xs font-bold text-white mt-1 font-mono">
+                {formatDistance(place.distanceKm)}
+              </p>
+            </div>
+
+            <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+              <span className="text-[10px] uppercase font-bold text-zinc-400 flex items-center gap-1">
+                <Users className="w-3 h-3 text-[#ccff00]" />
+                <span>Suitable For</span>
+              </span>
+              <p className="text-xs font-bold text-white mt-1 capitalize">
+                {place.suitableFor && place.suitableFor.length > 0
+                  ? place.suitableFor.join(', ')
+                  : 'Solo, Friends, Groups'}
+              </p>
+            </div>
+
+            <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+              <span className="text-[10px] uppercase font-bold text-zinc-400 flex items-center gap-1">
+                <Sun className="w-3 h-3 text-[#ccff00]" />
+                <span>Indoor / Outdoor</span>
+              </span>
+              <p className="text-xs font-bold text-white mt-1">{place.environment}</p>
+            </div>
+
+            <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+              <span className="text-[10px] uppercase font-bold text-zinc-400 flex items-center gap-1">
+                <ShieldCheck className="w-3 h-3 text-[#ccff00]" />
+                <span>Crowd & Activity</span>
+              </span>
+              <p className="text-xs font-bold text-white mt-1">
+                {place.crowdLevel} Crowd · {place.verifiedVisitorsCount + publicPosts.filter((p) => p.is_visited).length} Visited
+              </p>
             </div>
           </div>
 
@@ -306,18 +548,18 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
               <div className="flex items-center gap-1.5">
                 <CheckCircle2 className={`w-4 h-4 ${userHasVisited ? 'text-[#ccff00]' : 'text-zinc-400'}`} />
                 <span className="text-xs font-bold text-white">
-                  {userHasVisited ? "You've marked this place as visited" : "Have you been to this spot?"}
+                  {userHasVisited ? "You've marked this place as visited" : 'Have you visited this place?'}
                 </span>
               </div>
               <p className="text-[11px] text-zinc-400 mt-0.5">
-                {place.verifiedVisitorsCount} community members have explored here. Marking a visit gives your observations double weight.
+                {place.verifiedVisitorsCount + publicPosts.filter((p) => p.is_visited).length} verified visitors · {totalCommunityEntries} community posts/reports.
               </p>
             </div>
 
             <button
               type="button"
               onClick={handleToggleVisited}
-              className={`h-9 px-4 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 border ${
+              className={`h-9 px-4 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 border cursor-pointer ${
                 userHasVisited
                   ? 'bg-[#ccff00] text-black border-[#ccff00] shadow-sm'
                   : 'bg-white/[0.05] text-zinc-200 hover:text-white border-white/[0.1] hover:bg-white/[0.09]'
@@ -334,95 +576,93 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
             </button>
           </div>
 
-          {/* Event Banner if applicable */}
-          {place.isEvent && place.eventInfo && (
-            <div className="p-4 rounded-xl bg-purple-500/10 border border-purple-500/30 flex items-start gap-3">
-              <Calendar className="w-5 h-5 text-purple-400 shrink-0 mt-0.5" />
-              <div className="text-xs space-y-1">
-                <span className="font-bold text-purple-200 block uppercase tracking-wider text-[10px]">
-                  Upcoming Special Event
-                </span>
-                <p className="text-white font-bold">{place.eventInfo.date} · {place.eventInfo.schedule}</p>
-                <p className="text-zinc-300 font-normal">{place.eventInfo.entryPass}</p>
-              </div>
-            </div>
-          )}
-
           {activeTab === 'overview' ? (
             <>
-              {/* Why This Pick / Context Callout */}
-              <div className="p-4 rounded-xl bg-white/[0.03] border border-white/[0.08]">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-[#ccff00] mb-1">
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>WHY OUTERA RECOMMENDS THIS</span>
-                </div>
-                <p className="text-xs text-zinc-300 leading-relaxed font-medium">
-                  {place.whyPick}
-                </p>
-              </div>
-
-              {/* Description */}
-              <div>
-                <h2 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-2">About The Spot</h2>
-                <p className="text-xs sm:text-sm text-zinc-300 leading-relaxed">
-                  {place.fullDescription}
-                </p>
-              </div>
-
-              {/* COMMUNITY CONSENSUS SECTION */}
+              {/* "WORTH GOING?" COMMUNITY SUMMARY & CONFIDENCE */}
               <div className="p-5 rounded-2xl bg-[#14171d] border border-white/[0.08] space-y-4">
-                <div className="flex items-center justify-between border-b border-white/[0.06] pb-3">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/[0.06] pb-3">
                   <div>
                     <h2 className="text-xs font-bold uppercase tracking-wider text-[#ccff00]">
-                      COMMUNITY SAYS
+                      WORTH GOING? · COMMUNITY SUMMARY
                     </h2>
                     <p className="text-sm font-extrabold text-white mt-0.5">
-                      Aggregated Community Observations
+                      {place.whyPick || place.shortDescription}
                     </p>
                   </div>
-                  <span className="text-xs text-zinc-400 font-medium">
-                    Based on {place.totalReports} experiences
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-center">
-                  <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.05]">
-                    <span className="text-sm block mb-1">💰</span>
-                    <span className="text-[10px] uppercase font-bold text-zinc-400 block mb-0.5">Price</span>
-                    <span className="text-xs font-bold text-white">
-                      {place.priceLevel.min <= 150 ? 'Mostly affordable' : place.priceLevel.min <= 350 ? 'Fair pricing' : 'Moderate'}
+                  <div className="text-right">
+                    <span className="inline-block px-2.5 py-1 rounded-full bg-white/[0.06] border border-white/[0.1] text-[11px] font-bold text-[#ccff00]">
+                      Community Confidence: {effectiveConfidence}
                     </span>
                   </div>
-
-                  <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.05]">
-                    <span className="text-sm block mb-1">👥</span>
-                    <span className="text-[10px] uppercase font-bold text-zinc-400 block mb-0.5">Crowd</span>
-                    <span className="text-xs font-bold text-white">Usually {place.crowdLevel.toLowerCase()}</span>
-                  </div>
-
-                  <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.05]">
-                    <span className="text-sm block mb-1">✨</span>
-                    <span className="text-[10px] uppercase font-bold text-zinc-400 block mb-0.5">Vibe</span>
-                    <span className="text-xs font-bold text-white">{place.primaryVibe}</span>
-                  </div>
-
-                  <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.05]">
-                    <span className="text-sm block mb-1">🔄</span>
-                    <span className="text-[10px] uppercase font-bold text-zinc-400 block mb-0.5">Would return</span>
-                    <span className="text-xs font-bold text-[#ccff00] font-mono">{place.communityScore}%</span>
-                  </div>
                 </div>
 
-                <p className="text-[11px] text-zinc-400 italic">
-                  *These are aggregated community observations, not absolute facts.
-                </p>
+                {totalCommunityEntries > 0 ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-center">
+                    <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.05]">
+                      <span className="text-[10px] uppercase font-bold text-zinc-400 block mb-0.5">
+                        Community Rating
+                      </span>
+                      <span className="text-xs font-bold text-[#ccff00] font-mono">
+                        {computedAvgRating ? `★ ${computedAvgRating} / 5` : `${place.communityScore}% Positive`}
+                      </span>
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.05]">
+                      <span className="text-[10px] uppercase font-bold text-zinc-400 block mb-0.5">
+                        Typical Crowd
+                      </span>
+                      <span className="text-xs font-bold text-white">{place.crowdLevel}</span>
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.05]">
+                      <span className="text-[10px] uppercase font-bold text-zinc-400 block mb-0.5">
+                        Primary Vibe
+                      </span>
+                      <span className="text-xs font-bold text-white">{place.primaryVibe}</span>
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.05]">
+                      <span className="text-[10px] uppercase font-bold text-zinc-400 block mb-0.5">
+                        Total Activity
+                      </span>
+                      <span className="text-xs font-bold text-white font-mono">
+                        {publicPosts.length} posts · {reports.length} reports
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-3.5 rounded-xl bg-white/[0.02] border border-white/[0.05] text-xs text-zinc-400 flex items-center justify-between gap-3">
+                    <span>
+                      <strong className="text-zinc-200">Insufficient Data:</strong> No community reviews or experience reports submitted yet. We never invent ratings or visitor counts.
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!isAuthenticated && onRequireAuth) {
+                          onRequireAuth('write the first review');
+                          return;
+                        }
+                        setShowCreateModal(true);
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-[#ccff00]/15 text-[#ccff00] font-bold text-[11px] shrink-0 cursor-pointer"
+                    >
+                      Write 1st Review
+                    </button>
+                  </div>
+                )}
               </div>
 
-              {/* Highlights */}
-              {place.highlights && place.highlights.length > 0 && (
-                <div>
-                  <h2 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-2.5">Key Highlights</h2>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {/* WHAT TO EXPECT */}
+              <div className="space-y-3">
+                <h2 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">
+                  What To Expect
+                </h2>
+                <p className="text-xs sm:text-sm text-zinc-300 leading-relaxed">
+                  {place.fullDescription || place.shortDescription}
+                </p>
+
+                {place.highlights && place.highlights.length > 0 && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
                     {place.highlights.map((item) => (
                       <div
                         key={item}
@@ -433,30 +673,152 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
                       </div>
                     ))}
                   </div>
-                </div>
-              )}
+                )}
+              </div>
 
-              {/* HOW TO GET THERE (Section on Place Details) */}
+              {/* REAL VISITOR / COMMUNITY POSTS PREVIEW */}
+              <div className="space-y-3 pt-2">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-xs font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-[#ccff00]" />
+                    <span>Real Visitor / Community Posts ({publicPosts.length})</span>
+                  </h2>
+                  {publicPosts.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('experiences')}
+                      className="text-xs font-bold text-[#ccff00] hover:underline cursor-pointer"
+                    >
+                      View all →
+                    </button>
+                  )}
+                </div>
+
+                {publicPosts.length === 0 ? (
+                  <div className="p-5 rounded-2xl bg-white/[0.02] border border-white/[0.06] text-center space-y-2">
+                    <p className="text-xs text-zinc-400">
+                      No approved community posts for {place.name} yet. Visited recently? Share your honest review and up to 2 photos!
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!isAuthenticated && onRequireAuth) {
+                          onRequireAuth('create a community post');
+                          return;
+                        }
+                        setShowCreateModal(true);
+                      }}
+                      className="h-8 px-4 rounded-xl bg-[#ccff00] text-black font-extrabold text-xs inline-flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <MessageSquarePlus className="w-3.5 h-3.5" />
+                      <span>Create Community Post</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {publicPosts.slice(0, 3).map((p) => (
+                      <div
+                        key={p.id}
+                        onClick={() => onSelectPost && onSelectPost(p)}
+                        className="p-4 rounded-2xl bg-[#13161c] border border-white/[0.08] hover:border-[#ccff00]/40 transition-all cursor-pointer space-y-2.5"
+                      >
+                        <div className="flex items-center justify-between text-xs">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-bold text-white">{p.author_name}</span>
+                            <span className="text-zinc-500 font-mono text-[11px]">{p.author_username}</span>
+                            {p.is_visited && (
+                              <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                                ✓ Visited
+                              </span>
+                            )}
+                            <span className="text-[10px] text-zinc-500">
+                              {new Date(p.created_at).toLocaleDateString()}
+                            </span>
+                          </div>
+                          {typeof p.rating === 'number' && p.rating > 0 && (
+                            <span className="flex items-center gap-1 text-xs font-mono font-bold text-[#ccff00]">
+                              <Star className="w-3.5 h-3.5 fill-[#ccff00]" />
+                              <span>{p.rating}/5</span>
+                            </span>
+                          )}
+                        </div>
+
+                        <h4 className="text-sm font-bold text-white">{p.title}</h4>
+                        <p className="text-xs text-zinc-300 leading-relaxed line-clamp-3">{p.content}</p>
+
+                        {/* Up to 2 Photos */}
+                        {p.images && p.images.length > 0 && (
+                          <div className="grid grid-cols-2 gap-2 pt-1">
+                            {p.images.slice(0, 2).map((img, i) => (
+                              <img
+                                key={i}
+                                src={img}
+                                alt={`${p.title} photo ${i + 1}`}
+                                className="w-full h-28 rounded-xl object-cover border border-white/[0.08]"
+                              />
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Helpful, Comments, Report */}
+                        <div className="flex items-center justify-between pt-2 border-t border-white/[0.05] text-[11px] text-zinc-400">
+                          <div className="flex items-center gap-3">
+                            <button
+                              type="button"
+                              onClick={(e) => handleQuickHelpful(e, p)}
+                              className={`flex items-center gap-1 font-semibold transition-colors cursor-pointer ${
+                                p.user_marked_helpful ? 'text-[#ccff00]' : 'hover:text-white'
+                              }`}
+                            >
+                              <ThumbsUp className="w-3.5 h-3.5" />
+                              <span>Helpful ({p.helpful_count || 0})</span>
+                            </button>
+                            <span className="flex items-center gap-1">
+                              <MessageCircle className="w-3.5 h-3.5" />
+                              <span>Comments</span>
+                            </span>
+                          </div>
+                          <span className="flex items-center gap-1 text-zinc-500 hover:text-zinc-300">
+                            <Flag className="w-3 h-3" />
+                            <span>Report</span>
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* TOURIST INFORMATION & GETTING THERE */}
               <div className="pt-2">
-                <HowToGetThereSection place={place} userLocation={userLocation} />
+                <HowToGetThereSection
+                  place={place}
+                  userLocation={userLocation}
+                  allPlaces={allPlaces}
+                  onSelectPlace={onSelectAnotherPlace}
+                />
               </div>
             </>
           ) : activeTab === 'transit' ? (
-            /* DEDICATED HOW TO GET THERE TAB */
             <div className="space-y-4">
-              <HowToGetThereSection place={place} userLocation={userLocation} />
+              <HowToGetThereSection
+                place={place}
+                userLocation={userLocation}
+                allPlaces={allPlaces}
+                onSelectPlace={onSelectAnotherPlace}
+              />
             </div>
           ) : (
-            /* EXPERIENCES & VERIFICATION TAB */
+            /* COMMUNITY POSTS & EXPERIENCES TAB */
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-sm font-bold text-white flex items-center gap-2">
                     <Users className="w-4 h-4 text-[#ccff00]" />
-                    <span>Community Verified Experiences</span>
+                    <span>Real Visitor Posts & Community Observations</span>
                   </h2>
                   <p className="text-xs text-zinc-400 mt-0.5">
-                    Peer-verified observations. Did your experience match these?
+                    1 review per Scout per place · Up to 2 real photos · Helpful votes & constructive verification.
                   </p>
                 </div>
 
@@ -470,7 +832,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
                       }
                       setShowCreateModal(true);
                     }}
-                    className="h-9 px-3 rounded-xl bg-[#ccff00] text-black font-extrabold text-xs uppercase tracking-wider flex items-center gap-1.5 shadow-md shadow-[#ccff00]/10"
+                    className="h-9 px-3 rounded-xl bg-[#ccff00] text-black font-extrabold text-xs uppercase tracking-wider flex items-center gap-1.5 shadow-md shadow-[#ccff00]/10 cursor-pointer"
                   >
                     <MessageSquarePlus className="w-3.5 h-3.5" />
                     <span>Create Post</span>
@@ -484,66 +846,90 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
                       }
                       onOpenReportModal(place);
                     }}
-                    className="h-9 px-3 rounded-xl bg-white/[0.06] hover:bg-white/[0.1] text-white font-bold text-xs flex items-center gap-1.5 border border-white/[0.08]"
+                    className="h-9 px-3 rounded-xl bg-white/[0.06] hover:bg-white/[0.1] text-white font-bold text-xs flex items-center gap-1.5 border border-white/[0.08] cursor-pointer"
                   >
-                    <span>Quick Report</span>
+                    <span>Quick Observation</span>
                   </button>
                 </div>
               </div>
 
-              {/* Approved Community Posts (Strictly status = 'approved') */}
+              {/* Approved Community Posts */}
               {publicPosts.length > 0 && (
                 <div className="space-y-3">
                   <p className="text-xs font-bold text-white flex items-center gap-1.5">
                     <Sparkles className="w-3.5 h-3.5 text-[#ccff00]" />
-                    <span>Approved Community Posts ({publicPosts.length})</span>
+                    <span>Approved Visitor Reviews ({publicPosts.length})</span>
                   </p>
-                  <div className="space-y-2.5">
+                  <div className="space-y-3">
                     {publicPosts.map((p) => (
                       <div
                         key={p.id}
                         onClick={() => onSelectPost && onSelectPost(p)}
-                        className="p-4 rounded-xl bg-[#111317] border border-white/[0.08] hover:border-[#ccff00]/40 transition-all cursor-pointer space-y-2 group"
+                        className="p-4 rounded-xl bg-[#111317] border border-white/[0.08] hover:border-[#ccff00]/40 transition-all cursor-pointer space-y-2.5 group"
                       >
                         <div className="flex items-center justify-between text-xs">
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <span className="font-bold text-white group-hover:text-[#ccff00] transition-colors">
                               {p.author_name}
                             </span>
                             <span className="text-zinc-500 font-mono text-[11px]">{p.author_username}</span>
-                          </div>
-                          <div className="flex items-center gap-1.5">
                             {p.is_visited && (
                               <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
-                                Verified Visit
+                                ✓ Visited
                               </span>
                             )}
-                            {p.images && p.images.length > 0 && (
-                              <span className="text-[10px] font-bold text-purple-300 bg-purple-500/10 px-2 py-0.5 rounded-full border border-purple-500/20">
-                                📷 {p.images.length}
+                            <span className="text-[10px] text-zinc-500">
+                              {new Date(p.created_at).toLocaleDateString()}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {typeof p.rating === 'number' && p.rating > 0 && (
+                              <span className="flex items-center gap-1 text-xs font-mono font-bold text-[#ccff00]">
+                                <Star className="w-3.5 h-3.5 fill-[#ccff00]" />
+                                <span>{p.rating}/5</span>
                               </span>
                             )}
                           </div>
                         </div>
+
                         <h4 className="text-sm font-bold text-white tracking-tight">{p.title}</h4>
-                        <p className="text-xs text-zinc-300 leading-relaxed line-clamp-2">{p.content}</p>
+                        <p className="text-xs text-zinc-300 leading-relaxed">{p.content}</p>
+
                         {p.images && p.images.length > 0 && (
-                          <div className="flex items-center gap-1.5 pt-1 overflow-x-auto no-scrollbar">
-                            {p.images.slice(0, 3).map((img, i) => (
+                          <div className="grid grid-cols-2 gap-2 pt-1">
+                            {p.images.slice(0, 2).map((img, i) => (
                               <img
                                 key={i}
                                 src={img}
-                                alt="Thumbnail"
-                                className="w-12 h-12 rounded-lg object-cover border border-white/[0.06]"
+                                alt={`${p.title} photo ${i + 1}`}
+                                className="w-full h-32 rounded-xl object-cover border border-white/[0.08]"
                               />
                             ))}
-                            {p.images.length > 3 && (
-                              <span className="text-[11px] text-zinc-400 font-medium self-center">
-                                +{p.images.length - 3} more
-                              </span>
-                            )}
                           </div>
                         )}
+
+                        <div className="flex items-center justify-between pt-2 border-t border-white/[0.05] text-[11px] text-zinc-400">
+                          <div className="flex items-center gap-3">
+                            <button
+                              type="button"
+                              onClick={(e) => handleQuickHelpful(e, p)}
+                              className={`flex items-center gap-1 font-semibold transition-colors cursor-pointer ${
+                                p.user_marked_helpful ? 'text-[#ccff00]' : 'hover:text-white'
+                              }`}
+                            >
+                              <ThumbsUp className="w-3.5 h-3.5" />
+                              <span>Helpful ({p.helpful_count || 0})</span>
+                            </button>
+                            <span className="flex items-center gap-1">
+                              <MessageCircle className="w-3.5 h-3.5" />
+                              <span>Comments & Details</span>
+                            </span>
+                          </div>
+                          <span className="flex items-center gap-1 text-zinc-500">
+                            <Flag className="w-3 h-3" />
+                            <span>Report</span>
+                          </span>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -552,7 +938,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
 
               {reports.length > 0 ? (
                 <div className="space-y-3">
-                  <p className="text-xs font-bold text-zinc-400">Community Scout Confirmations</p>
+                  <p className="text-xs font-bold text-zinc-400">Community Scout Observations</p>
                   {reports.map((report) => (
                     <ExperienceVerificationItem
                       key={report.id}
@@ -569,7 +955,9 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
                 </div>
               ) : publicPosts.length === 0 ? (
                 <div className="p-6 rounded-2xl bg-white/[0.02] border border-white/[0.05] text-center">
-                  <p className="text-xs text-zinc-400">Be the first to share a post or log an experience for this spot!</p>
+                  <p className="text-xs text-zinc-400">
+                    Be the first to share a post or log an experience for this spot!
+                  </p>
                 </div>
               ) : null}
             </div>
@@ -583,7 +971,9 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
                   <Navigation className="w-4 h-4 text-[#ccff00]" />
                   <span>{place.address}</span>
                 </p>
-                <p className="text-xs text-zinc-400 mt-0.5">{place.neighborhood}, {place.district}</p>
+                <p className="text-xs text-zinc-400 mt-0.5">
+                  {place.neighborhood}, {place.district}
+                </p>
               </div>
               <span className="text-xs font-mono text-[#ccff00] font-semibold">
                 {formatDistance(place.distanceKm)}
@@ -593,10 +983,10 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
             <button
               type="button"
               onClick={openGoogleMaps}
-              className="w-full h-11 rounded-xl bg-white/[0.06] hover:bg-white/[0.1] active:scale-[0.98] border border-white/[0.08] text-xs font-bold text-white flex items-center justify-center gap-2 transition-all"
+              className="w-full h-11 rounded-xl bg-white/[0.06] hover:bg-white/[0.1] active:scale-[0.98] border border-white/[0.08] text-xs font-bold text-white flex items-center justify-center gap-2 transition-all cursor-pointer"
             >
               <Compass className="w-4 h-4 text-[#ccff00]" />
-              <span>Get Directions</span>
+              <span>Get Directions on Maps</span>
             </button>
           </div>
 
@@ -605,7 +995,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
             <button
               type="button"
               onClick={() => setShowClaimModal(true)}
-              className="text-[11px] text-zinc-500 hover:text-zinc-300 transition-colors inline-flex items-center gap-1.5"
+              className="text-[11px] text-zinc-500 hover:text-zinc-300 transition-colors inline-flex items-center gap-1.5 cursor-pointer"
             >
               <Building2 className="w-3.5 h-3.5" />
               <span>Manage this place? Claim business profile</span>
@@ -613,7 +1003,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
           </div>
         </div>
 
-        {/* Sticky Mobile Bottom CTA Bar */}
+        {/* Sticky Bottom CTA Bar */}
         <div className="sticky bottom-0 z-20 bg-[#101216]/95 backdrop-blur-md p-4 border-t border-white/[0.08] flex items-center gap-2.5">
           <button
             type="button"
@@ -624,7 +1014,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
               }
               onToggleSave(place.id);
             }}
-            className={`h-12 px-3.5 rounded-xl border flex items-center justify-center text-xs font-bold transition-all ${
+            className={`h-12 px-3.5 rounded-xl border flex items-center justify-center text-xs font-bold transition-all cursor-pointer ${
               isSaved
                 ? 'bg-[#ccff00]/10 border-[#ccff00]/40 text-[#ccff00]'
                 : 'bg-white/[0.05] border-white/[0.1] text-zinc-300 hover:text-white'
@@ -637,7 +1027,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
           <button
             type="button"
             onClick={handleToggleWantToTry}
-            className={`h-12 px-3.5 rounded-xl border flex items-center justify-center text-xs font-bold transition-all ${
+            className={`h-12 px-3.5 rounded-xl border flex items-center justify-center text-xs font-bold transition-all cursor-pointer ${
               wantToTry
                 ? 'bg-rose-500/10 border-rose-500/40 text-rose-400'
                 : 'bg-white/[0.05] border-white/[0.1] text-zinc-300 hover:text-white'
@@ -650,7 +1040,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
           <button
             type="button"
             onClick={openGoogleMaps}
-            className="flex-1 h-12 rounded-xl bg-[#ccff00] text-black font-extrabold text-xs tracking-wider uppercase flex items-center justify-center gap-2 hover:bg-[#d4ff1a] active:scale-[0.98] transition-all electric-glow-sm"
+            className="flex-1 h-12 rounded-xl bg-[#ccff00] text-black font-extrabold text-xs tracking-wider uppercase flex items-center justify-center gap-2 hover:bg-[#d4ff1a] active:scale-[0.98] transition-all electric-glow-sm cursor-pointer"
           >
             <span>Let's Go</span>
           </button>
@@ -735,7 +1125,8 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
           defaultPlaceName={place.name}
           onRequireAuth={onRequireAuth}
           onPostSubmitted={() => {
-            fetchPublicPlacePosts(place.id).then((posts) => setPublicPosts(posts || []));
+            loadPlacePosts();
+            if (onPlaceUpdated) onPlaceUpdated();
           }}
         />
       </div>

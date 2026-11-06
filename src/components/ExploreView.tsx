@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Search, MapPin, SlidersHorizontal, LayoutGrid, Map as MapIcon, X, Clock, Navigation, Plus } from 'lucide-react';
+import { Search, MapPin, SlidersHorizontal, LayoutGrid, Map as MapIcon, X, Clock, Navigation, Plus, MessageSquarePlus, Sparkles } from 'lucide-react';
 import { FilterState, UserLocation } from '../types/outera';
 import { PlaceWithDistance } from '../services/discoveryEngine';
 import { PlaceCard } from './PlaceCard';
@@ -109,7 +109,7 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
       )}
 
       {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+      <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-3">
         <div>
           <div className="flex items-center gap-2 mb-1">
             <span className="text-xs font-bold uppercase tracking-wider text-[#ccff00]">
@@ -135,16 +135,29 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
           </h1>
         </div>
 
-        {/* Controls: Share Experience & View Toggle */}
-        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+        {/* Controls: Two Separate Scout Actions + View Toggle */}
+        <div className="flex flex-wrap items-center gap-2 self-start lg:self-auto">
           {onOpenCreatePost && (
             <button
               type="button"
               onClick={onOpenCreatePost}
+              className="h-9 px-3.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.12] text-white font-bold text-xs flex items-center gap-1.5 active:scale-95 transition-all"
+              title="Write a review or share an experience for an existing place"
+            >
+              <MessageSquarePlus className="w-3.5 h-3.5 text-[#ccff00]" />
+              <span>Create Community Post</span>
+            </button>
+          )}
+
+          {onSuggestPlace && (
+            <button
+              type="button"
+              onClick={onSuggestPlace}
               className="h-9 px-3.5 rounded-xl bg-[#ccff00] hover:bg-[#d8ff33] text-black font-extrabold text-xs flex items-center gap-1.5 shadow-md shadow-[#ccff00]/10 active:scale-95 transition-all"
+              title="Propose a brand new place to OUTERA"
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>Share Experience</span>
+              <span>+ Suggest a Place</span>
             </button>
           )}
 

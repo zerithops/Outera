@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Bookmark, Sparkles, Navigation } from 'lucide-react';
+import { Bookmark, Sparkles, Navigation, Star } from 'lucide-react';
 import { PlaceWithDistance } from '../services/discoveryEngine';
 import { formatDistance } from '../services/location';
 
@@ -19,6 +19,10 @@ export const PlaceCard: React.FC<PlaceCardProps> = ({
   const [imageError, setImageError] = useState(false);
   const [isPressing, setIsPressing] = useState(false);
 
+  const hasCommunityData =
+    place.communityConfidence !== 'Insufficient Data' &&
+    (place.communityScore > 0 || (place.communityRating && place.communityRating > 0));
+
   return (
     <article
       onClick={() => onSelect(place)}
@@ -33,9 +37,9 @@ export const PlaceCard: React.FC<PlaceCardProps> = ({
     >
       {/* Visual Image Container */}
       <div className="relative aspect-[16/10] sm:aspect-[4/3] w-full overflow-hidden bg-zinc-900">
-        {!imageError && place.images[0] ? (
+        {!imageError && (place.images?.[0] || place.image) ? (
           <img
-            src={place.images[0]}
+            src={place.images?.[0] || place.image}
             alt={place.name}
             onError={() => setImageError(true)}
             referrerPolicy="no-referrer"
@@ -54,7 +58,7 @@ export const PlaceCard: React.FC<PlaceCardProps> = ({
         <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-transparent pointer-events-none" />
 
         {/* Top Left Marker Status */}
-        <div className="absolute top-3 left-3 z-10 flex items-center gap-1.5">
+        <div className="absolute top-3 left-3 z-10 flex items-center gap-1.5 flex-wrap">
           {place.isTrending && (
             <span className="text-[10px] font-bold text-black bg-[#ccff00] px-2 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1 shadow-md">
               <span>⚡ Trending</span>
@@ -68,6 +72,11 @@ export const PlaceCard: React.FC<PlaceCardProps> = ({
           {place.isEvent && (
             <span className="text-[10px] font-bold text-white bg-purple-900/80 backdrop-blur-md px-2 py-0.5 rounded-full uppercase tracking-wider border border-purple-400/40">
               🎟️ Event
+            </span>
+          )}
+          {place.suggestedByScoutName && (
+            <span className="text-[10px] font-bold text-[#ccff00] bg-black/75 backdrop-blur-md px-2 py-0.5 rounded-full border border-[#ccff00]/30">
+              Scout: {place.suggestedByScoutName}
             </span>
           )}
         </div>
@@ -88,18 +97,29 @@ export const PlaceCard: React.FC<PlaceCardProps> = ({
           </button>
         </div>
 
-        {/* Bottom Image Overlay: Category & Community Worth-it Score */}
+        {/* Bottom Image Overlay: Category & Real Community Confidence */}
         <div className="absolute bottom-3 left-3 right-3 flex items-end justify-between pointer-events-none">
           <div className="flex items-center gap-1.5 text-xs text-white font-medium">
             <span className="text-white/90">{place.category}</span>
             <span aria-hidden="true" className="text-white/50">·</span>
-            <span className="text-[#ccff00] font-semibold">{place.openingHours.openNow ? 'Open Now' : 'Closed'}</span>
+            <span className="text-[#ccff00] font-semibold">
+              {place.openingHours.openNow ? 'Open Now' : 'Closed'}
+            </span>
           </div>
 
           <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
-            <span className="text-[#ccff00] font-mono tabular-nums">{place.communityScore}%</span>
+            {place.communityRating && place.communityRating > 0 ? (
+              <span className="flex items-center gap-0.5 text-[#ccff00] font-mono tabular-nums">
+                <Star className="w-3 h-3 fill-[#ccff00] text-[#ccff00]" />
+                <span>{place.communityRating}</span>
+              </span>
+            ) : hasCommunityData ? (
+              <span className="text-[#ccff00] font-mono tabular-nums">{place.communityScore}%</span>
+            ) : null}
             <span className="text-[10px] text-zinc-300 px-1.5 py-0.2 rounded bg-black/60 border border-white/10">
-              {place.communityConfidence} Conf
+              {place.communityConfidence === 'Insufficient Data'
+                ? 'Insufficient Data'
+                : `${place.communityConfidence} Conf`}
             </span>
           </div>
         </div>
@@ -111,7 +131,7 @@ export const PlaceCard: React.FC<PlaceCardProps> = ({
           {place.name}
         </h3>
 
-        {/* Clean unboxed metadata (anti-slop rule: no static pills) */}
+        {/* Clean unboxed metadata */}
         <div className="flex flex-wrap items-center gap-1.5 text-xs text-zinc-400 mt-1.5 font-medium">
           {place.distanceKm !== undefined && (
             <>
@@ -122,7 +142,7 @@ export const PlaceCard: React.FC<PlaceCardProps> = ({
               <span aria-hidden="true" className="text-zinc-600">·</span>
             </>
           )}
-          <span>{place.priceLevel.label}</span>
+          <span>{place.priceLabel || place.priceLevel.label}</span>
           <span aria-hidden="true" className="text-zinc-600">·</span>
           <span>{place.neighborhood || place.district}</span>
         </div>
@@ -131,7 +151,7 @@ export const PlaceCard: React.FC<PlaceCardProps> = ({
           {place.shortDescription}
         </p>
 
-        {/* Editorial tags (clean unboxed text with subtle border line or unboxed badges) */}
+        {/* Editorial tags */}
         <div className="mt-3.5 pt-3 border-t border-white/[0.06] flex flex-wrap items-center gap-2 text-[11px] text-zinc-400">
           {place.tags.slice(0, 3).map((tag, idx) => (
             <span key={tag} className="flex items-center gap-1.5 text-zinc-300">

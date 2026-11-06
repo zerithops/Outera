@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { X, Check, AlertCircle, Bus, Send } from 'lucide-react';
-import { TransportType, Place } from '../types/outera';
+import { TransportType, Place, FareUnit } from '../types/outera';
 import { submitCommunityFareReport } from '../services/transport';
 
 interface ReportFareModalProps {
@@ -21,7 +21,8 @@ export const ReportFareModal: React.FC<ReportFareModalProps> = ({
   const [origin, setOrigin] = useState(defaultOrigin || 'Dhaka');
   const [transportType, setTransportType] = useState<TransportType>('Bus');
   const [farePaid, setFarePaid] = useState<string>('');
-  const [tripDate, setTripDate] = useState<string>('2026-11-02');
+  const [fareUnit, setFareUnit] = useState<FareUnit>('per person');
+  const [tripDate, setTripDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
   const [notes, setNotes] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -29,14 +30,14 @@ export const ReportFareModal: React.FC<ReportFareModalProps> = ({
 
   if (!isOpen) return null;
 
-  const transportOptions: { type: TransportType; icon: string }[] = [
-    { type: 'Bus', icon: '🚌' },
-    { type: 'CNG / Auto', icon: '🛺' },
-    { type: 'Rickshaw', icon: '🚲' },
-    { type: 'Easy Bike / E-bike', icon: '🛵' },
-    { type: 'Train', icon: '🚆' },
-    { type: 'Launch / Boat', icon: '🚢' },
-    { type: 'Private Car', icon: '🚗' },
+  const transportOptions: { type: TransportType; icon: string; defaultUnit: FareUnit }[] = [
+    { type: 'Bus', icon: '🚌', defaultUnit: 'per person' },
+    { type: 'CNG / Auto', icon: '🛺', defaultUnit: 'per trip' },
+    { type: 'Rickshaw', icon: '🚲', defaultUnit: 'per trip' },
+    { type: 'Easy Bike / E-bike', icon: '🛵', defaultUnit: 'per person' },
+    { type: 'Train', icon: '🚆', defaultUnit: 'per person' },
+    { type: 'Launch / Boat', icon: '🚢', defaultUnit: 'per person' },
+    { type: 'Private Car', icon: '🚗', defaultUnit: 'per vehicle' },
   ];
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -61,6 +62,7 @@ export const ReportFareModal: React.FC<ReportFareModalProps> = ({
       destinationPlaceName: place.name,
       transportType,
       farePaid: parsedFare,
+      fareUnit,
       tripDate,
       notes: notes.trim() || undefined,
     });
@@ -174,7 +176,10 @@ export const ReportFareModal: React.FC<ReportFareModalProps> = ({
                   <button
                     key={opt.type}
                     type="button"
-                    onClick={() => setTransportType(opt.type)}
+                    onClick={() => {
+                      setTransportType(opt.type);
+                      setFareUnit(opt.defaultUnit);
+                    }}
                     className={`h-9 px-2.5 rounded-xl text-xs font-semibold transition-all border flex items-center gap-1.5 truncate text-left cursor-pointer ${
                       transportType === opt.type
                         ? 'bg-[#ccff00] text-black border-[#ccff00] font-bold shadow-md shadow-[#ccff00]/10'
@@ -188,8 +193,8 @@ export const ReportFareModal: React.FC<ReportFareModalProps> = ({
               </div>
             </div>
 
-            {/* Fare Paid & Date */}
-            <div className="grid grid-cols-2 gap-3">
+            {/* Fare Paid, Fare Unit & Date */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <label className="block text-[11px] font-semibold text-zinc-400 mb-1">
                   Fare Paid (৳ BDT) <span className="text-[#ccff00]">*</span>
@@ -209,6 +214,21 @@ export const ReportFareModal: React.FC<ReportFareModalProps> = ({
                     className="w-full h-9 pl-7 pr-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-xs text-white placeholder-zinc-500 font-mono focus:outline-none focus:border-[#ccff00]"
                   />
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-zinc-400 mb-1">
+                  Fare Unit <span className="text-[#ccff00]">*</span>
+                </label>
+                <select
+                  value={fareUnit}
+                  onChange={(e) => setFareUnit(e.target.value as FareUnit)}
+                  className="w-full h-9 px-2.5 rounded-xl bg-[#181c22] border border-white/[0.08] text-xs text-white focus:outline-none focus:border-[#ccff00]"
+                >
+                  <option value="per person">Per Person</option>
+                  <option value="per trip">Per Trip</option>
+                  <option value="per vehicle">Per Vehicle / Reserve</option>
+                </select>
               </div>
 
               <div>
