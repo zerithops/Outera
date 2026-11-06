@@ -64,6 +64,7 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
   // Photos Lightbox & Mobile Swipe state
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [mobileSlideIdx, setMobileSlideIdx] = useState(0);
+  const [failedImageUrls, setFailedImageUrls] = useState<string[]>([]);
 
   // Helpful state
   const [helpfulCount, setHelpfulCount] = useState(0);
@@ -144,6 +145,7 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
     if (isOpen) {
       setLightboxIndex(null);
       setMobileSlideIdx(0);
+      setFailedImageUrls([]);
       setShowDeleteConfirm(false);
       setShowReportModal(false);
       setReportSuccess(false);
@@ -342,7 +344,13 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
   };
 
   // Strictly maximum 2 photos: Photo 1 = primary/cover, Photo 2 = secondary
-  const images = (currentPost?.images || []).slice(0, 2);
+  const images = (currentPost?.images || [])
+    .filter((url) => Boolean(url) && !failedImageUrls.includes(url))
+    .slice(0, 2);
+
+  const handleImageError = (url: string) => {
+    setFailedImageUrls((prev) => (prev.includes(url) ? prev : [...prev, url]));
+  };
 
   return (
     <div
@@ -672,6 +680,7 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
                         alt="Primary post photo"
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                         loading="lazy"
+                        onError={() => handleImageError(images[0])}
                       />
                     </button>
                   )}
@@ -691,6 +700,7 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
                             alt="Primary cover photo"
                             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                             loading="lazy"
+                            onError={() => handleImageError(images[0])}
                           />
                           <span className="absolute bottom-2 left-2 px-2 py-0.5 rounded bg-black/75 text-[10px] font-bold text-[#ccff00] border border-white/10">
                             Primary
@@ -706,6 +716,7 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
                             alt="Secondary photo"
                             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                             loading="lazy"
+                            onError={() => handleImageError(images[1])}
                           />
                           <span className="absolute bottom-2 left-2 px-2 py-0.5 rounded bg-black/75 text-[10px] font-bold text-zinc-200 border border-white/10">
                             Photo 2
@@ -717,10 +728,11 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
                       <div className="sm:hidden space-y-2">
                         <div className="relative rounded-2xl overflow-hidden aspect-[4/3] bg-white/[0.04] border border-white/[0.08]">
                           <img
-                            src={images[mobileSlideIdx]}
+                            src={images[mobileSlideIdx] || images[0]}
                             alt={`Photo ${mobileSlideIdx + 1}`}
                             onClick={() => setLightboxIndex(mobileSlideIdx)}
                             className="w-full h-full object-cover cursor-pointer"
+                            onError={() => handleImageError(images[mobileSlideIdx] || images[0])}
                           />
                           <button
                             type="button"
@@ -762,8 +774,8 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
               )}
 
               {/* Helpful & Report Action Bar */}
-              <div className="flex items-center justify-between pt-2 border-t border-white/[0.06]">
-                <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-white/[0.06]">
+                <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
                     disabled={togglingHelpful}
@@ -782,6 +794,28 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
                       </span>
                     )}
                   </button>
+
+                  {isOwner && !isEditing && (
+                    <button
+                      type="button"
+                      onClick={handleStartEdit}
+                      className="h-9 px-3 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-xs font-bold text-zinc-200 hover:text-white flex items-center gap-1.5 transition-all"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                      <span>Edit</span>
+                    </button>
+                  )}
+
+                  {canDelete && (
+                    <button
+                      type="button"
+                      onClick={() => setShowDeleteConfirm(true)}
+                      className="h-9 px-3 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/25 text-xs font-bold text-rose-400 hover:text-rose-300 flex items-center gap-1.5 transition-all"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Delete</span>
+                    </button>
+                  )}
                 </div>
 
                 <button

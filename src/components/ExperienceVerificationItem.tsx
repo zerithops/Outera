@@ -7,6 +7,7 @@ import {
   ThumbsUp,
   HelpCircle,
   ShieldAlert,
+  Trash2,
 } from 'lucide-react';
 import {
   DifferenceReason,
@@ -14,10 +15,12 @@ import {
   VerificationResponseOption,
 } from '../types/outera';
 import {
+  deleteExperienceReport,
   getUserVerificationForReport,
   submitModerationReport,
   submitVerificationAction,
 } from '../services/storage';
+import { deleteExperienceInSupabase } from '../services/supabase';
 
 interface ExperienceVerificationItemProps {
   report: ExperienceReport;
@@ -26,6 +29,7 @@ interface ExperienceVerificationItemProps {
   onVerificationUpdated: () => void;
   isAuthenticated?: boolean;
   onRequireAuth?: (action: string) => void;
+  canDelete?: boolean;
 }
 
 export const ExperienceVerificationItem: React.FC<ExperienceVerificationItemProps> = ({
@@ -35,6 +39,7 @@ export const ExperienceVerificationItem: React.FC<ExperienceVerificationItemProp
   onVerificationUpdated,
   isAuthenticated = false,
   onRequireAuth,
+  canDelete = true,
 }) => {
   const existingVote = getUserVerificationForReport(report.id);
   const [selectedResponse, setSelectedResponse] = useState<VerificationResponseOption | null>(
@@ -46,6 +51,8 @@ export const ExperienceVerificationItem: React.FC<ExperienceVerificationItemProp
   );
   const [hasVoted, setHasVoted] = useState(Boolean(existingVote));
   const [voteFeedback, setVoteFeedback] = useState<string | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Moderation modal state
   const [showReportModal, setShowReportModal] = useState(false);
@@ -53,6 +60,18 @@ export const ExperienceVerificationItem: React.FC<ExperienceVerificationItemProp
     'Wrong information' | 'Spam' | 'Abusive content' | 'Duplicate' | 'Potentially misleading'
   >('Wrong information');
   const [reportSubmitted, setReportSubmitted] = useState(false);
+
+  const handleDeleteObservation = async () => {
+    setIsDeleting(true);
+    try {
+      deleteExperienceReport(report.id);
+      await deleteExperienceInSupabase(report.id);
+      onVerificationUpdated();
+    } finally {
+      setIsDeleting(false);
+      setConfirmingDelete(false);
+    }
+  };
 
   const verification = report.verification;
   const total = verification.totalResponses || 1;
@@ -140,16 +159,50 @@ export const ExperienceVerificationItem: React.FC<ExperienceVerificationItemProp
           </p>
         </div>
 
-        {/* Moderation button */}
-        <button
-          type="button"
-          onClick={() => setShowReportModal(true)}
-          className="text-zinc-500 hover:text-zinc-300 p-1 rounded transition-colors"
-          title="Report inaccurate content"
-          aria-label="Report experience"
-        >
-          <Flag className="w-3.5 h-3.5" />
-        </button>
+        {/* Moderation & Delete buttons */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {canDelete && (
+            confirmingDelete ? (
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  disabled={isDeleting}
+                  onClick={handleDeleteObservation}
+                  className="px-2 py-1 rounded-lg bg-rose-500 hover:bg-rose-600 text-[10px] font-extrabold text-white transition-colors"
+                >
+                  {isDeleting ? 'Deleting...' : 'Confirm'}
+                </button>
+                <button
+                  type="button"
+                  disabled={isDeleting}
+                  onClick={() => setConfirmingDelete(false)}
+                  className="px-2 py-1 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] text-[10px] font-bold text-zinc-300 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setConfirmingDelete(true)}
+                className="text-zinc-500 hover:text-rose-400 p-1 rounded transition-colors"
+                title="Delete observation"
+                aria-label="Delete experience"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            )
+          )}
+          <button
+            type="button"
+            onClick={() => setShowReportModal(true)}
+            className="text-zinc-500 hover:text-zinc-300 p-1 rounded transition-colors"
+            title="Report inaccurate content"
+            aria-label="Report experience"
+          >
+            <Flag className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
 
       {/* Actual Experience Observation */}

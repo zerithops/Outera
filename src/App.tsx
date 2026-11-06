@@ -879,6 +879,7 @@ export default function App() {
                 }}
                 onSelectPost={handleOpenPostDetails}
                 onOpenSuggestionModal={() => setSuggestionModalOpen(true)}
+                onPostsChanged={refreshData}
               />
             )}
           </>

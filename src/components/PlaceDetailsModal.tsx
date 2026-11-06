@@ -21,6 +21,7 @@ import {
   Wallet,
   Sun,
   ShieldCheck,
+  Trash2,
 } from 'lucide-react';
 import { PlaceWithDistance } from '../services/discoveryEngine';
 import { formatDistance } from '../services/location';
@@ -31,6 +32,7 @@ import {
   submitBusinessClaim,
   fetchPublicPlacePosts,
   togglePostHelpful,
+  deleteUserPost,
   PlacePost,
 } from '../services/supabase';
 import { CreatePostModal } from './CreatePostModal';
@@ -68,6 +70,9 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
   onRequireAuth,
   userLocation,
   onSelectPost,
+  onDeletePost,
+  currentUserId,
+  isAdmin = false,
   allPlaces = [],
   onSelectAnotherPlace,
 }) => {
@@ -83,6 +88,8 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
   const [publicPosts, setPublicPosts] = useState<PlacePost[]>([]);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [mobileHeroIdx, setMobileHeroIdx] = useState(0);
+  const [confirmingDeletePostId, setConfirmingDeletePostId] = useState<string | null>(null);
+  const [deletingPostId, setDeletingPostId] = useState<string | null>(null);
 
   const loadPlacePosts = React.useCallback(async () => {
     if (!place) return;
@@ -170,6 +177,19 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
     }
   };
 
+  const handleConfirmDeletePlacePost = async (e: React.MouseEvent, postId: string) => {
+    e.stopPropagation();
+    setDeletingPostId(postId);
+    const res = await deleteUserPost(postId);
+    setDeletingPostId(null);
+    setConfirmingDeletePostId(null);
+    if (res.success) {
+      setPublicPosts((prev) => prev.filter((p) => p.id !== postId));
+      if (onDeletePost) onDeletePost(postId);
+      if (onPlaceUpdated) onPlaceUpdated();
+    }
+  };
+
   const handleClaimSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!claimPhone) return;
@@ -234,25 +254,25 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
     >
       <div className="w-full sm:max-w-3xl max-h-[92vh] sm:max-h-[90vh] bg-[#101216] border-t sm:border border-white/[0.1] rounded-t-3xl sm:rounded-2xl overflow-y-auto no-scrollbar shadow-2xl flex flex-col animate-in fade-in slide-in-from-bottom-6 duration-200">
         {/* Sticky Top Bar */}
-        <div className="sticky top-0 z-20 bg-[#101216]/95 backdrop-blur-md px-4 py-3 border-b border-white/[0.08] flex items-center justify-between">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs font-semibold uppercase tracking-wider text-[#ccff00]">
+        <div className="sticky top-0 z-20 bg-[#101216]/95 backdrop-blur-md px-3.5 sm:px-4 py-3 border-b border-white/[0.08] flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 overflow-hidden">
+            <span className="text-[11px] sm:text-xs font-semibold uppercase tracking-wider text-[#ccff00] shrink-0">
               {place.category}
             </span>
-            <span className="text-zinc-600">·</span>
-            <span className="text-xs text-zinc-400 font-mono">{formatDistance(place.distanceKm)}</span>
-            <span className="text-zinc-600">·</span>
-            <span className="text-xs text-zinc-400 font-medium">
+            <span className="text-zinc-600 shrink-0">·</span>
+            <span className="text-[11px] sm:text-xs text-zinc-400 font-mono shrink-0">{formatDistance(place.distanceKm)}</span>
+            <span className="text-zinc-600 hidden xs:inline shrink-0">·</span>
+            <span className="text-[11px] sm:text-xs text-zinc-400 font-medium truncate hidden xs:inline">
               {place.upazila ? `${place.upazila}, ` : ''}
               {place.district}
             </span>
           </div>
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 shrink-0">
             <button
               type="button"
               onClick={handleShare}
-              className="w-9 h-9 rounded-full bg-white/[0.05] hover:bg-white/[0.1] flex items-center justify-center text-zinc-300 hover:text-white transition-all cursor-pointer"
+              className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-white/[0.05] hover:bg-white/[0.1] flex items-center justify-center text-zinc-300 hover:text-white transition-all cursor-pointer"
               aria-label="Share spot"
               title="Share"
             >
@@ -261,7 +281,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
             <button
               type="button"
               onClick={() => onToggleSave(place.id)}
-              className={`w-9 h-9 rounded-full flex items-center justify-center transition-all cursor-pointer ${
+              className={`w-8 h-8 sm:w-9 sm:h-9 rounded-full flex items-center justify-center transition-all cursor-pointer ${
                 isSaved ? 'bg-[#ccff00] text-black' : 'bg-white/[0.05] text-zinc-300 hover:text-white'
               }`}
               aria-label={isSaved ? 'Saved' : 'Save'}
@@ -271,7 +291,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="w-9 h-9 rounded-full bg-white/[0.05] hover:bg-white/[0.1] flex items-center justify-center text-zinc-400 hover:text-white ml-1 cursor-pointer"
+              className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-white/[0.05] hover:bg-white/[0.1] flex items-center justify-center text-zinc-400 hover:text-white ml-0.5 cursor-pointer"
               aria-label="Close"
             >
               <X className="w-4 h-4" />
@@ -343,15 +363,15 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
           )}
 
           {/* Opening Status Badge */}
-          <div className="absolute bottom-4 left-4 flex items-center gap-2 text-xs font-semibold px-3 py-1.5 rounded-full bg-black/75 backdrop-blur-md border border-white/10 text-white">
+          <div className="absolute bottom-3 left-3 max-w-[calc(100%-4.5rem)] flex items-center gap-1.5 text-[11px] sm:text-xs font-semibold px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-full bg-black/80 backdrop-blur-md border border-white/10 text-white">
             <span
-              className={`w-2 h-2 rounded-full ${
+              className={`w-2 h-2 rounded-full shrink-0 ${
                 place.openingHours?.openNow ? 'bg-[#ccff00]' : 'bg-red-400'
               }`}
             />
-            <span>{place.openingHours?.openNow ? 'Open Now' : 'Closed Right Now'}</span>
-            <span className="text-zinc-500">·</span>
-            <span className="text-zinc-300 font-normal">
+            <span className="shrink-0">{place.openingHours?.openNow ? 'Open Now' : 'Closed'}</span>
+            <span className="text-zinc-500 shrink-0">·</span>
+            <span className="text-zinc-300 font-normal truncate">
               {typeof place.openingHours?.hoursText === 'string' && place.openingHours.hoursText
                 ? place.openingHours.hoursText
                 : 'Hours vary'}
@@ -359,22 +379,22 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
           </div>
 
           {/* Real Community Rating & Confidence Badge */}
-          <div className="absolute top-4 left-4 flex items-center gap-2 px-3 py-1 rounded-full bg-black/80 backdrop-blur-md border border-white/15 text-[11px] font-bold text-white">
+          <div className="absolute top-3 left-3 max-w-[calc(100%-1.5rem)] flex items-center gap-1.5 px-2.5 sm:px-3 py-1 rounded-full bg-black/80 backdrop-blur-md border border-white/15 text-[10px] sm:text-[11px] font-bold text-white truncate">
             {computedAvgRating ? (
               <>
-                <span className="flex items-center gap-1 text-[#ccff00] font-mono">
-                  <Star className="w-3.5 h-3.5 fill-[#ccff00] text-[#ccff00]" />
+                <span className="flex items-center gap-1 text-[#ccff00] font-mono shrink-0">
+                  <Star className="w-3 h-3 sm:w-3.5 sm:h-3.5 fill-[#ccff00] text-[#ccff00]" />
                   <span>{computedAvgRating} / 5</span>
                 </span>
-                <span className="text-zinc-500">·</span>
+                <span className="text-zinc-500 shrink-0">·</span>
               </>
             ) : place.communityScore > 0 ? (
               <>
-                <span className="text-[#ccff00] font-mono">{place.communityScore}% Worth It</span>
-                <span className="text-zinc-500">·</span>
+                <span className="text-[#ccff00] font-mono shrink-0">{place.communityScore}% Worth It</span>
+                <span className="text-zinc-500 shrink-0">·</span>
               </>
             ) : null}
-            <span>Confidence: {effectiveConfidence}</span>
+            <span className="truncate">Confidence: {effectiveConfidence}</span>
           </div>
         </div>
 
@@ -748,20 +768,23 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
 
                         {/* Up to 2 Photos */}
                         {p.images && p.images.length > 0 && (
-                          <div className="grid grid-cols-2 gap-2 pt-1">
+                          <div className="grid grid-cols-1 xs:grid-cols-2 gap-2 pt-1">
                             {p.images.slice(0, 2).map((img, i) => (
                               <img
                                 key={i}
                                 src={img}
                                 alt={`${p.title} photo ${i + 1}`}
                                 className="w-full h-28 rounded-xl object-cover border border-white/[0.08]"
+                                onError={(e) => {
+                                  (e.currentTarget as HTMLImageElement).style.display = 'none';
+                                }}
                               />
                             ))}
                           </div>
                         )}
 
-                        {/* Helpful, Comments, Report */}
-                        <div className="flex items-center justify-between pt-2 border-t border-white/[0.05] text-[11px] text-zinc-400">
+                        {/* Helpful, Comments, Report & Owner Delete */}
+                        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-white/[0.05] text-[11px] text-zinc-400">
                           <div className="flex items-center gap-3">
                             <button
                               type="button"
@@ -778,10 +801,48 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
                               <span>Comments</span>
                             </span>
                           </div>
-                          <span className="flex items-center gap-1 text-zinc-500 hover:text-zinc-300">
-                            <Flag className="w-3 h-3" />
-                            <span>Report</span>
-                          </span>
+                          <div className="flex items-center gap-2">
+                            {(isAdmin || (currentUserId && p.user_id === currentUserId)) && (
+                              confirmingDeletePostId === p.id ? (
+                                <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                                  <button
+                                    type="button"
+                                    disabled={deletingPostId === p.id}
+                                    onClick={(e) => handleConfirmDeletePlacePost(e, p.id)}
+                                    className="px-2 py-0.5 rounded bg-rose-500 hover:bg-rose-600 text-white text-[10px] font-extrabold"
+                                  >
+                                    {deletingPostId === p.id ? 'Deleting...' : 'Confirm'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setConfirmingDeletePostId(null);
+                                    }}
+                                    className="px-2 py-0.5 rounded bg-white/[0.08] text-zinc-300 text-[10px] font-bold"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setConfirmingDeletePostId(p.id);
+                                  }}
+                                  className="flex items-center gap-1 text-rose-400 hover:text-rose-300 font-semibold"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                  <span>Delete</span>
+                                </button>
+                              )
+                            )}
+                            <span className="flex items-center gap-1 text-zinc-500 hover:text-zinc-300">
+                              <Flag className="w-3 h-3" />
+                              <span>Report</span>
+                            </span>
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -811,10 +872,10 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
           ) : (
             /* COMMUNITY POSTS & EXPERIENCES TAB */
             <div className="space-y-4">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <h2 className="text-sm font-bold text-white flex items-center gap-2">
-                    <Users className="w-4 h-4 text-[#ccff00]" />
+                    <Users className="w-4 h-4 text-[#ccff00] shrink-0" />
                     <span>Real Visitor Posts & Community Observations</span>
                   </h2>
                   <p className="text-xs text-zinc-400 mt-0.5">
@@ -822,7 +883,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
                   </p>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
                   <button
                     type="button"
                     onClick={() => {
@@ -896,19 +957,22 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
                         <p className="text-xs text-zinc-300 leading-relaxed">{p.content}</p>
 
                         {p.images && p.images.length > 0 && (
-                          <div className="grid grid-cols-2 gap-2 pt-1">
+                          <div className="grid grid-cols-1 xs:grid-cols-2 gap-2 pt-1">
                             {p.images.slice(0, 2).map((img, i) => (
                               <img
                                 key={i}
                                 src={img}
                                 alt={`${p.title} photo ${i + 1}`}
                                 className="w-full h-32 rounded-xl object-cover border border-white/[0.08]"
+                                onError={(e) => {
+                                  (e.currentTarget as HTMLImageElement).style.display = 'none';
+                                }}
                               />
                             ))}
                           </div>
                         )}
 
-                        <div className="flex items-center justify-between pt-2 border-t border-white/[0.05] text-[11px] text-zinc-400">
+                        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-white/[0.05] text-[11px] text-zinc-400">
                           <div className="flex items-center gap-3">
                             <button
                               type="button"
@@ -925,10 +989,48 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
                               <span>Comments & Details</span>
                             </span>
                           </div>
-                          <span className="flex items-center gap-1 text-zinc-500">
-                            <Flag className="w-3 h-3" />
-                            <span>Report</span>
-                          </span>
+                          <div className="flex items-center gap-2">
+                            {(isAdmin || (currentUserId && p.user_id === currentUserId)) && (
+                              confirmingDeletePostId === p.id ? (
+                                <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                                  <button
+                                    type="button"
+                                    disabled={deletingPostId === p.id}
+                                    onClick={(e) => handleConfirmDeletePlacePost(e, p.id)}
+                                    className="px-2 py-0.5 rounded bg-rose-500 hover:bg-rose-600 text-white text-[10px] font-extrabold"
+                                  >
+                                    {deletingPostId === p.id ? 'Deleting...' : 'Confirm'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setConfirmingDeletePostId(null);
+                                    }}
+                                    className="px-2 py-0.5 rounded bg-white/[0.08] text-zinc-300 text-[10px] font-bold"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setConfirmingDeletePostId(p.id);
+                                  }}
+                                  className="flex items-center gap-1 text-rose-400 hover:text-rose-300 font-semibold"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                  <span>Delete</span>
+                                </button>
+                              )
+                            )}
+                            <span className="flex items-center gap-1 text-zinc-500">
+                              <Flag className="w-3 h-3" />
+                              <span>Report</span>
+                            </span>
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -1004,7 +1106,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
         </div>
 
         {/* Sticky Bottom CTA Bar */}
-        <div className="sticky bottom-0 z-20 bg-[#101216]/95 backdrop-blur-md p-4 border-t border-white/[0.08] flex items-center gap-2.5">
+        <div className="sticky bottom-0 z-20 bg-[#101216]/95 backdrop-blur-md p-3 sm:p-4 border-t border-white/[0.08] flex items-center gap-2 sm:gap-2.5">
           <button
             type="button"
             onClick={() => {
@@ -1014,33 +1116,33 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
               }
               onToggleSave(place.id);
             }}
-            className={`h-12 px-3.5 rounded-xl border flex items-center justify-center text-xs font-bold transition-all cursor-pointer ${
+            className={`h-11 sm:h-12 px-2.5 sm:px-3.5 rounded-xl border flex items-center justify-center text-[11px] sm:text-xs font-bold transition-all cursor-pointer shrink-0 ${
               isSaved
                 ? 'bg-[#ccff00]/10 border-[#ccff00]/40 text-[#ccff00]'
                 : 'bg-white/[0.05] border-white/[0.1] text-zinc-300 hover:text-white'
             }`}
           >
-            <Bookmark className={`w-4 h-4 mr-1.5 ${isSaved ? 'fill-current' : ''}`} />
+            <Bookmark className={`w-3.5 h-3.5 sm:w-4 sm:h-4 mr-1 sm:mr-1.5 ${isSaved ? 'fill-current' : ''}`} />
             <span>{isSaved ? 'Saved' : 'Save'}</span>
           </button>
 
           <button
             type="button"
             onClick={handleToggleWantToTry}
-            className={`h-12 px-3.5 rounded-xl border flex items-center justify-center text-xs font-bold transition-all cursor-pointer ${
+            className={`h-11 sm:h-12 px-2.5 sm:px-3.5 rounded-xl border flex items-center justify-center text-[11px] sm:text-xs font-bold transition-all cursor-pointer shrink-0 ${
               wantToTry
                 ? 'bg-rose-500/10 border-rose-500/40 text-rose-400'
                 : 'bg-white/[0.05] border-white/[0.1] text-zinc-300 hover:text-white'
             }`}
           >
-            <Heart className={`w-4 h-4 mr-1.5 ${wantToTry ? 'fill-current text-rose-400' : ''}`} />
-            <span>{wantToTry ? 'On Bucketlist' : 'Want to Try'}</span>
+            <Heart className={`w-3.5 h-3.5 sm:w-4 sm:h-4 mr-1 sm:mr-1.5 ${wantToTry ? 'fill-current text-rose-400' : ''}`} />
+            <span>{wantToTry ? 'Bucketlist' : 'Want to Try'}</span>
           </button>
 
           <button
             type="button"
             onClick={openGoogleMaps}
-            className="flex-1 h-12 rounded-xl bg-[#ccff00] text-black font-extrabold text-xs tracking-wider uppercase flex items-center justify-center gap-2 hover:bg-[#d4ff1a] active:scale-[0.98] transition-all electric-glow-sm cursor-pointer"
+            className="flex-1 min-w-[96px] h-11 sm:h-12 rounded-xl bg-[#ccff00] text-black font-extrabold text-[11px] sm:text-xs tracking-wider uppercase flex items-center justify-center gap-1.5 sm:gap-2 hover:bg-[#d4ff1a] active:scale-[0.98] transition-all electric-glow-sm cursor-pointer"
           >
             <span>Let's Go</span>
           </button>

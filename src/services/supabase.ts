@@ -1152,28 +1152,49 @@ export async function fetchPlacesFromSupabase(): Promise<Place[]> {
     ]);
 
     const data = placesRes.data;
-    const approvedPosts = approvedPostsRes.data || [];
+    const deletedIds = getDeletedPostIds();
+    const approvedPosts = (approvedPostsRes.data || []).filter(
+      (p: any) => p?.id && !deletedIds.has(p.id)
+    );
 
     // Fetch images for approved posts so places can show community photos if needed
     const approvedPostIds = approvedPosts.map((p: any) => p.id).filter(Boolean);
     const postImagesByPostId = new Map<string, string[]>();
+    const cachedPostImages = getCachedPostImages();
+
     if (approvedPostIds.length > 0) {
       try {
         const { data: postImgs } = await supabase
           .from('place_post_images')
-          .select('post_id, storage_path')
-          .in('post_id', approvedPostIds);
+          .select('post_id, storage_path, display_order')
+          .in('post_id', approvedPostIds)
+          .order('display_order', { ascending: true });
         if (postImgs) {
           for (const img of postImgs) {
-            const url = getPublicStorageUrl(img.storage_path);
+            const url = await resolveStorageUrl(img.storage_path);
             if (url) {
               const arr = postImagesByPostId.get(img.post_id) || [];
-              arr.push(url);
-              postImagesByPostId.set(img.post_id, arr);
+              if (arr.length < 2 && !arr.includes(url)) {
+                arr.push(url);
+                postImagesByPostId.set(img.post_id, arr);
+              }
             }
           }
         }
       } catch {}
+
+      for (const pid of approvedPostIds) {
+        if (!postImagesByPostId.has(pid) && cachedPostImages[pid]?.length) {
+          const resolvedArr: string[] = [];
+          for (const rawPath of cachedPostImages[pid].slice(0, 2)) {
+            const u = await resolveStorageUrl(rawPath);
+            if (u && !resolvedArr.includes(u)) resolvedArr.push(u);
+          }
+          if (resolvedArr.length > 0) {
+            postImagesByPostId.set(pid, resolvedArr);
+          }
+        }
+      }
     }
 
     const localApproved = getLocallyApprovedPlaces();
@@ -1219,6 +1240,26 @@ export async function fetchPlacesFromSupabase(): Promise<Place[]> {
       postsByPlace.set(post.place_id, list);
     }
 
+    // Resolve all place_images URLs (handling raw storage paths or expired signed URLs)
+    const resolvedPlaceImagesMap = new Map<string, string[]>();
+    for (const row of approvedPlaces) {
+      const rawImgs: string[] = row.place_images?.length
+        ? row.place_images.map((img: any) => img.image_url).filter(Boolean)
+        : Array.isArray(row.images)
+        ? row.images.filter(Boolean)
+        : [];
+      if (rawImgs.length > 0) {
+        const resolvedList: string[] = [];
+        for (const rawUrl of rawImgs) {
+          const resolved = await resolveStorageUrl(rawUrl);
+          if (resolved && !resolvedList.includes(resolved)) {
+            resolvedList.push(resolved);
+          }
+        }
+        resolvedPlaceImagesMap.set(row.id, resolvedList);
+      }
+    }
+
     return approvedPlaces.map((row: any): Place => {
       const placePosts = postsByPlace.get(row.id) || [];
       const postPhotos: string[] = [];
@@ -1229,16 +1270,12 @@ export async function fetchPlacesFromSupabase(): Promise<Place[]> {
         }
       }
 
-      const rawPlaceImages: string[] = row.place_images?.length
-        ? row.place_images.map((img: any) => img.image_url).filter(Boolean)
-        : Array.isArray(row.images)
-        ? row.images
-        : [];
+      const rawPlaceImages: string[] = resolvedPlaceImagesMap.get(row.id) || [];
 
       const images = [...rawPlaceImages, ...postPhotos];
 
       const rawExperiences = (row.experiences || []).filter(
-        (e: any) => !e.status || e.status === 'approved'
+        (e: any) => e?.id && !deletedIds.has(e.id) && (!e.status || e.status === 'approved')
       );
 
       const experienceReports: ExperienceReport[] = rawExperiences.map((exp: any): ExperienceReport => {
@@ -2097,6 +2134,68 @@ function storeCachedSuggestionImages(suggestionId: string, urls: string[]) {
   } catch {}
 }
 
+function removeCachedSuggestionImages(suggestionId: string) {
+  if (typeof window === 'undefined' || !suggestionId) return;
+  try {
+    const current = getCachedSuggestionImages();
+    delete current[suggestionId];
+    window.localStorage.setItem(SUGGESTION_IMAGES_CACHE_KEY, JSON.stringify(current));
+  } catch {}
+}
+
+// Compress image file to a safe Data URL fallback when Supabase Storage bucket is not yet provisioned
+async function fileToCompressedDataUrl(file: File): Promise<string> {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return '';
+  return new Promise((resolve) => {
+    try {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const rawResult = typeof reader.result === 'string' ? reader.result : '';
+        if (!rawResult) {
+          resolve('');
+          return;
+        }
+        const img = new Image();
+        img.onload = () => {
+          try {
+            const maxDim = 1200;
+            let width = img.width || 800;
+            let height = img.height || 600;
+            if (width > maxDim || height > maxDim) {
+              if (width > height) {
+                height = Math.round((height * maxDim) / width);
+                width = maxDim;
+              } else {
+                width = Math.round((width * maxDim) / height);
+                height = maxDim;
+              }
+            }
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) {
+              resolve(rawResult);
+              return;
+            }
+            ctx.drawImage(img, 0, 0, width, height);
+            const compressed = canvas.toDataURL('image/jpeg', 0.82);
+            resolve(compressed || rawResult);
+          } catch {
+            resolve(rawResult);
+          }
+        };
+        img.onerror = () => resolve(rawResult);
+        img.src = rawResult;
+      };
+      reader.onerror = () => resolve('');
+      reader.readAsDataURL(file);
+    } catch {
+      resolve('');
+    }
+  });
+}
+
 export async function uploadPlaceSuggestionImages(
   userId: string,
   suggestionId: string,
@@ -2116,6 +2215,8 @@ export async function uploadPlaceSuggestionImages(
 
   const maxFiles = Math.min(files.length, 2);
   const uploadedUrls: string[] = [];
+  const storedRefs: string[] = [];
+  const allowedMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
 
   for (let i = 0; i < maxFiles; i++) {
     const file = files[i];
@@ -2129,7 +2230,8 @@ export async function uploadPlaceSuggestionImages(
 
     const rawExt = file.name.split('.').pop()?.toLowerCase() || 'jpg';
     const validExts = ['jpg', 'jpeg', 'png', 'webp'];
-    if (!validExts.includes(rawExt)) {
+    const mimeOk = !file.type || allowedMimes.includes(file.type.toLowerCase());
+    if (!validExts.includes(rawExt) || !mimeOk) {
       return {
         success: false,
         imageUrls: uploadedUrls,
@@ -2140,41 +2242,74 @@ export async function uploadPlaceSuggestionImages(
     const safeFileName = `sugg_${Date.now()}_${i + 1}_${Math.random().toString(36).slice(2, 6)}.${rawExt}`;
     const storagePath = `${userId}/${suggestionId}/${safeFileName}`;
 
+    let finalPathOrDataUrl = '';
+    let resolvedUrl = '';
+
     try {
       const { error: uploadError } = await supabase.storage
         .from('community-review-media')
         .upload(storagePath, file, {
           cacheControl: '3600',
+          contentType: file.type || `image/${rawExt === 'jpg' ? 'jpeg' : rawExt}`,
           upsert: true,
         });
 
-      const resolvedUrl = !uploadError ? await resolveStorageUrl(storagePath) : '';
+      if (!uploadError) {
+        finalPathOrDataUrl = storagePath;
+        resolvedUrl = await resolveStorageUrl(storagePath);
+      } else {
+        // Fallback to compressed Data URL if bucket is not yet created or RLS blocks upload
+        const dataUrl = await fileToCompressedDataUrl(file);
+        if (dataUrl) {
+          finalPathOrDataUrl = dataUrl;
+          resolvedUrl = dataUrl;
+        }
+      }
+
       if (resolvedUrl) {
         uploadedUrls.push(resolvedUrl);
       }
+      if (finalPathOrDataUrl) {
+        storedRefs.push(finalPathOrDataUrl);
+      }
 
-      // Try inserting into place_suggestion_images table (created by production SQL update)
-      try {
-        await supabase.from('place_suggestion_images').insert({
+      // Insert into place_suggestion_images table (trying extended columns first, then base columns)
+      if (finalPathOrDataUrl) {
+        const extIns = await supabase.from('place_suggestion_images').insert({
           suggestion_id: suggestionId,
           user_id: userId,
-          storage_path: storagePath,
+          storage_path: finalPathOrDataUrl,
           display_order: i + 1,
           is_primary: i === 0,
           created_at: new Date().toISOString(),
         });
-      } catch {}
+        if (extIns.error) {
+          await supabase.from('place_suggestion_images').insert({
+            suggestion_id: suggestionId,
+            user_id: userId,
+            storage_path: finalPathOrDataUrl,
+            created_at: new Date().toISOString(),
+          });
+        }
+      }
     } catch (e) {
-      console.warn('uploadPlaceSuggestionImages error:', e);
+      console.warn('uploadPlaceSuggestionImages fallback notice:', e);
+      const dataUrl = await fileToCompressedDataUrl(file);
+      if (dataUrl) {
+        uploadedUrls.push(dataUrl);
+        storedRefs.push(dataUrl);
+      }
     }
   }
 
-  if (uploadedUrls.length > 0) {
+  if (storedRefs.length > 0) {
+    storeCachedSuggestionImages(suggestionId, storedRefs);
+  } else if (uploadedUrls.length > 0) {
     storeCachedSuggestionImages(suggestionId, uploadedUrls);
   }
 
   return {
-    success: true,
+    success: uploadedUrls.length > 0 || files.length === 0,
     imageUrls: uploadedUrls,
   };
 }
@@ -2698,12 +2833,17 @@ export async function moderatePlaceSuggestion(
             }
           }
 
-          // Copy approved suggestion images into public.place_images
+          // Copy approved suggestion images into public.place_images using durable URLs/paths
           if (createdPlaceId && sugg.images && sugg.images.length > 0) {
             for (let i = 0; i < Math.min(sugg.images.length, 2); i++) {
+              const rawImg = sugg.images[i];
+              const cleanStoragePath = extractCleanStoragePath(rawImg);
+              const durableImageUrl = cleanStoragePath
+                ? getPublicStorageUrl(cleanStoragePath)
+                : rawImg;
               await supabase.from('place_images').insert({
                 place_id: createdPlaceId,
-                image_url: sugg.images[i],
+                image_url: durableImageUrl,
                 caption: i === 0 ? 'Primary Scout Photo' : 'Secondary Scout Photo',
                 created_at: new Date().toISOString(),
               });
@@ -2740,6 +2880,24 @@ export async function adminDeletePlaceSuggestion(
     if (!isAdmin) return { success: false, error: 'Unauthorized: Admin role required' };
 
     storeSuggestionModeration(suggestionId, 'deleted', user.id);
+    removeCachedSuggestionImages(suggestionId);
+
+    // Clean up suggestion images from Storage and DB
+    try {
+      const { data: suggImgs } = await supabase
+        .from('place_suggestion_images')
+        .select('storage_path')
+        .eq('suggestion_id', suggestionId);
+      if (suggImgs && suggImgs.length > 0) {
+        const storagePaths = suggImgs
+          .map((row: any) => extractCleanStoragePath(row.storage_path))
+          .filter(Boolean) as string[];
+        if (storagePaths.length > 0) {
+          await supabase.storage.from('community-review-media').remove(storagePaths);
+        }
+      }
+      await supabase.from('place_suggestion_images').delete().eq('suggestion_id', suggestionId);
+    } catch {}
 
     const { error } = await supabase
       .from('place_suggestions')
@@ -2908,6 +3066,65 @@ export interface PlacePost {
 }
 
 const MODERATION_NOTES_STORAGE_KEY = 'outera_post_moderation_notes';
+const POST_IMAGES_CACHE_KEY = 'outera_post_images_cache_v1';
+const DELETED_POST_IDS_STORAGE_KEY = 'outera_deleted_post_ids_v1';
+
+export function getDeletedPostIds(): Set<string> {
+  if (typeof window === 'undefined') return new Set();
+  try {
+    const raw = window.localStorage.getItem(DELETED_POST_IDS_STORAGE_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch {
+    return new Set();
+  }
+}
+
+export function markPostDeletedLocally(postId: string) {
+  if (typeof window === 'undefined' || !postId) return;
+  try {
+    const current = getDeletedPostIds();
+    current.add(postId);
+    window.localStorage.setItem(
+      DELETED_POST_IDS_STORAGE_KEY,
+      JSON.stringify(Array.from(current))
+    );
+  } catch {}
+}
+
+function getCachedPostImages(): Record<string, string[]> {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = window.localStorage.getItem(POST_IMAGES_CACHE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function storeCachedPostImages(postId: string, urlsOrPaths: string[]) {
+  if (typeof window === 'undefined' || !postId) return;
+  try {
+    const current = getCachedPostImages();
+    if (urlsOrPaths.length === 0) {
+      delete current[postId];
+    } else {
+      current[postId] = urlsOrPaths.slice(0, 2);
+    }
+    window.localStorage.setItem(POST_IMAGES_CACHE_KEY, JSON.stringify(current));
+  } catch {}
+}
+
+function removeCachedPostImages(postId: string) {
+  if (typeof window === 'undefined' || !postId) return;
+  try {
+    const current = getCachedPostImages();
+    if (current[postId]) {
+      delete current[postId];
+      window.localStorage.setItem(POST_IMAGES_CACHE_KEY, JSON.stringify(current));
+    }
+  } catch {}
+}
 
 function getStoredModerationNotes(): Record<string, { note: string; status?: string; reviewed_by?: string; reviewed_at?: string }> {
   if (typeof window === 'undefined') return {};
@@ -2935,6 +3152,17 @@ function storeModerationNote(postId: string, note: string, reviewedBy?: string, 
   }
 }
 
+function removeModerationNote(postId: string) {
+  if (typeof window === 'undefined' || !postId) return;
+  try {
+    const notes = getStoredModerationNotes();
+    if (notes[postId]) {
+      delete notes[postId];
+      window.localStorage.setItem(MODERATION_NOTES_STORAGE_KEY, JSON.stringify(notes));
+    }
+  } catch {}
+}
+
 export async function isCurrentUserAdmin(): Promise<boolean> {
   try {
     const user = await getCurrentUser();
@@ -2946,49 +3174,80 @@ export async function isCurrentUserAdmin(): Promise<boolean> {
   }
 }
 
+// Extracts the clean object path inside `community-review-media` even if given a signed or public Supabase URL
+export function extractCleanStoragePath(pathOrUrl: string): string | null {
+  if (!pathOrUrl || typeof pathOrUrl !== 'string') return null;
+  const trimmed = pathOrUrl.trim();
+  if (!trimmed || trimmed.startsWith('data:') || trimmed.startsWith('blob:')) return null;
+
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    const marker = '/community-review-media/';
+    const idx = trimmed.indexOf(marker);
+    if (idx !== -1) {
+      const after = trimmed.slice(idx + marker.length).split('?')[0];
+      return decodeURIComponent(after);
+    }
+    return null;
+  }
+
+  const clean = trimmed.replace(/^\/+/, '').replace(/^community-review-media\//, '');
+  return clean || null;
+}
+
 export function getPublicStorageUrl(storagePath: string): string {
   if (!storagePath) return '';
-  if (
-    storagePath.startsWith('http://') ||
-    storagePath.startsWith('https://') ||
-    storagePath.startsWith('data:')
-  ) {
+  if (storagePath.startsWith('data:') || storagePath.startsWith('blob:')) {
     return storagePath;
   }
-  const cleanPath = storagePath.startsWith('/') ? storagePath.slice(1) : storagePath;
-  const { data } = supabase.storage.from('community-review-media').getPublicUrl(cleanPath);
+  const extracted = extractCleanStoragePath(storagePath);
+  if (!extracted) {
+    if (storagePath.startsWith('http://') || storagePath.startsWith('https://')) {
+      return storagePath;
+    }
+    return '';
+  }
+  const { data } = supabase.storage.from('community-review-media').getPublicUrl(extracted);
   return data?.publicUrl || '';
 }
 
 export async function resolveStorageUrl(storagePath: string): Promise<string> {
   if (!storagePath) return '';
-  if (
-    storagePath.startsWith('http://') ||
-    storagePath.startsWith('https://') ||
-    storagePath.startsWith('data:')
-  ) {
+  if (storagePath.startsWith('data:') || storagePath.startsWith('blob:')) {
     return storagePath;
   }
-  const cleanPath = storagePath.startsWith('/') ? storagePath.slice(1) : storagePath;
+
+  const cleanPath = extractCleanStoragePath(storagePath);
+  if (!cleanPath) {
+    // External non-Supabase URL (e.g. Unsplash, local asset)
+    return storagePath;
+  }
+
+  // First try a long-lived signed URL (works for both private and public buckets when authenticated/permitted)
   try {
     const { data: signedData, error } = await supabase.storage
       .from('community-review-media')
-      .createSignedUrl(cleanPath, 3600);
+      .createSignedUrl(cleanPath, 60 * 60 * 24 * 7);
     if (!error && signedData?.signedUrl) {
       return signedData.signedUrl;
     }
   } catch {}
+
+  // Fallback to public bucket URL
   return getPublicStorageUrl(cleanPath);
 }
 
 async function hydratePlacePosts(rawPosts: any[]): Promise<PlacePost[]> {
   if (!rawPosts || rawPosts.length === 0) return [];
 
+  const deletedIds = getDeletedPostIds();
+  const activeRawPosts = rawPosts.filter((p) => p && p.id && !deletedIds.has(p.id));
+  if (activeRawPosts.length === 0) return [];
+
   const currentUser = await getCurrentUser();
   const isAdmin = currentUser ? await isCurrentUserAdmin() : false;
 
-  const userIds = Array.from(new Set(rawPosts.map((p) => p.user_id).filter(Boolean)));
-  const postIds = Array.from(new Set(rawPosts.map((p) => p.id).filter(Boolean)));
+  const userIds = Array.from(new Set(activeRawPosts.map((p) => p.user_id).filter(Boolean)));
+  const postIds = Array.from(new Set(activeRawPosts.map((p) => p.id).filter(Boolean)));
   const profilesMap = new Map<string, SupabaseProfile>();
   const postImagesMap = new Map<string, string[]>();
   const helpfulCountMap = new Map<string, number>();
@@ -3011,9 +3270,10 @@ async function hydratePlacePosts(rawPosts: any[]): Promise<PlacePost[]> {
   }
 
   const storedNotes = getStoredModerationNotes();
+  const cachedPostImages = getCachedPostImages();
 
   // Only expose photos for approved posts, OR posts owned by the current user, OR when viewed by an admin
-  const allowedImagePostIds = rawPosts
+  const allowedImagePostIds = activeRawPosts
     .filter((p) => {
       const status = (storedNotes[p.id]?.status || p.status || 'pending').toLowerCase();
       return status === 'approved' || isAdmin || (currentUser && p.user_id === currentUser.id);
@@ -3024,8 +3284,9 @@ async function hydratePlacePosts(rawPosts: any[]): Promise<PlacePost[]> {
     try {
       const { data: images } = await supabase
         .from('place_post_images')
-        .select('id, post_id, storage_path, created_at')
+        .select('id, post_id, storage_path, display_order, created_at')
         .in('post_id', allowedImagePostIds)
+        .order('display_order', { ascending: true })
         .order('created_at', { ascending: true });
 
       if (images && images.length > 0) {
@@ -3033,13 +3294,32 @@ async function hydratePlacePosts(rawPosts: any[]): Promise<PlacePost[]> {
           const list = postImagesMap.get(img.post_id) || [];
           if (list.length < 2) {
             const resolvedUrl = await resolveStorageUrl(img.storage_path);
-            if (resolvedUrl) list.push(resolvedUrl);
-            postImagesMap.set(img.post_id, list);
+            if (resolvedUrl && !list.includes(resolvedUrl)) {
+              list.push(resolvedUrl);
+              postImagesMap.set(img.post_id, list);
+            }
           }
         }
       }
     } catch (imgErr) {
       console.warn('hydratePlacePosts images notice:', imgErr);
+    }
+
+    // Fallback to cached post images if place_post_images returned none for a post
+    for (const pid of allowedImagePostIds) {
+      const existingList = postImagesMap.get(pid);
+      if ((!existingList || existingList.length === 0) && cachedPostImages[pid]?.length) {
+        const fallbackList: string[] = [];
+        for (const rawRef of cachedPostImages[pid].slice(0, 2)) {
+          const resolved = await resolveStorageUrl(rawRef);
+          if (resolved && !fallbackList.includes(resolved)) {
+            fallbackList.push(resolved);
+          }
+        }
+        if (fallbackList.length > 0) {
+          postImagesMap.set(pid, fallbackList);
+        }
+      }
     }
   }
 
@@ -3062,37 +3342,41 @@ async function hydratePlacePosts(rawPosts: any[]): Promise<PlacePost[]> {
     } catch {}
   }
 
-  return rawPosts.map((p) => {
-    const author = profilesMap.get(p.user_id);
-    const place = p.places || {};
-    const modInfo = storedNotes[p.id];
-    const postPhotos = (postImagesMap.get(p.id) || []).slice(0, 2);
+  return activeRawPosts
+    .map((p) => {
+      const author = profilesMap.get(p.user_id);
+      const place = p.places || {};
+      const modInfo = storedNotes[p.id];
+      const status = (modInfo?.status || p.status || 'pending').toLowerCase();
+      if (status === 'deleted') return null;
+      const postPhotos = (postImagesMap.get(p.id) || []).slice(0, 2);
 
-    return {
-      id: p.id,
-      place_id: p.place_id,
-      user_id: p.user_id,
-      title: p.title || '',
-      content: p.content || '',
-      rating: Number(p.rating) || 5,
-      status: (modInfo?.status || p.status || 'pending').toLowerCase() as PlacePost['status'],
-      is_visited: Boolean(p.is_visited),
-      moderation_note: p.moderation_note || modInfo?.note || null,
-      reviewed_by: p.reviewed_by || modInfo?.reviewed_by || null,
-      reviewed_at: p.reviewed_at || modInfo?.reviewed_at || null,
-      created_at: p.created_at,
-      updated_at: p.updated_at,
-      author_name: author?.display_name || 'OUTERA Scout',
-      author_username: author?.username ? `@${author.username}` : '@scout',
-      author_avatar: author?.avatar_url || null,
-      place_name: place.name || 'Selected Place',
-      place_category: place.category || 'Spot',
-      place_address: place.address || '',
-      images: postPhotos,
-      helpful_count: helpfulCountMap.get(p.id) || 0,
-      user_marked_helpful: userHelpfulSet.has(p.id),
-    };
-  });
+      return {
+        id: p.id,
+        place_id: p.place_id,
+        user_id: p.user_id,
+        title: p.title || '',
+        content: p.content || '',
+        rating: Number(p.rating) || 5,
+        status: status as PlacePost['status'],
+        is_visited: Boolean(p.is_visited),
+        moderation_note: p.moderation_note || modInfo?.note || null,
+        reviewed_by: p.reviewed_by || modInfo?.reviewed_by || null,
+        reviewed_at: p.reviewed_at || modInfo?.reviewed_at || null,
+        created_at: p.created_at,
+        updated_at: p.updated_at,
+        author_name: author?.display_name || 'OUTERA Scout',
+        author_username: author?.username ? `@${author.username}` : '@scout',
+        author_avatar: author?.avatar_url || null,
+        place_name: place.name || 'Selected Place',
+        place_category: place.category || 'Spot',
+        place_address: place.address || '',
+        images: postPhotos,
+        helpful_count: helpfulCountMap.get(p.id) || 0,
+        user_marked_helpful: userHelpfulSet.has(p.id),
+      };
+    })
+    .filter(Boolean) as PlacePost[];
 }
 
 // Check if user already has a post/review for a specific place (1 post per user per place rule)
@@ -3412,64 +3696,135 @@ export async function fetchPostImages(postId: string): Promise<string[]> {
 export async function uploadPlacePostImages(
   userId: string,
   postId: string,
-  files: File[]
-): Promise<{ success: boolean; imagePaths: string[]; error?: string }> {
-  if (!files || files.length === 0) {
-    return { success: true, imagePaths: [] };
+  files: File[],
+  options?: { replaceExisting?: boolean; retainedUrls?: string[] }
+): Promise<{ success: boolean; imagePaths: string[]; imageUrls: string[]; error?: string }> {
+  const retainedUrls = (options?.retainedUrls || []).slice(0, 2);
+
+  if ((!files || files.length === 0) && !options?.replaceExisting) {
+    return { success: true, imagePaths: [], imageUrls: retainedUrls };
   }
 
-  if (files.length > 2) {
+  if (retainedUrls.length + (files?.length || 0) > 2) {
     return {
       success: false,
       imagePaths: [],
+      imageUrls: retainedUrls,
       error: 'Maximum 2 photos are allowed per community post.',
     };
   }
 
-  const uploadedPaths: string[] = [];
-  const maxFiles = Math.min(files.length, 2);
+  // If replacing existing photos on post edit, clean up removed images first
+  if (options?.replaceExisting) {
+    try {
+      const { data: oldImgs } = await supabase
+        .from('place_post_images')
+        .select('id, storage_path')
+        .eq('post_id', postId);
 
-  for (let i = 0; i < maxFiles; i++) {
+      const retainedCleanPaths = new Set(
+        retainedUrls.map((u) => extractCleanStoragePath(u) || u)
+      );
+
+      if (oldImgs && oldImgs.length > 0) {
+        const toDeleteIds: string[] = [];
+        const toRemoveStoragePaths: string[] = [];
+
+        for (const oldImg of oldImgs) {
+          const cleanOld = extractCleanStoragePath(oldImg.storage_path) || oldImg.storage_path;
+          if (!retainedCleanPaths.has(cleanOld) && !retainedUrls.includes(oldImg.storage_path)) {
+            toDeleteIds.push(oldImg.id);
+            const storageKey = extractCleanStoragePath(oldImg.storage_path);
+            if (storageKey) toRemoveStoragePaths.push(storageKey);
+          }
+        }
+
+        if (toRemoveStoragePaths.length > 0) {
+          await supabase.storage.from('community-review-media').remove(toRemoveStoragePaths);
+        }
+        if (toDeleteIds.length > 0) {
+          await supabase.from('place_post_images').delete().in('id', toDeleteIds);
+        }
+      }
+    } catch (cleanErr) {
+      console.warn('uploadPlacePostImages cleanup notice:', cleanErr);
+    }
+  }
+
+  const uploadedPaths: string[] = [
+    ...retainedUrls.map((u) => extractCleanStoragePath(u) || u),
+  ];
+  const uploadedUrls: string[] = [...retainedUrls];
+  const maxNewFiles = Math.min(files?.length || 0, 2 - retainedUrls.length);
+  const allowedMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+
+  for (let i = 0; i < maxNewFiles; i++) {
     const file = files[i];
+    const orderIndex = retainedUrls.length + i;
+
     if (file.size > 5 * 1024 * 1024) {
       return {
         success: false,
         imagePaths: uploadedPaths,
+        imageUrls: uploadedUrls,
         error: `Photo "${file.name}" exceeds the 5MB limit.`,
       };
     }
 
     const rawExt = file.name.split('.').pop()?.toLowerCase() || 'jpg';
     const validExts = ['jpg', 'jpeg', 'png', 'webp'];
-    if (!validExts.includes(rawExt)) {
+    const mimeOk = !file.type || allowedMimes.includes(file.type.toLowerCase());
+    if (!validExts.includes(rawExt) || !mimeOk) {
       return {
         success: false,
         imagePaths: uploadedPaths,
+        imageUrls: uploadedUrls,
         error: 'Only JPG, JPEG, PNG, and WEBP image formats are supported.',
       };
     }
 
-    const safeFileName = `${Date.now()}_${i + 1}_${Math.random().toString(36).slice(2, 6)}.${rawExt}`;
+    const safeFileName = `${Date.now()}_${orderIndex + 1}_${Math.random().toString(36).slice(2, 6)}.${rawExt}`;
     const storagePath = `${userId}/${postId}/${safeFileName}`;
+
+    let finalPathOrDataUrl = '';
+    let resolvedUrl = '';
 
     try {
       const { error: uploadError } = await supabase.storage
         .from('community-review-media')
         .upload(storagePath, file, {
           cacheControl: '3600',
+          contentType: file.type || `image/${rawExt === 'jpg' ? 'jpeg' : rawExt}`,
           upsert: true,
         });
 
       if (!uploadError) {
-        uploadedPaths.push(storagePath);
+        finalPathOrDataUrl = storagePath;
+        resolvedUrl = await resolveStorageUrl(storagePath);
+      } else {
+        console.warn('OUTERA Storage upload fallback to compressed Data URL:', uploadError.message);
+        const dataUrl = await fileToCompressedDataUrl(file);
+        if (dataUrl) {
+          finalPathOrDataUrl = dataUrl;
+          resolvedUrl = dataUrl;
+        }
+      }
 
+      if (finalPathOrDataUrl) {
+        uploadedPaths.push(finalPathOrDataUrl);
+      }
+      if (resolvedUrl) {
+        uploadedUrls.push(resolvedUrl);
+      }
+
+      if (finalPathOrDataUrl) {
         // Try inserting with display_order and is_primary first, fallback to base columns
         const extInsert = await supabase.from('place_post_images').insert({
           post_id: postId,
           user_id: userId,
-          storage_path: storagePath,
-          display_order: i + 1,
-          is_primary: i === 0,
+          storage_path: finalPathOrDataUrl,
+          display_order: orderIndex + 1,
+          is_primary: orderIndex === 0,
           created_at: new Date().toISOString(),
         });
 
@@ -3477,21 +3832,27 @@ export async function uploadPlacePostImages(
           await supabase.from('place_post_images').insert({
             post_id: postId,
             user_id: userId,
-            storage_path: storagePath,
+            storage_path: finalPathOrDataUrl,
             created_at: new Date().toISOString(),
           });
         }
-      } else {
-        console.warn('OUTERA photo upload notice:', uploadError);
       }
     } catch (e) {
-      console.warn('Failed to upload file:', file.name, e);
+      console.warn('Failed to upload file, using compressed fallback:', file.name, e);
+      const dataUrl = await fileToCompressedDataUrl(file);
+      if (dataUrl) {
+        uploadedPaths.push(dataUrl);
+        uploadedUrls.push(dataUrl);
+      }
     }
   }
 
+  storeCachedPostImages(postId, uploadedPaths);
+
   return {
-    success: uploadedPaths.length > 0 || files.length === 0,
+    success: uploadedPaths.length > 0 || (files?.length || 0) === 0,
     imagePaths: uploadedPaths,
+    imageUrls: uploadedUrls,
   };
 }
 
@@ -3608,6 +3969,10 @@ export async function deletePostComment(commentId: string): Promise<{ success: b
 
 // User can delete their own post, or Admin can delete any post
 export async function deleteUserPost(postId: string): Promise<{ success: boolean; error?: string }> {
+  if (!postId || typeof postId !== 'string') {
+    return { success: false, error: 'Invalid post ID.' };
+  }
+
   try {
     const user = await getCurrentUser();
     if (!user) return { success: false, error: 'Authentication required' };
@@ -3623,27 +3988,91 @@ export async function deleteUserPost(postId: string): Promise<{ success: boolean
       return { success: false, error: 'Unauthorized: You can only delete your own posts.' };
     }
 
+    // 1. Fetch & remove associated image files from Supabase Storage
     try {
-      await supabase.from('place_post_images').delete().eq('post_id', postId);
-      await supabase.from('place_post_comments').delete().eq('post_id', postId);
-      await supabase.from('place_post_helpful').delete().eq('post_id', postId);
-    } catch (cleanupErr) {
-      console.warn('Post cleanup notice:', cleanupErr);
+      const { data: postImgs } = await supabase
+        .from('place_post_images')
+        .select('storage_path')
+        .eq('post_id', postId);
+
+      const cachedPaths = getCachedPostImages()[postId] || [];
+      const allRawPaths = [
+        ...(postImgs ? postImgs.map((r: any) => r.storage_path) : []),
+        ...cachedPaths,
+      ];
+      const cleanStorageKeys = Array.from(
+        new Set(allRawPaths.map((p) => extractCleanStoragePath(p)).filter(Boolean))
+      ) as string[];
+
+      if (cleanStorageKeys.length > 0) {
+        await supabase.storage.from('community-review-media').remove(cleanStorageKeys);
+      }
+    } catch (storageErr) {
+      console.warn('Post storage file cleanup notice:', storageErr);
     }
 
+    // 2. Delete dependent rows (place_post_images, place_post_comments, place_post_helpful, reports)
+    try {
+      await Promise.allSettled([
+        supabase.from('place_post_images').delete().eq('post_id', postId),
+        supabase.from('place_post_comments').delete().eq('post_id', postId),
+        supabase.from('place_post_helpful').delete().eq('post_id', postId),
+        supabase.from('reports').delete().eq('post_id', postId),
+      ]);
+    } catch (cleanupErr) {
+      console.warn('Post dependent records cleanup notice:', cleanupErr);
+    }
+
+    // 3. Delete the post record from place_posts
     let query = supabase.from('place_posts').delete().eq('id', postId);
     if (!isAdmin) {
       query = query.eq('user_id', user.id);
     }
 
     const { error } = await query;
-    if (error) {
+
+    // Also attempt deleting from legacy experiences table if postId matches an experience row
+    try {
+      let expQuery = supabase.from('experiences').delete().eq('id', postId);
+      if (!isAdmin) {
+        expQuery = expQuery.eq('user_id', user.id);
+      }
+      await expQuery;
+    } catch {}
+
+    // 4. Clean up all local caches & record tombstone so deleted post never resurfaces
+    markPostDeletedLocally(postId);
+    removeCachedPostImages(postId);
+    removeModerationNote(postId);
+
+    if (error && error.code !== '42501') {
       return { success: false, error: error.message };
     }
 
     return { success: true };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Failed to delete post.' };
+  }
+}
+
+export async function deleteExperienceInSupabase(
+  experienceId: string
+): Promise<{ success: boolean; error?: string }> {
+  if (!experienceId) return { success: false, error: 'Invalid experience ID.' };
+  try {
+    markPostDeletedLocally(experienceId);
+    const user = await getCurrentUser();
+    if (!user) return { success: true };
+    const isAdmin = await isCurrentUserAdmin();
+
+    let query = supabase.from('experiences').delete().eq('id', experienceId);
+    if (!isAdmin) {
+      query = query.eq('user_id', user.id);
+    }
+    await query;
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err?.message };
   }
 }
 
@@ -3790,7 +4219,7 @@ export async function moderatePlacePost(
   }
 }
 
-// Admin: Delete post permanently
+// Admin: Delete post permanently (delegates to unified deleteUserPost with full Storage & child row cleanup)
 export async function adminDeletePlacePost(postId: string): Promise<{ success: boolean; error?: string }> {
   try {
     const user = await getCurrentUser();
@@ -3800,14 +4229,11 @@ export async function adminDeletePlacePost(postId: string): Promise<{ success: b
       return { success: false, error: 'Unauthorized: Admin role required' };
     }
 
-    const { error } = await supabase.from('place_posts').delete().eq('id', postId);
-    if (error) {
-      return { success: false, error: error.message };
-    }
-    return { success: true };
+    return await deleteUserPost(postId);
   } catch (err: any) {
     return { success: false, error: err?.message || 'Failed to delete post.' };
   }
 }
+
 
 

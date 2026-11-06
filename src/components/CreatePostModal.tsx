@@ -60,7 +60,9 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
   const [existingPlacePost, setExistingPlacePost] = useState<PlacePost | null>(null);
   const [checkingExisting, setCheckingExisting] = useState(false);
 
-  // Direct device photo uploads (strictly max 2)
+  // Direct device photo uploads (strictly max 2 total including retained existing photos)
+  const [existingImageUrls, setExistingImageUrls] = useState<string[]>([]);
+  const [photosModified, setPhotosModified] = useState(false);
   const [selectedPhotos, setSelectedPhotos] = useState<PhotoPreview[]>([]);
   const [photoError, setPhotoError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -80,13 +82,16 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
         setContent(editingPost.content);
         setRating(editingPost.rating);
         setIsVisited(editingPost.is_visited);
+        setExistingImageUrls((editingPost.images || []).slice(0, MAX_POST_PHOTOS));
       } else {
         setSelectedPlaceId(defaultPlaceId || '');
         setTitle('');
         setContent('');
         setRating(5);
         setIsVisited(true);
+        setExistingImageUrls([]);
       }
+      setPhotosModified(false);
       setSelectedPhotos([]);
       setPhotoError(null);
       setErrorMessage(null);
@@ -135,6 +140,8 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
 
   if (!isOpen) return null;
 
+  const totalPhotoCount = existingImageUrls.length + selectedPhotos.length;
+
   const handleSwitchToEditExisting = (postToEdit: PlacePost) => {
     setActiveEditingPost(postToEdit);
     setSelectedPlaceId(postToEdit.place_id);
@@ -142,6 +149,8 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
     setContent(postToEdit.content);
     setRating(postToEdit.rating);
     setIsVisited(postToEdit.is_visited);
+    setExistingImageUrls((postToEdit.images || []).slice(0, MAX_POST_PHOTOS));
+    setPhotosModified(false);
     setExistingPlacePost(null);
     setErrorMessage(null);
   };
@@ -151,7 +160,7 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
 
-    const remainingSlots = MAX_POST_PHOTOS - selectedPhotos.length;
+    const remainingSlots = MAX_POST_PHOTOS - (existingImageUrls.length + selectedPhotos.length);
     if (remainingSlots <= 0) {
       setPhotoError('Maximum 2 photos are allowed per community post (3rd photo is blocked).');
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -183,10 +192,21 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
       });
     }
 
-    setSelectedPhotos((prev) => [...prev, ...validNewPreviews].slice(0, MAX_POST_PHOTOS));
+    if (validNewPreviews.length > 0) {
+      setPhotosModified(true);
+      setSelectedPhotos((prev) =>
+        [...prev, ...validNewPreviews].slice(0, MAX_POST_PHOTOS - existingImageUrls.length)
+      );
+    }
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
+  };
+
+  const handleRemoveExistingPhoto = (index: number) => {
+    setExistingImageUrls((prev) => prev.filter((_, i) => i !== index));
+    setPhotosModified(true);
+    setPhotoError(null);
   };
 
   const handleRemovePhoto = (index: number) => {
@@ -195,6 +215,7 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
       if (removed) URL.revokeObjectURL(removed.previewUrl);
       return prev.filter((_, i) => i !== index);
     });
+    setPhotosModified(true);
     setPhotoError(null);
   };
 
@@ -220,7 +241,7 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
       setErrorMessage('Please share your experience or review.');
       return;
     }
-    if (selectedPhotos.length > MAX_POST_PHOTOS) {
+    if (totalPhotoCount > MAX_POST_PHOTOS) {
       setErrorMessage('Maximum 2 photos are allowed per community post.');
       return;
     }
@@ -236,16 +257,37 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
         is_visited: isVisited,
       });
 
-      setLoading(false);
       if (!res.success) {
+        setLoading(false);
         setErrorMessage(res.error || 'Failed to update post.');
-      } else {
-        setSuccessNotice('Your community post has been updated and queued for moderation.');
-        setTimeout(() => {
-          if (onPostSubmitted) onPostSubmitted();
-          onClose();
-        }, 800);
+        return;
       }
+
+      if (photosModified || selectedPhotos.length > 0) {
+        const filesToUpload = selectedPhotos.map((p) => p.file);
+        setUploadStatus('Updating post photos...');
+        const uploadRes = await uploadPlacePostImages(
+          currentUser.id,
+          activeEditingPost.id,
+          filesToUpload,
+          {
+            replaceExisting: true,
+            retainedUrls: existingImageUrls,
+          }
+        );
+        if (!uploadRes.success && uploadRes.error) {
+          setLoading(false);
+          setErrorMessage(uploadRes.error);
+          return;
+        }
+      }
+
+      setLoading(false);
+      setSuccessNotice('Your community post has been updated and queued for moderation.');
+      setTimeout(() => {
+        if (onPostSubmitted) onPostSubmitted();
+        onClose();
+      }, 800);
     } else {
       const placeIdToUse = selectedPlaceId || defaultPlaceId;
       if (!placeIdToUse) {
@@ -284,7 +326,9 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
         try {
           const uploadRes = await uploadPlacePostImages(currentUser.id, res.data.id, filesToUpload);
           if (!uploadRes.success && uploadRes.error) {
-            console.warn('Photo upload notice:', uploadRes.error);
+            setLoading(false);
+            setErrorMessage(uploadRes.error);
+            return;
           }
         } catch (uploadErr) {
           console.warn('Photo upload warning:', uploadErr);
@@ -434,97 +478,133 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
           </div>
 
           {/* Direct Photo Upload Section — MAXIMUM 2 PHOTOS */}
-          {!activeEditingPost && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <label className="block text-[11px] font-semibold text-zinc-400">
-                  Direct Photo Upload (Maximum 2 Photos)
-                </label>
-                <span className="text-[10px] font-mono text-zinc-400">
-                  {selectedPhotos.length}/{MAX_POST_PHOTOS} photos
-                </span>
-              </div>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <label className="block text-[11px] font-semibold text-zinc-400">
+                Direct Photo Upload (Maximum 2 Photos)
+              </label>
+              <span className="text-[10px] font-mono text-zinc-400 shrink-0">
+                {totalPhotoCount}/{MAX_POST_PHOTOS} photos
+              </span>
+            </div>
 
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                accept="image/jpeg,image/png,image/webp,image/jpg"
-                onChange={handleFileChange}
-                className="hidden"
-              />
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp,image/jpg"
+              onChange={handleFileChange}
+              className="hidden"
+            />
 
-              {/* Thumbnails preview with Primary / Secondary labels */}
-              {selectedPhotos.length > 0 && (
-                <div className="grid grid-cols-2 gap-3 pt-1">
-                  {selectedPhotos.map((photo, idx) => (
+            {/* Thumbnails preview with Primary / Secondary labels */}
+            {totalPhotoCount > 0 && (
+              <div className="grid grid-cols-2 gap-3 pt-1">
+                {existingImageUrls.map((url, idx) => (
+                  <div
+                    key={`existing-${idx}`}
+                    className="relative aspect-[4/3] rounded-xl overflow-hidden bg-white/[0.04] border border-white/[0.12] group"
+                  >
+                    <img
+                      src={url}
+                      alt={`Existing photo ${idx + 1}`}
+                      className="w-full h-full object-cover"
+                    />
+                    <span
+                      className={`absolute bottom-1.5 left-1.5 px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider ${
+                        idx === 0
+                          ? 'bg-[#ccff00] text-black'
+                          : 'bg-black/80 text-white border border-white/15'
+                      }`}
+                    >
+                      {idx === 0 ? 'Photo 1 · Primary' : 'Photo 2 · Secondary'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveExistingPhoto(idx)}
+                      className="absolute top-1.5 right-1.5 p-1.5 rounded-full bg-black/80 hover:bg-red-500 text-white transition-colors cursor-pointer"
+                      title="Remove photo"
+                      aria-label="Remove photo"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+
+                {selectedPhotos.map((photo, idx) => {
+                  const displayIdx = existingImageUrls.length + idx;
+                  return (
                     <div
-                      key={idx}
+                      key={`new-${idx}`}
                       className="relative aspect-[4/3] rounded-xl overflow-hidden bg-white/[0.04] border border-white/[0.12] group"
                     >
                       <img
                         src={photo.previewUrl}
-                        alt={`Upload preview ${idx + 1}`}
+                        alt={`Upload preview ${displayIdx + 1}`}
                         className="w-full h-full object-cover"
                       />
                       <span
                         className={`absolute bottom-1.5 left-1.5 px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider ${
-                          idx === 0
+                          displayIdx === 0
                             ? 'bg-[#ccff00] text-black'
                             : 'bg-black/80 text-white border border-white/15'
                         }`}
                       >
-                        {idx === 0 ? 'Photo 1 · Primary / Cover' : 'Photo 2 · Secondary'}
+                        {displayIdx === 0 ? 'Photo 1 · Primary' : 'Photo 2 · Secondary'}
                       </span>
                       <button
                         type="button"
                         onClick={() => handleRemovePhoto(idx)}
-                        className="absolute top-1.5 right-1.5 p-1.5 rounded-full bg-black/80 hover:bg-red-500 text-white transition-colors"
+                        className="absolute top-1.5 right-1.5 p-1.5 rounded-full bg-black/80 hover:bg-red-500 text-white transition-colors cursor-pointer"
                         title="Remove photo"
                         aria-label="Remove photo"
                       >
                         <X className="w-3.5 h-3.5" />
                       </button>
                     </div>
-                  ))}
-                </div>
-              )}
+                  );
+                })}
+              </div>
+            )}
 
-              {/* Upload trigger button or 3rd photo blocked notice */}
-              {selectedPhotos.length < MAX_POST_PHOTOS ? (
+            {/* Upload trigger button or 3rd photo blocked notice */}
+            {totalPhotoCount < MAX_POST_PHOTOS ? (
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="w-full py-3 px-4 rounded-xl border border-dashed border-white/[0.12] hover:border-[#ccff00]/40 bg-white/[0.02] hover:bg-white/[0.04] flex flex-wrap items-center justify-center gap-2 text-xs text-zinc-300 hover:text-white transition-all group cursor-pointer"
+              >
+                <Camera className="w-4 h-4 text-[#ccff00] group-hover:scale-110 transition-transform shrink-0" />
+                <span className="font-semibold">
+                  {totalPhotoCount === 0
+                    ? 'Upload Photo 1 (Primary Cover)'
+                    : 'Add Photo 2 (Secondary Image)'}
+                </span>
+                <span className="text-[10px] text-zinc-500 font-mono">
+                  (JPG, PNG, WEBP · max 5MB)
+                </span>
+              </button>
+            ) : (
+              <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.08] text-[11px] text-zinc-400 flex items-center justify-between gap-2">
+                <span>Maximum 2 photos selected (3rd photo blocked).</span>
                 <button
                   type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="w-full py-3 px-4 rounded-xl border border-dashed border-white/[0.12] hover:border-[#ccff00]/40 bg-white/[0.02] hover:bg-white/[0.04] flex items-center justify-center gap-2 text-xs text-zinc-300 hover:text-white transition-all group"
+                  onClick={() => {
+                    if (selectedPhotos.length > 0) {
+                      handleRemovePhoto(selectedPhotos.length - 1);
+                    } else if (existingImageUrls.length > 0) {
+                      handleRemoveExistingPhoto(existingImageUrls.length - 1);
+                    }
+                  }}
+                  className="text-[#ccff00] hover:underline font-bold shrink-0 cursor-pointer"
                 >
-                  <Camera className="w-4 h-4 text-[#ccff00] group-hover:scale-110 transition-transform" />
-                  <span className="font-semibold">
-                    {selectedPhotos.length === 0
-                      ? 'Upload Photo 1 (Primary Cover)'
-                      : 'Add Photo 2 (Secondary Image)'}
-                  </span>
-                  <span className="text-[10px] text-zinc-500 font-mono">
-                    (JPG, PNG, WEBP · max 5MB)
-                  </span>
+                  Reselect
                 </button>
-              ) : (
-                <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.08] text-[11px] text-zinc-400 flex items-center justify-between">
-                  <span>Maximum 2 photos selected (3rd photo blocked).</span>
-                  <button
-                    type="button"
-                    onClick={() => handleRemovePhoto(1)}
-                    className="text-[#ccff00] hover:underline font-bold"
-                  >
-                    Reselect
-                  </button>
-                </div>
-              )}
+              </div>
+            )}
 
-              {photoError && (
-                <p className="text-[11px] text-rose-400">{photoError}</p>
-              )}
-            </div>
-          )}
+            {photoError && <p className="text-[11px] text-rose-400">{photoError}</p>}
+          </div>
 
           {/* Rating 1-5 */}
           <div>

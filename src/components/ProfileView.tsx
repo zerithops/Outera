@@ -52,12 +52,14 @@ interface ProfileViewProps {
   onOpenAuthModal?: () => void;
   onSelectPost?: (post: PlacePost) => void;
   onOpenSuggestionModal?: () => void;
+  onPostsChanged?: () => void;
 }
 
 export const ProfileView: React.FC<ProfileViewProps> = ({
   onOpenAuthModal,
   onSelectPost,
   onOpenSuggestionModal,
+  onPostsChanged,
 }) => {
   const [authUser, setAuthUser] = useState<any>(null);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -82,6 +84,11 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [userSuggestions, setUserSuggestions] = useState<PlaceSuggestion[]>([]);
   const [loadingPosts, setLoadingPosts] = useState(false);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+
+  // Inline post delete confirmation state (avoids window.confirm which fails in sandboxed iframes)
+  const [confirmingDeletePostId, setConfirmingDeletePostId] = useState<string | null>(null);
+  const [deletingPostId, setDeletingPostId] = useState<string | null>(null);
+  const [postActionNotice, setPostActionNotice] = useState<string | null>(null);
 
   // Edit Profile Modal
   const [showEditModal, setShowEditModal] = useState(false);
@@ -299,11 +306,23 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   };
 
   const handleDeletePost = async (postId: string) => {
-    if (!confirm('Are you sure you want to delete this post?')) return;
+    setDeletingPostId(postId);
+    setPostActionNotice(null);
     const res = await deleteUserPost(postId);
-    if (res.success && authUser) {
-      loadUserPosts(authUser.id);
-      fetchUserRealStats(authUser.id).then(setStats);
+    setDeletingPostId(null);
+    setConfirmingDeletePostId(null);
+
+    if (res.success) {
+      setUserPosts((prev) => prev.filter((p) => p.id !== postId));
+      setPostActionNotice('Community post deleted permanently.');
+      setTimeout(() => setPostActionNotice(null), 3000);
+      if (authUser) {
+        loadUserPosts(authUser.id);
+        fetchUserRealStats(authUser.id).then(setStats);
+      }
+      if (onPostsChanged) onPostsChanged();
+    } else {
+      setPostActionNotice(res.error || 'Could not delete post. Please try again.');
     }
   };
 
@@ -328,7 +347,19 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const budgetOptions = ['Under ৳300', 'Under ৳500', 'Under ৳1,000', 'No Limit'];
 
   if (activeTab === 'admin' && isAdmin) {
-    return <AdminDashboard onClose={() => setActiveTab('posts')} />;
+    return (
+      <AdminDashboard
+        onClose={() => {
+          setActiveTab('posts');
+          if (authUser) {
+            loadUserPosts(authUser.id);
+            loadUserSuggestions(authUser.id);
+            fetchUserRealStats(authUser.id).then(setStats);
+          }
+          if (onPostsChanged) onPostsChanged();
+        }}
+      />
+    );
   }
 
   return (
@@ -636,7 +667,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       {/* Tab: My Posts */}
       {activeTab === 'posts' && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2">
             <div>
               <h2 className="text-sm font-bold text-white tracking-tight">Your Community Posts</h2>
               <p className="text-[11px] text-zinc-400">
@@ -644,6 +675,12 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               </p>
             </div>
           </div>
+
+          {postActionNotice && (
+            <div className="p-3 rounded-xl bg-[#D8FF36]/10 border border-[#D8FF36]/25 text-xs text-[#D8FF36] font-semibold">
+              {postActionNotice}
+            </div>
+          )}
 
           {loadingPosts ? (
             <div className="py-12 text-center text-xs text-zinc-400 font-mono">
@@ -668,6 +705,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                   rejected: 'bg-rose-500/15 text-rose-300 border-rose-500/30',
                   hidden: 'bg-zinc-800 text-zinc-400 border-zinc-700',
                 };
+                const isConfirmingDelete = confirmingDeletePostId === post.id;
+                const isDeletingThis = deletingPostId === post.id;
 
                 return (
                   <div
@@ -676,14 +715,14 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                     className="p-4 rounded-2xl bg-[#111317] border border-white/[0.08] hover:border-[#ccff00]/40 transition-all cursor-pointer space-y-3 group"
                   >
                     <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <MapPin className="w-3.5 h-3.5 text-[#ccff00]" />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <MapPin className="w-3.5 h-3.5 text-[#ccff00] shrink-0" />
                           <span className="text-xs font-bold text-white truncate group-hover:text-[#ccff00] transition-colors">
                             {post.place_name}
                           </span>
                         </div>
-                        <h3 className="text-sm font-bold text-white mt-1">{post.title}</h3>
+                        <h3 className="text-sm font-bold text-white mt-1 break-words">{post.title}</h3>
                       </div>
 
                       <div className="flex items-center gap-1.5 shrink-0">
@@ -702,7 +741,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                       </div>
                     </div>
 
-                    <p className="text-xs text-zinc-300 leading-relaxed line-clamp-2">{post.content}</p>
+                    <p className="text-xs text-zinc-300 leading-relaxed line-clamp-2 break-words">{post.content}</p>
 
                     {post.images && post.images.length > 0 && (
                       <div className="flex items-center gap-2 pt-0.5">
@@ -710,14 +749,18 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                           <img
                             key={i}
                             src={img}
-                            alt="Post photo"
-                            className="w-16 h-12 rounded-lg object-cover border border-white/[0.08]"
+                            alt={`Post photo ${i + 1}`}
+                            loading="lazy"
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none';
+                            }}
+                            className="w-16 h-12 rounded-lg object-cover border border-white/[0.08] bg-zinc-900"
                           />
                         ))}
                       </div>
                     )}
 
-                    <div className="flex items-center justify-between text-xs text-zinc-400 pt-1">
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-zinc-400 pt-1">
                       <div className="flex items-center gap-2">
                         <span className="flex items-center gap-1 text-amber-400">
                           <Star className="w-3.5 h-3.5 fill-amber-400" />
@@ -729,28 +772,61 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                       </div>
 
                       <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setEditingPost(post);
-                            setShowCreatePostModal(true);
-                          }}
-                          className="text-xs font-bold text-[#ccff00] hover:underline px-1.5 py-0.5 cursor-pointer"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDeletePost(post.id);
-                          }}
-                          className="text-xs text-red-400 hover:text-red-300 p-1 rounded hover:bg-red-500/10 transition-colors cursor-pointer"
-                          title="Delete post"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        {isConfirmingDelete ? (
+                          <div
+                            className="flex items-center gap-1.5"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <button
+                              type="button"
+                              disabled={isDeletingThis}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeletePost(post.id);
+                              }}
+                              className="h-7 px-2.5 rounded-lg bg-red-600 hover:bg-red-500 text-white text-[11px] font-extrabold uppercase tracking-wider transition-colors disabled:opacity-50 cursor-pointer"
+                            >
+                              {isDeletingThis ? 'Deleting...' : 'Confirm Delete'}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={isDeletingThis}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setConfirmingDeletePostId(null);
+                              }}
+                              className="h-7 px-2 rounded-lg bg-white/[0.08] hover:bg-white/[0.14] text-zinc-200 text-[11px] font-semibold transition-colors cursor-pointer"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setEditingPost(post);
+                                setShowCreatePostModal(true);
+                              }}
+                              className="h-7 px-2.5 rounded-lg bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.08] text-xs font-bold text-[#ccff00] transition-colors cursor-pointer"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setConfirmingDeletePostId(post.id);
+                              }}
+                              className="h-7 px-2.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-xs font-bold text-red-400 hover:text-red-300 flex items-center gap-1 transition-colors cursor-pointer"
+                              title="Delete post"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>Delete</span>
+                            </button>
+                          </>
+                        )}
                       </div>
                     </div>
 
@@ -1066,6 +1142,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             loadUserPosts(authUser.id);
             fetchUserRealStats(authUser.id).then(setStats);
           }
+          if (onPostsChanged) onPostsChanged();
         }}
       />
     </div>

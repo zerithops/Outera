@@ -260,16 +260,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
     }
   };
 
+  // Inline confirmation tracker for suggestion / route / fare deletion (avoids window.confirm)
+  const [confirmingAdminDeleteId, setConfirmingAdminDeleteId] = useState<string | null>(null);
+
   // Handle DELETE confirmation
   const handleConfirmDelete = async () => {
     if (!deletingPost) return;
+    const targetId = deletingPost.id;
 
-    setActionLoadingId(deletingPost.id);
-    const res = await adminDeletePlacePost(deletingPost.id);
+    setActionLoadingId(targetId);
+    const res = await adminDeletePlacePost(targetId);
     setActionLoadingId(null);
     setDeletingPost(null);
 
     if (res.success) {
+      setPosts((prev) => prev.filter((p) => p.id !== targetId));
       showToast('Post permanently deleted from database.');
       loadData();
     } else {
@@ -383,12 +388,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
   };
 
   const handleDeleteSuggestion = async (sug: PlaceSuggestion) => {
-    if (!confirm(`Permanently delete suggestion for "${sug.name}"?`)) return;
+    if (confirmingAdminDeleteId !== `sug-${sug.id}`) {
+      setConfirmingAdminDeleteId(`sug-${sug.id}`);
+      showToast(`Tap Delete again to confirm removing "${sug.name}"`);
+      return;
+    }
+    setConfirmingAdminDeleteId(null);
     setActionLoadingId(sug.id);
     const res = await adminDeletePlaceSuggestion(sug.id);
     setActionLoadingId(null);
 
     if (res.success) {
+      setSuggestions((prev) => prev.filter((s) => s.id !== sug.id));
       showToast(`Suggestion permanently deleted.`);
       loadData();
     } else {
@@ -446,7 +457,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
   };
 
   const handleDeleteRoute = async (routeId: string) => {
-    if (!confirm('Are you sure you want to delete this transport route?')) return;
+    if (confirmingAdminDeleteId !== `route-${routeId}`) {
+      setConfirmingAdminDeleteId(`route-${routeId}`);
+      showToast('Tap Delete Route again to confirm removal.');
+      return;
+    }
+    setConfirmingAdminDeleteId(null);
     const res = await deleteAdminTransportRoute(routeId);
     if (res.success) {
       showToast('Route removed.');
@@ -467,7 +483,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
   };
 
   const handleDeleteFare = async (reportId: string) => {
-    if (!confirm('Delete this community fare report?')) return;
+    if (confirmingAdminDeleteId !== `fare-${reportId}`) {
+      setConfirmingAdminDeleteId(`fare-${reportId}`);
+      showToast('Tap delete icon again to confirm removing this fare report.');
+      return;
+    }
+    setConfirmingAdminDeleteId(null);
     const res = await deleteCommunityFareReport(reportId);
     if (res.success) {
       showToast('Fare report deleted.');
@@ -920,10 +941,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
 
                   {/* Post Photos (Max 2) */}
                   {post.images && post.images.length > 0 && (
-                    <div className="grid grid-cols-2 gap-2.5 pt-2">
+                    <div className="grid grid-cols-1 xs:grid-cols-2 gap-2.5 pt-2">
                       {post.images.slice(0, 2).map((imgUrl, idx) => (
                         <div key={idx} className="relative rounded-xl overflow-hidden border border-white/10 aspect-[16/10] bg-black">
-                          <img src={imgUrl} alt={`Post photo ${idx + 1}`} className="w-full h-full object-cover" />
+                          <img
+                            src={imgUrl}
+                            alt={`Post photo ${idx + 1}`}
+                            loading="lazy"
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none';
+                            }}
+                            className="w-full h-full object-cover"
+                          />
                           <span className="absolute top-2 left-2 px-2 py-0.5 rounded bg-black/75 text-[10px] font-bold text-[#ccff00]">
                             {idx === 0 ? 'Photo 1 · Primary' : 'Photo 2 · Secondary'}
                           </span>
@@ -1131,7 +1160,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
 
                   {/* Suggestion Photos (Up to 2) */}
                   {sug.images && sug.images.length > 0 && (
-                    <div className="grid grid-cols-2 gap-2.5">
+                    <div className="grid grid-cols-1 xs:grid-cols-2 gap-2.5">
                       {sug.images.slice(0, 2).map((imgUrl, idx) => (
                         <div
                           key={idx}
@@ -1140,6 +1169,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                           <img
                             src={imgUrl}
                             alt={`${sug.name} photo ${idx + 1}`}
+                            loading="lazy"
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none';
+                            }}
                             className="w-full h-full object-cover"
                           />
                           <span className="absolute top-2 left-2 px-2 py-0.5 rounded bg-black/75 text-[10px] font-bold text-[#ccff00]">

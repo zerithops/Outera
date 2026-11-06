@@ -136,15 +136,15 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
         </div>
 
         {/* Controls: Two Separate Scout Actions + View Toggle */}
-        <div className="flex flex-wrap items-center gap-2 self-start lg:self-auto">
+        <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
           {onOpenCreatePost && (
             <button
               type="button"
               onClick={onOpenCreatePost}
-              className="h-9 px-3.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.12] text-white font-bold text-xs flex items-center gap-1.5 active:scale-95 transition-all"
+              className="h-9 px-3 sm:px-3.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.12] text-white font-bold text-xs flex items-center justify-center gap-1.5 active:scale-95 transition-all flex-1 sm:flex-initial whitespace-nowrap"
               title="Write a review or share an experience for an existing place"
             >
-              <MessageSquarePlus className="w-3.5 h-3.5 text-[#ccff00]" />
+              <MessageSquarePlus className="w-3.5 h-3.5 text-[#ccff00] shrink-0" />
               <span>Create Community Post</span>
             </button>
           )}
@@ -153,19 +153,19 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
             <button
               type="button"
               onClick={onSuggestPlace}
-              className="h-9 px-3.5 rounded-xl bg-[#ccff00] hover:bg-[#d8ff33] text-black font-extrabold text-xs flex items-center gap-1.5 shadow-md shadow-[#ccff00]/10 active:scale-95 transition-all"
+              className="h-9 px-3 sm:px-3.5 rounded-xl bg-[#ccff00] hover:bg-[#d8ff33] text-black font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-[#ccff00]/10 active:scale-95 transition-all flex-1 sm:flex-initial whitespace-nowrap"
               title="Propose a brand new place to OUTERA"
             >
-              <Plus className="w-3.5 h-3.5" />
+              <Plus className="w-3.5 h-3.5 shrink-0" />
               <span>+ Suggest a Place</span>
             </button>
           )}
 
-          <div className="flex items-center gap-1 p-1 rounded-xl bg-white/[0.04] border border-white/[0.06]">
+          <div className="flex items-center gap-1 p-1 rounded-xl bg-white/[0.04] border border-white/[0.06] w-full sm:w-auto justify-center">
             <button
               type="button"
               onClick={() => setViewMode('grid')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                 viewMode === 'grid'
                   ? 'bg-[#ccff00] text-black font-bold'
                   : 'text-zinc-400 hover:text-white'
@@ -177,7 +177,7 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
             <button
               type="button"
               onClick={() => setViewMode('map')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                 viewMode === 'map'
                   ? 'bg-[#ccff00] text-black font-bold'
                   : 'text-zinc-400 hover:text-white'

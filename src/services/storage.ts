@@ -14,6 +14,8 @@ import {
   recordVisitInSupabase,
   removeVisitInSupabase,
   createExperienceReportInSupabase,
+  deleteExperienceInSupabase,
+  getDeletedPostIds,
   recordVerificationInSupabase,
   submitReportToSupabase,
   upsertProfile,
@@ -265,7 +267,9 @@ export function getUserExperienceReports(): ExperienceReport[] {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEYS.USER_REPORTS);
     if (!raw) return [];
-    return JSON.parse(raw);
+    const parsed: ExperienceReport[] = JSON.parse(raw);
+    const deletedIds = getDeletedPostIds();
+    return Array.isArray(parsed) ? parsed.filter((r) => r && r.id && !deletedIds.has(r.id)) : [];
   } catch {
     return [];
   }
@@ -289,6 +293,20 @@ export function addExperienceReport(report: ExperienceReport): ExperienceReport[
     wouldGoAgain: report.wouldGoAgain,
   });
 
+  return updated;
+}
+
+export async function deleteExperienceReport(reportId: string): Promise<ExperienceReport[]> {
+  const current = getUserExperienceReports();
+  const updated = current.filter((r) => r.id !== reportId);
+  if (isStorageAvailable()) {
+    try {
+      window.localStorage.setItem(STORAGE_KEYS.USER_REPORTS, JSON.stringify(updated));
+    } catch (e) {
+      console.warn(e);
+    }
+  }
+  await deleteExperienceInSupabase(reportId);
   return updated;
 }
 
@@ -379,11 +397,18 @@ export function getAugmentedPlaces(basePlaces: Place[] = []): Place[] {
   const userReports = getUserExperienceReports();
   const userVerifications = getCommunityVerifications();
   const visitedPlaceIds = getVisitedPlaceIds();
+  const deletedIds = getDeletedPostIds();
 
   return basePlaces.map((place) => {
-    // Add locally submitted reports
-    const localPlaceReports = userReports.filter((r) => r.placeId === place.id);
-    const combinedReports = [...localPlaceReports, ...(place.experienceReports || [])];
+    // Add locally submitted reports and filter out deleted IDs
+    const localPlaceReports = userReports.filter((r) => r.placeId === place.id && !deletedIds.has(r.id));
+    const remoteReports = (place.experienceReports || []).filter((r) => r && !deletedIds.has(r.id));
+    const seenIds = new Set<string>();
+    const combinedReports = [...localPlaceReports, ...remoteReports].filter((r) => {
+      if (!r?.id || seenIds.has(r.id)) return false;
+      seenIds.add(r.id);
+      return true;
+    });
 
     // Compute updated verification stats on reports
     const augmentedExperienceReports = combinedReports.map((report) => {
