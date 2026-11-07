@@ -1,14 +1,27 @@
-export type MoodCategory =
-  | 'Food'
+export type CanonicalCategoryId =
+  | 'Culture & Art'
+  | 'Food & Drink'
   | 'Chill'
+  | 'Outdoors & Nature'
+  | 'Active & Sports'
+  | 'Gaming & Arcade'
+  | 'Late Night'
+  | 'Tourist Spot'
+  | 'Hotel / Resort'
+  | 'Study & Work'
+  | 'Shopping'
+  | 'Events';
+
+export type MoodCategory =
+  | CanonicalCategoryId
+  | 'Food'
   | 'Fun'
   | 'Sports'
   | 'Study'
-  | 'Shopping'
   | 'Outdoors'
-  | 'Events'
   | 'Creative'
-  | 'Nightlife';
+  | 'Nightlife'
+  | (string & {});
 
 export type DivisionName =
   | 'Dhaka'

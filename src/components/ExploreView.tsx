@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Search,
   MapPin,
@@ -14,13 +14,19 @@ import {
   Share2,
   Star,
   CheckCircle2,
+  Tag,
 } from 'lucide-react';
-import { FilterState, UserLocation } from '../types/outera';
-import { PlaceWithDistance } from '../services/discoveryEngine';
+import { FilterState, Place, UserLocation } from '../types/outera';
+import {
+  PlaceWithDistance,
+  filterAndRankPlaces,
+  filterApprovedPublicPosts,
+  normalizeCategoryName,
+} from '../services/discoveryEngine';
 import { PlaceCard } from './PlaceCard';
 import { FilterBar } from './FilterBar';
+import { MoodScroller } from './MoodScroller';
 import { DiscoveryMap } from './DiscoveryMap';
-import { formatDistance } from '../services/location';
 import { useSearchHistory } from '../hooks/useSearchHistory';
 import {
   PlacePost,
@@ -31,6 +37,7 @@ import { shareCommunityPost } from '../services/postUrl';
 
 interface ExploreViewProps {
   places: PlaceWithDistance[];
+  allPlaces?: Place[];
   currentLocation: UserLocation;
   filters: FilterState;
   onChangeFilters: (filters: FilterState) => void;
@@ -47,6 +54,7 @@ interface ExploreViewProps {
 
 export const ExploreView: React.FC<ExploreViewProps> = ({
   places,
+  allPlaces,
   currentLocation,
   filters,
   onChangeFilters,
@@ -63,6 +71,21 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
   const [viewMode, setViewMode] = useState<'grid' | 'map'>('grid');
   const [publicPosts, setPublicPosts] = useState<PlacePost[]>([]);
   const [copiedPostId, setCopiedPostId] = useState<string | null>(null);
+
+  const catalogPlaces = useMemo(
+    () => (allPlaces && allPlaces.length > 0 ? allPlaces : places),
+    [allPlaces, places]
+  );
+
+  // Filter and rank places using active category, search query, and location filters
+  const filteredPlaces = useMemo(() => {
+    return filterAndRankPlaces(catalogPlaces, currentLocation.coords, filters);
+  }, [catalogPlaces, currentLocation.coords, filters]);
+
+  // Filter approved public posts by active category, search query, and location filters
+  const filteredPublicPosts = useMemo(() => {
+    return filterApprovedPublicPosts(publicPosts, catalogPlaces, filters);
+  }, [publicPosts, catalogPlaces, filters]);
 
   const loadApprovedPosts = useCallback(async () => {
     const posts = await fetchPublicPlacePosts();
@@ -85,8 +108,41 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
   const { recentSearches } = useSearchHistory(
     filters.searchQuery,
     currentLocation.neighborhoodName,
-    places.length
+    filteredPlaces.length
   );
+
+  const hasActiveFilters =
+    filters.selectedCategory !== 'all' ||
+    filters.searchQuery.trim().length > 0 ||
+    (filters.selectedDivision && filters.selectedDivision !== 'all') ||
+    (filters.selectedDistrict && filters.selectedDistrict !== 'all') ||
+    filters.openNowOnly ||
+    filters.priceMax !== null ||
+    filters.maxDistanceKm !== null ||
+    filters.group !== 'all' ||
+    filters.environment !== 'all' ||
+    filters.vibe !== 'all';
+
+  const activeCategoryLabel =
+    filters.selectedCategory !== 'all'
+      ? normalizeCategoryName(filters.selectedCategory)
+      : null;
+
+  const handleResetFilters = () => {
+    onChangeFilters({
+      ...filters,
+      searchQuery: '',
+      selectedCategory: 'all',
+      selectedDivision: 'all',
+      selectedDistrict: 'all',
+      openNowOnly: false,
+      priceMax: null,
+      maxDistanceKm: null,
+      group: 'all',
+      environment: 'all',
+      vibe: 'all',
+    });
+  };
 
   return (
     <div className="w-full px-4 sm:px-6 py-4 space-y-5">
@@ -169,7 +225,7 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
           </div>
 
           <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
-            Things around you
+            {activeCategoryLabel ? `${activeCategoryLabel} Spots` : 'Things around you'}
           </h1>
         </div>
 
@@ -236,7 +292,7 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
             type="text"
             value={filters.searchQuery}
             onChange={(e) => onChangeFilters({ ...filters, searchQuery: e.target.value })}
-            placeholder="Search by spot name, vibe, pottery, rooftop, bouldering..."
+            placeholder="Search by spot name, category, neighborhood, or district..."
             className="w-full h-11 pl-10 pr-10 rounded-xl bg-white/[0.04] border border-white/[0.08] text-xs sm:text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-[#ccff00] transition-colors"
           />
           {filters.searchQuery && (
@@ -270,18 +326,29 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
         )}
       </div>
 
+      {/* Responsive Category Bar */}
+      <div className="-mx-4 sm:-mx-6">
+        <MoodScroller
+          selectedCategory={filters.selectedCategory}
+          onSelectCategory={(cat) => onChangeFilters({ ...filters, selectedCategory: cat })}
+          places={catalogPlaces}
+          posts={publicPosts}
+          compact
+        />
+      </div>
+
       {/* Filter Bar Chips */}
       <FilterBar
         filters={filters}
         onChangeFilters={onChangeFilters}
-        totalCount={places.length}
+        totalCount={filteredPlaces.length}
       />
 
       {/* Content: Cards or Interactive Map Radar */}
       {viewMode === 'grid' ? (
-        places.length > 0 ? (
+        filteredPlaces.length > 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 pt-2">
-            {places.map((place) => (
+            {filteredPlaces.map((place) => (
               <PlaceCard
                 key={place.id}
                 place={place}
@@ -291,32 +358,50 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
               />
             ))}
           </div>
-        ) : filters.searchQuery || filters.selectedCategory !== 'all' || filters.openNowOnly ? (
-          <div className="py-16 px-4 rounded-2xl bg-white/[0.02] border border-white/[0.06] text-center max-w-md mx-auto my-6">
-            <SlidersHorizontal className="w-10 h-10 text-zinc-500 mx-auto mb-3" />
-            <h2 className="text-base font-bold text-white">No spots match your exact filters</h2>
-            <p className="text-xs text-zinc-400 mt-1.5 leading-relaxed">
-              Try loosening the budget limit or expanding your radius from {currentLocation.neighborhoodName}.
-            </p>
-            <button
-              type="button"
-              onClick={() =>
-                onChangeFilters({
-                  ...filters,
-                  searchQuery: '',
-                  selectedCategory: 'all',
-                  openNowOnly: false,
-                  priceMax: null,
-                  maxDistanceKm: null,
-                  group: 'all',
-                  environment: 'all',
-                  vibe: 'all',
-                })
-              }
-              className="mt-4 px-4 py-2 rounded-xl bg-[#ccff00] text-black font-bold text-xs inline-flex items-center gap-1.5"
-            >
-              Reset All Filters
-            </button>
+        ) : hasActiveFilters ? (
+          <div className="py-14 px-6 rounded-2xl bg-white/[0.02] border border-white/[0.06] text-center max-w-md mx-auto my-6 space-y-3">
+            <SlidersHorizontal className="w-10 h-10 text-zinc-500 mx-auto" />
+            <div className="space-y-1">
+              <h2 className="text-base font-bold text-white">
+                {activeCategoryLabel
+                  ? `No places found in "${activeCategoryLabel}"`
+                  : 'No spots match your exact filters'}
+              </h2>
+              <p className="text-xs text-zinc-400 leading-relaxed">
+                {activeCategoryLabel
+                  ? `No approved places match the "${activeCategoryLabel}" category${
+                      filters.searchQuery ? ` and search "${filters.searchQuery}"` : ''
+                    }${
+                      filters.selectedDivision && filters.selectedDivision !== 'all'
+                        ? ` in ${
+                            filters.selectedDistrict && filters.selectedDistrict !== 'all'
+                              ? filters.selectedDistrict
+                              : filters.selectedDivision
+                          }`
+                        : ''
+                    } yet.`
+                  : `Try clearing your search query or expanding your area from ${currentLocation.neighborhoodName}.`}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center justify-center gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={handleResetFilters}
+                className="px-4 py-2.5 rounded-xl bg-[#ccff00] text-black font-extrabold text-xs inline-flex items-center gap-1.5 hover:bg-[#d8ff33] transition-all cursor-pointer"
+              >
+                Reset Category & Filters
+              </button>
+              {onSuggestPlace && (
+                <button
+                  type="button"
+                  onClick={onSuggestPlace}
+                  className="px-4 py-2.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.1] text-white font-bold text-xs inline-flex items-center gap-1.5 transition-all cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5 text-[#ccff00]" />
+                  <span>Suggest a Place</span>
+                </button>
+              )}
+            </div>
           </div>
         ) : (
           <div className="py-16 px-4 rounded-2xl bg-white/[0.02] border border-white/[0.06] text-center max-w-md mx-auto my-6 space-y-3">
@@ -339,7 +424,7 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
       ) : (
         /* Upgraded Interactive Community Discovery Map */
         <DiscoveryMap
-          places={places}
+          places={filteredPlaces}
           currentLocation={currentLocation}
           selectedLayer={filters.mapLayer || 'all'}
           onChangeLayer={(layer) => onChangeFilters({ ...filters, mapLayer: layer })}
@@ -349,104 +434,168 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
         />
       )}
 
-      {/* Approved Community Posts Feed Section */}
-      {publicPosts.length > 0 && (
+      {/* Approved Community Posts Feed Section (Filtered by Category, Search & Location) */}
+      {(publicPosts.length > 0 || activeCategoryLabel) && (
         <section className="pt-6 border-t border-white/[0.06] space-y-4">
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-[#ccff00]">
                 <Sparkles className="w-3.5 h-3.5" />
-                <span>Approved Community Posts</span>
+                <span>
+                  {activeCategoryLabel
+                    ? `Approved Community Posts · ${activeCategoryLabel}`
+                    : 'Approved Community Posts'}
+                </span>
               </div>
               <h2 className="text-lg sm:text-xl font-black text-white tracking-tight mt-0.5">
-                Recent Scout Experiences & Reviews
+                {activeCategoryLabel
+                  ? `Scout Experiences in ${activeCategoryLabel} (${filteredPublicPosts.length})`
+                  : `Recent Scout Experiences & Reviews (${filteredPublicPosts.length})`}
               </h2>
             </div>
+
+            {activeCategoryLabel && (
+              <button
+                type="button"
+                onClick={() => onChangeFilters({ ...filters, selectedCategory: 'all' })}
+                className="text-xs font-bold text-[#ccff00] hover:underline flex items-center gap-1 cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+                <span>Show all categories</span>
+              </button>
+            )}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {publicPosts.slice(0, 6).map((post) => (
-              <div
-                key={post.id}
-                onClick={() => onSelectPost && onSelectPost(post)}
-                className="p-4 rounded-2xl bg-[#111317] border border-white/[0.08] hover:border-[#ccff00]/40 transition-all cursor-pointer flex flex-col justify-between gap-3 group"
-              >
-                <div className="space-y-2.5">
-                  <div className="flex items-center justify-between gap-2 text-xs">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="font-bold text-white truncate">
-                        {post.author_name || 'OUTERA Scout'}
-                      </span>
-                      <span className="text-zinc-500 font-mono text-[11px] truncate">
-                        {post.author_username || '@scout'}
-                      </span>
-                      {post.is_visited && (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20 shrink-0">
-                          <CheckCircle2 className="w-2.5 h-2.5" />
-                          <span>Visited</span>
+          {filteredPublicPosts.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {filteredPublicPosts.slice(0, 12).map((post) => {
+                const postCategory = normalizeCategoryName(post.place_category || 'Chill');
+                return (
+                  <div
+                    key={post.id}
+                    onClick={() => onSelectPost && onSelectPost(post)}
+                    className="p-4 rounded-2xl bg-[#111317] border border-white/[0.08] hover:border-[#ccff00]/40 transition-all cursor-pointer flex flex-col justify-between gap-3 group"
+                  >
+                    <div className="space-y-2.5">
+                      <div className="flex items-center justify-between gap-2 text-xs">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="font-bold text-white truncate">
+                            {post.author_name || 'OUTERA Scout'}
+                          </span>
+                          <span className="text-zinc-500 font-mono text-[11px] truncate">
+                            {post.author_username || '@scout'}
+                          </span>
+                          {post.is_visited && (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20 shrink-0">
+                              <CheckCircle2 className="w-2.5 h-2.5" />
+                              <span>Visited</span>
+                            </span>
+                          )}
+                        </div>
+                        <span className="flex items-center gap-1 text-xs font-mono font-bold text-[#ccff00] shrink-0">
+                          <Star className="w-3.5 h-3.5 fill-[#ccff00]" />
+                          <span>{post.rating}/5</span>
                         </span>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {post.place_name && (
+                          <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-white/[0.04] border border-white/[0.07] text-[11px] font-bold text-[#ccff00]">
+                            <MapPin className="w-3 h-3" />
+                            <span>{post.place_name}</span>
+                          </div>
+                        )}
+                        <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[#ccff00]/10 border border-[#ccff00]/25 text-[10px] font-bold text-[#ccff00]">
+                          <Tag className="w-2.5 h-2.5" />
+                          <span>{postCategory}</span>
+                        </div>
+                      </div>
+
+                      <h3 className="text-sm font-extrabold text-white group-hover:text-[#ccff00] transition-colors">
+                        {post.title}
+                      </h3>
+                      <p className="text-xs text-zinc-300 leading-relaxed line-clamp-2">
+                        {post.content}
+                      </p>
+
+                      {post.images && post.images.length > 0 && (
+                        <div className="grid grid-cols-2 gap-2 pt-1">
+                          {post.images.slice(0, 2).map((imgUrl, idx) => (
+                            <img
+                              key={idx}
+                              src={imgUrl}
+                              alt={`${post.title} photo ${idx + 1}`}
+                              className="w-full h-28 rounded-xl object-cover border border-white/[0.08]"
+                              loading="lazy"
+                            />
+                          ))}
+                        </div>
                       )}
                     </div>
-                    <span className="flex items-center gap-1 text-xs font-mono font-bold text-[#ccff00] shrink-0">
-                      <Star className="w-3.5 h-3.5 fill-[#ccff00]" />
-                      <span>{post.rating}/5</span>
-                    </span>
+
+                    <div className="pt-2.5 border-t border-white/[0.05] flex items-center justify-between text-[11px] text-zinc-400">
+                      <span className="font-mono text-[10px] text-zinc-500 truncate max-w-[60%]">
+                        /p/{post.slug}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          await shareCommunityPost(post);
+                          setCopiedPostId(post.id);
+                          setTimeout(
+                            () => setCopiedPostId((prev) => (prev === post.id ? null : prev)),
+                            2500
+                          );
+                        }}
+                        className="h-7 px-2.5 rounded-lg bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.08] text-xs font-bold text-white hover:text-[#ccff00] flex items-center gap-1.5 transition-all cursor-pointer shrink-0"
+                        title="Share unique post link"
+                      >
+                        <Share2 className="w-3 h-3 text-[#ccff00]" />
+                        <span>{copiedPostId === post.id ? 'Link Copied!' : 'Share'}</span>
+                      </button>
+                    </div>
                   </div>
-
-                  {post.place_name && (
-                    <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-white/[0.04] border border-white/[0.07] text-[11px] font-bold text-[#ccff00]">
-                      <MapPin className="w-3 h-3" />
-                      <span>{post.place_name}</span>
-                    </div>
-                  )}
-
-                  <h3 className="text-sm font-extrabold text-white group-hover:text-[#ccff00] transition-colors">
-                    {post.title}
-                  </h3>
-                  <p className="text-xs text-zinc-300 leading-relaxed line-clamp-2">
-                    {post.content}
-                  </p>
-
-                  {post.images && post.images.length > 0 && (
-                    <div className="grid grid-cols-2 gap-2 pt-1">
-                      {post.images.slice(0, 2).map((imgUrl, idx) => (
-                        <img
-                          key={idx}
-                          src={imgUrl}
-                          alt={`${post.title} photo ${idx + 1}`}
-                          className="w-full h-28 rounded-xl object-cover border border-white/[0.08]"
-                          loading="lazy"
-                        />
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div className="pt-2.5 border-t border-white/[0.05] flex items-center justify-between text-[11px] text-zinc-400">
-                  <span className="font-mono text-[10px] text-zinc-500 truncate max-w-[60%]">
-                    /p/{post.slug}
-                  </span>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="p-8 rounded-2xl bg-white/[0.02] border border-white/[0.06] text-center max-w-md mx-auto space-y-3">
+              <MessageSquarePlus className="w-8 h-8 text-zinc-500 mx-auto" />
+              <div className="space-y-1">
+                <h3 className="text-sm font-bold text-white">
+                  {activeCategoryLabel
+                    ? `No approved community posts in "${activeCategoryLabel}" yet`
+                    : 'No matching community posts found'}
+                </h3>
+                <p className="text-xs text-zinc-400 leading-relaxed">
+                  {activeCategoryLabel
+                    ? `Visited a spot in ${activeCategoryLabel}? Share your honest experience with the community.`
+                    : 'Try adjusting your search or location filters to see more community reviews.'}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                {activeCategoryLabel && (
                   <button
                     type="button"
-                    onClick={async (e) => {
-                      e.stopPropagation();
-                      await shareCommunityPost(post);
-                      setCopiedPostId(post.id);
-                      setTimeout(
-                        () => setCopiedPostId((prev) => (prev === post.id ? null : prev)),
-                        2500
-                      );
-                    }}
-                    className="h-7 px-2.5 rounded-lg bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.08] text-xs font-bold text-white hover:text-[#ccff00] flex items-center gap-1.5 transition-all cursor-pointer shrink-0"
-                    title="Share unique post link"
+                    onClick={() => onChangeFilters({ ...filters, selectedCategory: 'all' })}
+                    className="h-8 px-3.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.1] text-xs font-bold text-white transition-all cursor-pointer"
                   >
-                    <Share2 className="w-3 h-3 text-[#ccff00]" />
-                    <span>{copiedPostId === post.id ? 'Link Copied!' : 'Share'}</span>
+                    View All Categories
                   </button>
-                </div>
+                )}
+                {onOpenCreatePost && (
+                  <button
+                    type="button"
+                    onClick={onOpenCreatePost}
+                    className="h-8 px-3.5 rounded-xl bg-[#ccff00] hover:bg-[#d8ff33] text-black text-xs font-extrabold transition-all cursor-pointer"
+                  >
+                    + Share Experience
+                  </button>
+                )}
               </div>
-            ))}
-          </div>
+            </div>
+          )}
         </section>
       )}
     </div>

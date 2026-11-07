@@ -1,5 +1,6 @@
 import React from 'react';
-import { FilterState, GroupFit, VibeType } from '../types/outera';
+import { DivisionName, FilterState, GroupFit, VibeType } from '../types/outera';
+import { BANGLADESH_DIVISIONS } from '../data/bangladeshLocations';
 
 interface FilterBarProps {
   filters: FilterState;
@@ -37,6 +38,10 @@ export const FilterBar: React.FC<FilterBarProps> = ({
   };
 
   const hasActiveFilters =
+    filters.selectedCategory !== 'all' ||
+    filters.searchQuery.trim().length > 0 ||
+    (filters.selectedDivision && filters.selectedDivision !== 'all') ||
+    (filters.selectedDistrict && filters.selectedDistrict !== 'all') ||
     filters.openNowOnly ||
     filters.priceMax !== null ||
     filters.maxDistanceKm !== null ||
@@ -47,6 +52,10 @@ export const FilterBar: React.FC<FilterBarProps> = ({
   const resetFilters = () => {
     onChangeFilters({
       ...filters,
+      searchQuery: '',
+      selectedCategory: 'all',
+      selectedDivision: 'all',
+      selectedDistrict: 'all',
       openNowOnly: false,
       priceMax: null,
       maxDistanceKm: null,
@@ -56,10 +65,72 @@ export const FilterBar: React.FC<FilterBarProps> = ({
     });
   };
 
+  const selectedDivisionObj = BANGLADESH_DIVISIONS.find(
+    (d) => d.name === filters.selectedDivision
+  );
+  const availableDistricts = selectedDivisionObj
+    ? selectedDivisionObj.districts
+    : BANGLADESH_DIVISIONS.flatMap((d) => d.districts);
+
   return (
     <div className="w-full space-y-2">
       {/* Top Filter Chips Carousel */}
       <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+        {/* Division Location Filter */}
+        <select
+          aria-label="Filter by Division"
+          value={filters.selectedDivision || 'all'}
+          onChange={(e) => {
+            const val = e.target.value as DivisionName | 'all';
+            onChangeFilters({
+              ...filters,
+              selectedDivision: val,
+              selectedDistrict: 'all',
+            });
+          }}
+          className={`shrink-0 h-8 px-2.5 rounded-lg text-xs font-medium border transition-all cursor-pointer focus:outline-none ${
+            filters.selectedDivision && filters.selectedDivision !== 'all'
+              ? 'bg-[#ccff00] text-black font-bold border-[#ccff00]'
+              : 'bg-white/[0.03] text-zinc-300 border-white/[0.08] hover:bg-white/[0.06]'
+          }`}
+        >
+          <option value="all" className="bg-zinc-900 text-white">
+            All Divisions
+          </option>
+          {BANGLADESH_DIVISIONS.map((div) => (
+            <option key={div.name} value={div.name} className="bg-zinc-900 text-white">
+              {div.name} Division
+            </option>
+          ))}
+        </select>
+
+        {/* District Location Filter */}
+        <select
+          aria-label="Filter by District"
+          value={filters.selectedDistrict || 'all'}
+          onChange={(e) => {
+            const val = e.target.value;
+            onChangeFilters({
+              ...filters,
+              selectedDistrict: val,
+            });
+          }}
+          className={`shrink-0 h-8 px-2.5 rounded-lg text-xs font-medium border transition-all cursor-pointer focus:outline-none ${
+            filters.selectedDistrict && filters.selectedDistrict !== 'all'
+              ? 'bg-[#ccff00] text-black font-bold border-[#ccff00]'
+              : 'bg-white/[0.03] text-zinc-300 border-white/[0.08] hover:bg-white/[0.06]'
+          }`}
+        >
+          <option value="all" className="bg-zinc-900 text-white">
+            All Districts
+          </option>
+          {availableDistricts.map((dist) => (
+            <option key={dist.name} value={dist.name} className="bg-zinc-900 text-white">
+              {dist.name}
+            </option>
+          ))}
+        </select>
+
         {/* Open Now */}
         <button
           type="button"

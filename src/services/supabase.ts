@@ -9,6 +9,7 @@ import {
   CommunityConfidenceLevel,
 } from '../types/outera';
 import { calculateDistanceKm } from './location';
+import { normalizeCategoryName } from './discoveryEngine';
 import {
   buildPostSlugWithId,
   doesPostMatchRoute,
@@ -1452,11 +1453,13 @@ export async function fetchPlacesFromSupabase(): Promise<Place[]> {
 
       const bestTimeStr = safeStr(row.best_time) || safeStr(parsedMeta.bestTime);
 
+      const canonicalCategory = normalizeCategoryName(safeStr(row.category, 'Chill') || 'Chill');
+
       return {
         id: String(row.id),
         slug: safeStr(row.slug, String(row.id)),
         name: safeStr(row.name, 'Unnamed Place'),
-        category: (safeStr(row.category, 'Chill') || 'Chill') as any,
+        category: canonicalCategory,
         subcategory: safeStr(row.subcategory) || undefined,
         shortDescription: safeStr(row.short_description) || safeStr(parsedMeta.cleanDescription),
         fullDescription: safeStr(parsedMeta.cleanDescription) || safeStr(row.description),
@@ -2443,7 +2446,7 @@ export async function submitPlaceSuggestion(
 
     const basePayload: Record<string, any> = {
       name: suggestion.name.trim(),
-      category: suggestion.category?.trim() || 'Chill',
+      category: normalizeCategoryName(suggestion.category?.trim() || 'Chill'),
       address: formattedAddress || null,
       description: descriptionText,
       latitude: suggestion.latitude,
@@ -2835,7 +2838,7 @@ export async function moderatePlaceSuggestion(
         const basePlaceRow: Record<string, any> = {
           name: sugg.name,
           slug: uniqueSlug,
-          category: sugg.category || 'Chill',
+          category: normalizeCategoryName(sugg.category || 'Chill'),
           address: sugg.address || [sugg.area, sugg.upazila, sugg.district, sugg.division].filter(Boolean).join(', '),
           description: sugg.description || sugg.why_worth_visiting || sugg.short_description || '',
           latitude: typeof sugg.latitude === 'number' ? sugg.latitude : null,
@@ -3430,14 +3433,38 @@ async function hydratePlacePosts(rawPosts: any[]): Promise<PlacePost[]> {
     } catch {}
   }
 
+  // Ensure any post missing joined place data resolves its place from `places`
+  const missingPlaceIds = Array.from(
+    new Set(
+      activeRawPosts
+        .filter((p) => p.place_id && (!p.places || !p.places.category))
+        .map((p) => String(p.place_id))
+    )
+  );
+  const fallbackPlacesMap = new Map<string, { id: string; name?: string; category?: string; address?: string }>();
+  if (missingPlaceIds.length > 0) {
+    try {
+      const { data: placeRows } = await supabase
+        .from('places')
+        .select('id, name, category, address')
+        .in('id', missingPlaceIds);
+      if (placeRows) {
+        for (const pr of placeRows) {
+          fallbackPlacesMap.set(String(pr.id), pr);
+        }
+      }
+    } catch {}
+  }
+
   return activeRawPosts
     .map((p) => {
       const author = profilesMap.get(p.user_id);
-      const place = p.places || {};
+      const place = p.places || fallbackPlacesMap.get(String(p.place_id)) || {};
       const modInfo = storedNotes[p.id];
       const status = (p.status || modInfo?.status || 'pending').toLowerCase();
       if (status === 'deleted' || p.deleted_at || deletedIds.has(p.id)) return null;
       const postPhotos = (postImagesMap.get(p.id) || []).slice(0, 2);
+      const resolvedCategory = normalizeCategoryName(place.category || p.place_category || 'Chill');
 
       return {
         id: p.id,
@@ -3457,9 +3484,9 @@ async function hydratePlacePosts(rawPosts: any[]): Promise<PlacePost[]> {
         author_name: author?.display_name || 'OUTERA Scout',
         author_username: author?.username ? `@${author.username}` : '@scout',
         author_avatar: author?.avatar_url || null,
-        place_name: place.name || 'Selected Place',
-        place_category: place.category || 'Spot',
-        place_address: place.address || '',
+        place_name: place.name || p.place_name || 'Selected Place',
+        place_category: resolvedCategory,
+        place_address: place.address || p.place_address || '',
         images: postPhotos,
         helpful_count: helpfulCountMap.get(p.id) || 0,
         user_marked_helpful: userHelpfulSet.has(p.id),
@@ -3467,7 +3494,7 @@ async function hydratePlacePosts(rawPosts: any[]): Promise<PlacePost[]> {
         slug: buildPostSlugWithId({
           id: p.id,
           title: p.title || '',
-          place_name: place.name || 'Selected Place',
+          place_name: place.name || p.place_name || 'Selected Place',
           slug: p.slug,
           short_id: p.short_id,
         }),

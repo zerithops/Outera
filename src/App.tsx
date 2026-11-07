@@ -14,6 +14,8 @@ import {
 } from './types/outera';
 import {
   filterAndRankPlaces,
+  filterApprovedPublicPosts,
+  normalizeCategoryName,
   PlaceWithDistance,
 } from './services/discoveryEngine';
 import {
@@ -26,6 +28,7 @@ import {
 } from './services/storage';
 import {
   fetchPlacesFromSupabase,
+  fetchPublicPlacePosts,
   fetchUserSavedPlaces,
   fetchUserVisits,
   getCurrentUser,
@@ -40,6 +43,7 @@ import {
   buildPostPath,
   doesPostMatchRoute,
   parsePostRouteFromLocation,
+  shareCommunityPost,
 } from './services/postUrl';
 import { Navbar } from './components/Navbar';
 import { BottomNav, NavTab } from './components/BottomNav';
@@ -65,7 +69,21 @@ import {
   AuthCallbackPage,
 } from './components/AuthPages';
 import { OuteraLogo } from './components/OuteraLogo';
-import { Sparkles, ArrowRight, Compass, ShieldCheck, Globe2, MapPin, Navigation } from 'lucide-react';
+import {
+  Sparkles,
+  ArrowRight,
+  Compass,
+  ShieldCheck,
+  Globe2,
+  MapPin,
+  Navigation,
+  Star,
+  CheckCircle2,
+  Share2,
+  Tag,
+  MessageSquarePlus,
+  X,
+} from 'lucide-react';
 
 const INITIAL_FILTERS: FilterState = {
   searchQuery: '',
@@ -91,6 +109,8 @@ export default function App() {
     setCurrentLocation,
   } = useUserLocation();
   const [places, setPlaces] = useState<Place[]>([]);
+  const [publicPosts, setPublicPosts] = useState<PlacePost[]>([]);
+  const [copiedHomePostId, setCopiedHomePostId] = useState<string | null>(null);
   const [savedPlaceIds, setSavedPlaceIds] = useState<string[]>(() => getSavedPlaceIds());
   const [collections, setCollections] = useState(() => getSavedCollections());
   const [userReports, setUserReports] = useState(() => getUserExperienceReports());
@@ -265,6 +285,13 @@ export default function App() {
       }
     });
 
+    // Load approved public posts from Supabase
+    fetchPublicPlacePosts().then((posts) => {
+      if (isMounted) {
+        setPublicPosts(posts || []);
+      }
+    });
+
     // Check auth status
     getCurrentUser().then((user) => {
       if (isMounted) setAuthUser(user);
@@ -372,6 +399,11 @@ export default function App() {
     return filterAndRankPlaces(places, currentLocation.coords, filters);
   }, [places, currentLocation.coords, filters]);
 
+  // Filtered approved public posts list
+  const filteredPublicPosts = useMemo(() => {
+    return filterApprovedPublicPosts(publicPosts, places, filters);
+  }, [publicPosts, places, filters]);
+
   // Saved places mapped with distance
   const savedPlacesWithDistance = useMemo(() => {
     return filterAndRankPlaces(
@@ -402,10 +434,7 @@ export default function App() {
 
   const handleCategorySelectFromHome = (category: 'all' | MoodCategory) => {
     setFilters((prev) => ({ ...prev, selectedCategory: category }));
-    if (category !== 'all') {
-      setShowLocationHub(false);
-      setActiveTab('explore');
-    }
+    setShowLocationHub(false);
   };
 
   const refreshData = () => {
@@ -421,6 +450,9 @@ export default function App() {
         const updatedItem = refreshedRanked.find((p) => p.id === detailsPlace.id);
         if (updatedItem) setDetailsPlace(updatedItem);
       }
+    });
+    fetchPublicPlacePosts().then((posts) => {
+      setPublicPosts(posts || []);
     });
   };
 
@@ -759,6 +791,8 @@ export default function App() {
                 <MoodScroller
                   selectedCategory={filters.selectedCategory}
                   onSelectCategory={handleCategorySelectFromHome}
+                  places={places}
+                  posts={publicPosts}
                 />
 
                 {/* Curated Drop: Trending / Closest Spots */}
@@ -766,10 +800,14 @@ export default function App() {
                   <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                     <div>
                       <h2 id="curated-heading" className="text-lg sm:text-xl font-black text-white tracking-tight">
-                        Worth Going To Right Now
+                        {filters.selectedCategory !== 'all'
+                          ? `${normalizeCategoryName(filters.selectedCategory)} Spots`
+                          : 'Worth Going To Right Now'}
                       </h2>
                       <p className="text-xs text-zinc-400 mt-0.5">
-                        High community trust & verified visits around {currentLocation.neighborhoodName}
+                        {filters.selectedCategory !== 'all'
+                          ? `Showing approved places in "${normalizeCategoryName(filters.selectedCategory)}"`
+                          : `High community trust & verified visits around ${currentLocation.neighborhoodName}`}
                       </p>
                     </div>
 
@@ -785,16 +823,18 @@ export default function App() {
                       >
                         + Suggest a Place
                       </button>
-                      {rankedPlaces.length > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => setActiveTab('explore')}
-                          className="text-xs font-bold text-[#ccff00] hover:underline flex items-center gap-1"
-                        >
-                          <span>See all ({rankedPlaces.length})</span>
-                          <ArrowRight className="w-3.5 h-3.5" />
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('explore')}
+                        className="text-xs font-bold text-[#ccff00] hover:underline flex items-center gap-1"
+                      >
+                        <span>
+                          {filters.selectedCategory !== 'all'
+                            ? `Explore & Map (${rankedPlaces.length})`
+                            : `See all (${rankedPlaces.length})`}
+                        </span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                   </div>
 
@@ -810,6 +850,38 @@ export default function App() {
                           onSelect={(p) => setDetailsPlace(p)}
                         />
                       ))}
+                    </div>
+                  ) : filters.selectedCategory !== 'all' ? (
+                    <div className="py-14 px-6 rounded-3xl bg-white/[0.02] border border-white/[0.06] text-center max-w-md mx-auto space-y-4 my-2">
+                      <Compass className="w-10 h-10 text-zinc-500 mx-auto" />
+                      <div className="space-y-1">
+                        <h3 className="text-lg font-black text-white tracking-tight">
+                          No places in "{normalizeCategoryName(filters.selectedCategory)}" yet
+                        </h3>
+                        <p className="text-xs text-zinc-400 leading-relaxed">
+                          No approved places match the "{normalizeCategoryName(filters.selectedCategory)}" category yet. Clear the filter to view all spots or suggest the first spot in this category!
+                        </p>
+                      </div>
+                      <div className="flex flex-col sm:flex-row items-center justify-center gap-2.5 pt-2">
+                        <button
+                          type="button"
+                          onClick={() => setFilters((prev) => ({ ...prev, selectedCategory: 'all' }))}
+                          className="w-full sm:w-auto h-10 px-5 rounded-xl bg-[#ccff00] text-black font-extrabold text-xs uppercase tracking-wider inline-flex items-center justify-center gap-2 hover:bg-[#d8ff33] transition-all cursor-pointer"
+                        >
+                          <span>Show All Categories</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            requireVerifiedScout('suggest a new place', () =>
+                              setSuggestionModalOpen(true)
+                            )
+                          }
+                          className="w-full sm:w-auto h-10 px-4 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] text-white text-xs font-bold border border-white/[0.08] transition-all cursor-pointer"
+                        >
+                          + Suggest a Place
+                        </button>
+                      </div>
                     </div>
                   ) : (
                     <div className="py-16 px-6 rounded-3xl bg-white/[0.02] border border-white/[0.06] text-center max-w-md mx-auto space-y-4 my-2">
@@ -846,6 +918,198 @@ export default function App() {
                     </div>
                   )}
                 </section>
+
+                {/* Approved Community Posts Section on Home (Filtered by Selected Category) */}
+                {(publicPosts.length > 0 || filters.selectedCategory !== 'all') && (
+                  <section className="px-4 sm:px-6 py-4" aria-labelledby="home-posts-heading">
+                    <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                      <div>
+                        <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-[#ccff00]">
+                          <Sparkles className="w-3.5 h-3.5" />
+                          <span>
+                            {filters.selectedCategory !== 'all'
+                              ? `Approved Community Posts · ${normalizeCategoryName(filters.selectedCategory)}`
+                              : 'Approved Community Posts'}
+                          </span>
+                        </div>
+                        <h2
+                          id="home-posts-heading"
+                          className="text-lg sm:text-xl font-black text-white tracking-tight mt-0.5"
+                        >
+                          {filters.selectedCategory !== 'all'
+                            ? `Matching Public Posts (${filteredPublicPosts.length})`
+                            : `Recent Scout Experiences (${filteredPublicPosts.length})`}
+                        </h2>
+                      </div>
+
+                      <div className="flex items-center gap-2.5">
+                        {filters.selectedCategory !== 'all' && (
+                          <button
+                            type="button"
+                            onClick={() => setFilters((prev) => ({ ...prev, selectedCategory: 'all' }))}
+                            className="h-8 px-3 rounded-lg bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.08] text-xs font-bold text-zinc-300 hover:text-white flex items-center gap-1 transition-all cursor-pointer"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                            <span>Clear Filter</span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            requireVerifiedScout('create a community post', () =>
+                              setCreatePostModalOpen(true)
+                            )
+                          }
+                          className="h-8 px-3 rounded-lg bg-[#ccff00]/10 hover:bg-[#ccff00]/20 border border-[#ccff00]/25 text-xs font-bold text-[#ccff00] transition-all cursor-pointer"
+                        >
+                          + Share Experience
+                        </button>
+                      </div>
+                    </div>
+
+                    {filteredPublicPosts.length > 0 ? (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {filteredPublicPosts.slice(0, 6).map((post) => {
+                          const postCategory = normalizeCategoryName(
+                            post.place_category || 'Chill'
+                          );
+                          return (
+                            <div
+                              key={post.id}
+                              onClick={() => handleOpenPostDetails(post)}
+                              className="p-4 rounded-2xl bg-[#111317] border border-white/[0.08] hover:border-[#ccff00]/40 transition-all cursor-pointer flex flex-col justify-between gap-3 group"
+                            >
+                              <div className="space-y-2.5">
+                                <div className="flex items-center justify-between gap-2 text-xs">
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <span className="font-bold text-white truncate">
+                                      {post.author_name || 'OUTERA Scout'}
+                                    </span>
+                                    <span className="text-zinc-500 font-mono text-[11px] truncate">
+                                      {post.author_username || '@scout'}
+                                    </span>
+                                    {post.is_visited && (
+                                      <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20 shrink-0">
+                                        <CheckCircle2 className="w-2.5 h-2.5" />
+                                        <span>Visited</span>
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="flex items-center gap-1 text-xs font-mono font-bold text-[#ccff00] shrink-0">
+                                    <Star className="w-3.5 h-3.5 fill-[#ccff00]" />
+                                    <span>{post.rating}/5</span>
+                                  </span>
+                                </div>
+
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  {post.place_name && (
+                                    <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-white/[0.04] border border-white/[0.07] text-[11px] font-bold text-[#ccff00]">
+                                      <MapPin className="w-3 h-3" />
+                                      <span>{post.place_name}</span>
+                                    </div>
+                                  )}
+                                  <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[#ccff00]/10 border border-[#ccff00]/25 text-[10px] font-bold text-[#ccff00]">
+                                    <Tag className="w-2.5 h-2.5" />
+                                    <span>{postCategory}</span>
+                                  </div>
+                                </div>
+
+                                <h3 className="text-sm font-extrabold text-white group-hover:text-[#ccff00] transition-colors">
+                                  {post.title}
+                                </h3>
+                                <p className="text-xs text-zinc-300 leading-relaxed line-clamp-2">
+                                  {post.content}
+                                </p>
+
+                                {post.images && post.images.length > 0 && (
+                                  <div className="grid grid-cols-2 gap-2 pt-1">
+                                    {post.images.slice(0, 2).map((imgUrl, idx) => (
+                                      <img
+                                        key={idx}
+                                        src={imgUrl}
+                                        alt={`${post.title} photo ${idx + 1}`}
+                                        className="w-full h-28 rounded-xl object-cover border border-white/[0.08]"
+                                        loading="lazy"
+                                      />
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+
+                              <div className="pt-2.5 border-t border-white/[0.05] flex items-center justify-between text-[11px] text-zinc-400">
+                                <span className="font-mono text-[10px] text-zinc-500 truncate max-w-[60%]">
+                                  /p/{post.slug}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    await shareCommunityPost(post);
+                                    setCopiedHomePostId(post.id);
+                                    setTimeout(
+                                      () =>
+                                        setCopiedHomePostId((prev) =>
+                                          prev === post.id ? null : prev
+                                        ),
+                                      2500
+                                    );
+                                  }}
+                                  className="h-7 px-2.5 rounded-lg bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.08] text-xs font-bold text-white hover:text-[#ccff00] flex items-center gap-1.5 transition-all cursor-pointer shrink-0"
+                                  title="Share unique post link"
+                                >
+                                  <Share2 className="w-3 h-3 text-[#ccff00]" />
+                                  <span>
+                                    {copiedHomePostId === post.id ? 'Link Copied!' : 'Share'}
+                                  </span>
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="p-8 rounded-2xl bg-white/[0.02] border border-white/[0.06] text-center max-w-md mx-auto space-y-3">
+                        <MessageSquarePlus className="w-8 h-8 text-zinc-500 mx-auto" />
+                        <div className="space-y-1">
+                          <h3 className="text-sm font-bold text-white">
+                            {filters.selectedCategory !== 'all'
+                              ? `No approved community posts in "${normalizeCategoryName(filters.selectedCategory)}" yet`
+                              : 'No approved community posts yet'}
+                          </h3>
+                          <p className="text-xs text-zinc-400 leading-relaxed">
+                            {filters.selectedCategory !== 'all'
+                              ? `Visited a spot in ${normalizeCategoryName(filters.selectedCategory)}? Share the first verified experience with the community.`
+                              : 'Be the first to share a verified community review.'}
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                          {filters.selectedCategory !== 'all' && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setFilters((prev) => ({ ...prev, selectedCategory: 'all' }))
+                              }
+                              className="h-8 px-3.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.1] text-xs font-bold text-white transition-all cursor-pointer"
+                            >
+                              Show All Categories
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              requireVerifiedScout('create a community post', () =>
+                                setCreatePostModalOpen(true)
+                              )
+                            }
+                            className="h-8 px-3.5 rounded-xl bg-[#ccff00] hover:bg-[#d8ff33] text-black text-xs font-extrabold transition-all cursor-pointer"
+                          >
+                            + Share Experience
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </section>
+                )}
 
                 {/* Signature Feature Banner: Surprise Me */}
                 <section className="px-4 sm:px-6 py-6">
@@ -900,6 +1164,7 @@ export default function App() {
             {activeTab === 'explore' && (
               <ExploreView
                 places={rankedPlaces}
+                allPlaces={places}
                 currentLocation={currentLocation}
                 filters={filters}
                 onChangeFilters={setFilters}

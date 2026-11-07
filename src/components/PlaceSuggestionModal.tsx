@@ -22,6 +22,7 @@ import {
 } from '../services/supabase';
 import { LocationPickerMap } from './LocationPickerMap';
 import { Coordinates, Place } from '../types/outera';
+import { PLACE_CATEGORY_OPTIONS } from '../services/discoveryEngine';
 import { OuteraLogo } from './OuteraLogo';
 
 interface PlaceSuggestionModalProps {
@@ -336,17 +337,7 @@ export const PlaceSuggestionModal: React.FC<PlaceSuggestionModalProps> = ({
     }
   };
 
-  const categories = [
-    'Chill',
-    'Food & Drink',
-    'Active & Sports',
-    'Culture & Art',
-    'Late Night',
-    'Outdoors & Nature',
-    'Gaming & Arcade',
-    'Tourist Spot',
-    'Hotel / Resort',
-  ];
+  const categories = PLACE_CATEGORY_OPTIONS;
 
   const timeOptions = [
     'Early Morning / Sunrise',

@@ -21,9 +21,12 @@ import {
   ChevronDown,
   ChevronUp,
   ShieldCheck,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import { Place } from '../types/outera';
 import { getOuteraMapStyle, enforceFlat2DMap, OUTERA_MAP_ACCENT } from '../services/mapStyle';
+import { LiveNavigationView } from './LiveNavigationView';
 import {
   SupportedTravelProfile,
   NormalizedNavigationRouteResponse,
@@ -36,6 +39,12 @@ import {
   formatRouteDistanceMeters,
   formatRouteDurationSeconds,
 } from '../services/navigationRoute';
+import {
+  VoiceLanguageMode,
+  VoiceAvailabilityState,
+  detectAvailableNavigationVoices,
+  buildBilingualManeuverPrompt,
+} from '../services/navigationVoice';
 
 interface NavigationPreviewModalProps {
   place: Place;
@@ -89,8 +98,34 @@ export const NavigationPreviewModal: React.FC<NavigationPreviewModalProps> = ({
   const [routeErrorCode, setRouteErrorCode] = useState<string | null>(null);
   const [showStepPreview, setShowStepPreview] = useState(false);
 
-  // 5. Start Navigation state feedback
-  const [navigationStartedNotice, setNavigationStartedNotice] = useState(false);
+  // 5. Active Live Navigation state (Phase 4 & Phase 5 Voice Guidance)
+  const [isLiveNavigationActive, setIsLiveNavigationActive] = useState(false);
+  const [voiceLanguageMode, setVoiceLanguageMode] = useState<VoiceLanguageMode>('en');
+  const [isVoiceMuted, setIsVoiceMuted] = useState<boolean>(false);
+  const [voiceAvailability, setVoiceAvailability] = useState<VoiceAvailabilityState>(() =>
+    detectAvailableNavigationVoices()
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    const refreshVoices = () => {
+      setVoiceAvailability(detectAvailableNavigationVoices());
+    };
+    refreshVoices();
+    const synth = window.speechSynthesis;
+    if (typeof synth.addEventListener === 'function') {
+      synth.addEventListener('voiceschanged', refreshVoices);
+    } else {
+      synth.onvoiceschanged = refreshVoices;
+    }
+    return () => {
+      if (typeof synth.removeEventListener === 'function') {
+        synth.removeEventListener('voiceschanged', refreshVoices);
+      } else if (synth.onvoiceschanged === refreshVoices) {
+        synth.onvoiceschanged = null;
+      }
+    };
+  }, []);
 
   // Step 1: Read actual destination coordinates from `public.places` table in Supabase
   const loadDestinationCoordinates = useCallback(async () => {
@@ -106,7 +141,6 @@ export const NavigationPreviewModal: React.FC<NavigationPreviewModalProps> = ({
     setGpsState('requesting');
     setGpsErrorMessage(null);
     setOriginLabel('Detecting your current GPS position...');
-    setNavigationStartedNotice(false);
 
     const res = await requestUserGpsForNavigation((neighborhood, formatted) => {
       setOriginLabel(neighborhood);
@@ -133,11 +167,14 @@ export const NavigationPreviewModal: React.FC<NavigationPreviewModalProps> = ({
 
   // Trigger destination lookup + GPS permission prompt when preview opens
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      setIsLiveNavigationActive(false);
+      return;
+    }
     setRouteData(null);
     setRouteError(null);
     setRouteErrorCode(null);
-    setNavigationStartedNotice(false);
+    setIsLiveNavigationActive(false);
 
     loadDestinationCoordinates();
     requestGpsOrigin();
@@ -149,7 +186,6 @@ export const NavigationPreviewModal: React.FC<NavigationPreviewModalProps> = ({
       setCalculatingRoute(true);
       setRouteError(null);
       setRouteErrorCode(null);
-      setNavigationStartedNotice(false);
 
       const response = await fetchNavigationRoute({
         origin,
@@ -178,9 +214,9 @@ export const NavigationPreviewModal: React.FC<NavigationPreviewModalProps> = ({
     calculateRoute(originCoords, destinationInfo.coordinates, selectedProfile);
   }, [isOpen, originCoords, destinationInfo?.coordinates, selectedProfile, calculateRoute]);
 
-  // Initialize flat 2D MapLibre GL preview map
+  // Initialize flat 2D MapLibre GL preview map (re-initializes cleanly when returning from LiveNavigationView)
   useEffect(() => {
-    if (!isOpen || !mapContainerRef.current) return;
+    if (!isOpen || isLiveNavigationActive || !mapContainerRef.current) return;
     let isCancelled = false;
 
     const initMap = async () => {
@@ -258,7 +294,7 @@ export const NavigationPreviewModal: React.FC<NavigationPreviewModalProps> = ({
       }
       setIsMapLoaded(false);
     };
-  }, [isOpen]);
+  }, [isOpen, isLiveNavigationActive]);
 
   // Update Origin Marker, Destination Marker, and Route Geometry on the flat 2D map
   useEffect(() => {
@@ -447,7 +483,7 @@ export const NavigationPreviewModal: React.FC<NavigationPreviewModalProps> = ({
 
   const handleStartNavigationClick = () => {
     if (!originCoords || !destinationInfo?.coordinates || !routeData) return;
-    setNavigationStartedNotice(true);
+    setIsLiveNavigationActive(true);
     if (onStartNavigation) {
       onStartNavigation({
         place,
@@ -458,6 +494,22 @@ export const NavigationPreviewModal: React.FC<NavigationPreviewModalProps> = ({
       });
     }
   };
+
+  if (isLiveNavigationActive && originCoords && destinationInfo?.coordinates && routeData) {
+    return (
+      <LiveNavigationView
+        place={place}
+        initialOrigin={originCoords}
+        destination={destinationInfo.coordinates}
+        profile={selectedProfile}
+        route={routeData}
+        initialAccuracyMeters={originAccuracy ?? null}
+        initialVoiceLanguage={voiceLanguageMode}
+        initialVoiceMuted={isVoiceMuted}
+        onEndNavigation={() => setIsLiveNavigationActive(false)}
+      />
+    );
+  }
 
   return (
     <div
@@ -656,6 +708,96 @@ export const NavigationPreviewModal: React.FC<NavigationPreviewModalProps> = ({
             })}
           </div>
 
+          {/* Phase 5: Bilingual Voice Navigation Controls (English / বাংলা / Both) */}
+          <div className="p-3.5 rounded-2xl bg-[#111413] border border-white/[0.08] space-y-2.5">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => setIsVoiceMuted((prev) => !prev)}
+                  className={`h-8 px-2.5 rounded-lg border text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                    !isVoiceMuted
+                      ? 'bg-[#B7FF00]/15 text-[#B7FF00] border-[#B7FF00]/40'
+                      : 'bg-white/[0.05] text-zinc-400 border-white/[0.1]'
+                  }`}
+                >
+                  {isVoiceMuted ? (
+                    <>
+                      <VolumeX className="w-3.5 h-3.5" />
+                      <span>Voice Off</span>
+                    </>
+                  ) : (
+                    <>
+                      <Volume2 className="w-3.5 h-3.5 text-[#B7FF00]" />
+                      <span>Voice On</span>
+                    </>
+                  )}
+                </button>
+
+                <div className="flex items-center gap-1 flex-wrap">
+                  {(
+                    [
+                      { id: 'en', label: 'English' },
+                      { id: 'bn', label: 'বাংলা' },
+                      { id: 'both', label: 'Both (EN + বাংলা)' },
+                    ] as { id: VoiceLanguageMode; label: string }[]
+                  ).map((opt) => {
+                    const active = voiceLanguageMode === opt.id;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => {
+                          setVoiceLanguageMode(opt.id);
+                          setIsVoiceMuted(false);
+                        }}
+                        className={`h-8 px-2.5 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
+                          active
+                            ? 'bg-[#B7FF00] text-black border-[#B7FF00]'
+                            : 'bg-white/[0.04] text-zinc-300 border-white/[0.08] hover:bg-white/[0.1]'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Honest Device Voice Availability Status */}
+              <div className="flex items-center gap-1.5 text-[10px] font-mono">
+                <span
+                  className={`px-2 py-0.5 rounded border ${
+                    voiceAvailability.englishVoiceAvailable
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                      : 'bg-zinc-800 border-white/10 text-zinc-400'
+                  }`}
+                >
+                  EN: {voiceAvailability.englishVoiceAvailable ? 'Ready' : 'Unavailable'}
+                </span>
+                <span
+                  className={`px-2 py-0.5 rounded border ${
+                    voiceAvailability.bengaliVoiceAvailable
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                      : 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+                  }`}
+                >
+                  বাংলা: {voiceAvailability.bengaliVoiceAvailable ? 'Ready' : 'No Device Voice'}
+                </span>
+              </div>
+            </div>
+
+            {(voiceLanguageMode === 'bn' || voiceLanguageMode === 'both') &&
+              !voiceAvailability.bengaliVoiceAvailable && (
+                <p className="text-[11px] text-amber-200/90 leading-relaxed">
+                  Note: No compatible Bengali (<code className="font-mono">bn-BD</code>) speech voice
+                  was detected on this browser/device. OUTERA will display natural{' '}
+                  <strong>বাংলা</strong> turn instructions on screen and fall back to English voice
+                  audio during navigation.
+                </p>
+              )}
+          </div>
+
           {/* Route Distance & Estimated Duration Summary Bar */}
           <div className="p-4 rounded-2xl bg-[#111413] border border-white/[0.08] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             {calculatingRoute ? (
@@ -764,27 +906,39 @@ export const NavigationPreviewModal: React.FC<NavigationPreviewModalProps> = ({
                 Turn-by-Turn Instructions ({routeData.instructions.length})
               </div>
               <div className="divide-y divide-white/[0.05]">
-                {routeData.instructions.map((step) => (
-                  <div
-                    key={step.index}
-                    className="py-2 flex items-center justify-between gap-3 text-xs"
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <span className="w-5 h-5 rounded-full bg-white/[0.06] text-[#B7FF00] font-mono text-[10px] font-bold flex items-center justify-center shrink-0">
-                        {step.index + 1}
-                      </span>
-                      <div className="min-w-0">
-                        <p className="text-zinc-200 font-medium truncate">{step.instruction}</p>
-                        {step.streetName && (
-                          <p className="text-[10px] text-zinc-500 truncate">{step.streetName}</p>
-                        )}
+                {routeData.instructions.map((step) => {
+                  const bilingualStep = buildBilingualManeuverPrompt({
+                    step,
+                    distanceMeters: step.distance,
+                    hasArrived: step.maneuverType === 'arrive',
+                  });
+                  return (
+                    <div
+                      key={step.index}
+                      className="py-2 flex items-center justify-between gap-3 text-xs"
+                    >
+                      <div className="flex items-start gap-2.5 min-w-0">
+                        <span className="w-5 h-5 rounded-full bg-white/[0.06] text-[#B7FF00] font-mono text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5">
+                          {step.index + 1}
+                        </span>
+                        <div className="min-w-0">
+                          <p className="text-zinc-200 font-medium truncate">
+                            {bilingualStep.englishText}
+                          </p>
+                          <p className="text-[11px] text-[#B7FF00]/90 truncate">
+                            {bilingualStep.bengaliText}
+                          </p>
+                          {step.streetName && (
+                            <p className="text-[10px] text-zinc-500 truncate">{step.streetName}</p>
+                          )}
+                        </div>
                       </div>
+                      <span className="text-[11px] font-mono text-zinc-400 shrink-0">
+                        {formatRouteDistanceMeters(step.distance)}
+                      </span>
                     </div>
-                    <span className="text-[11px] font-mono text-zinc-400 shrink-0">
-                      {formatRouteDistanceMeters(step.distance)}
-                    </span>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
@@ -841,18 +995,6 @@ export const NavigationPreviewModal: React.FC<NavigationPreviewModalProps> = ({
               </div>
             </div>
           </div>
-
-          {navigationStartedNotice && routeData && (
-            <div className="p-3.5 rounded-xl bg-[#B7FF00]/15 border border-[#B7FF00]/40 flex items-center justify-between gap-3 text-xs text-[#B7FF00]">
-              <div className="flex items-center gap-2 font-bold">
-                <CheckCircle2 className="w-4 h-4 shrink-0" />
-                <span>
-                  Route locked ({formatRouteDistanceMeters(routeData.distance)} ·{' '}
-                  {formatRouteDurationSeconds(routeData.duration)}). Ready for live navigation!
-                </span>
-              </div>
-            </div>
-          )}
         </div>
 
         {/* Sticky Bottom CTA Bar: Return to Place + START NAVIGATION */}

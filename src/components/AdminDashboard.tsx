@@ -67,6 +67,7 @@ import {
   NearbyServiceItem,
 } from '../types/outera';
 import { BANGLADESH_DIVISIONS } from '../data/bangladeshLocations';
+import { PLACE_CATEGORY_OPTIONS, normalizeCategoryName } from '../services/discoveryEngine';
 
 interface AdminDashboardProps {
   onClose: () => void;
@@ -1735,12 +1736,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
               </div>
               <div>
                 <label className="block text-[11px] font-semibold text-zinc-400 mb-1">Category</label>
-                <input
-                  type="text"
-                  value={sugEditCategory}
+                <select
+                  value={normalizeCategoryName(sugEditCategory)}
                   onChange={(e) => setSugEditCategory(e.target.value)}
                   className="w-full h-9 px-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-white"
-                />
+                >
+                  {Array.from(
+                    new Set([...PLACE_CATEGORY_OPTIONS, normalizeCategoryName(sugEditCategory)])
+                  ).map((cat) => (
+                    <option key={cat} value={cat} className="bg-zinc-900 text-white">
+                      {cat}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div>
                 <label className="block text-[11px] font-semibold text-zinc-400 mb-1">Division</label>
