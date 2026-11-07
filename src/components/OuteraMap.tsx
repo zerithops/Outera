@@ -9,16 +9,12 @@ import {
   ZoomIn,
   ZoomOut,
   Compass,
-  Box,
-  Layers,
   ShieldCheck,
-  Sparkles,
-  RotateCcw,
 } from 'lucide-react';
 import { PlaceWithDistance } from '../services/discoveryEngine';
 import { UserLocation } from '../types/outera';
 import { formatDistance } from '../services/location';
-import { getOuteraMapStyle, ensure3DBuildingsLayer } from '../services/mapStyle';
+import { getOuteraMapStyle, enforceFlat2DMap, OUTERA_MAP_ACCENT } from '../services/mapStyle';
 
 interface OuteraMapProps {
   places: PlaceWithDistance[];
@@ -73,8 +69,6 @@ export const OuteraMap: React.FC<OuteraMapProps> = ({
   const activePopupRef = useRef<maplibregl.Popup | null>(null);
 
   const [activePlaceId, setActivePlaceId] = useState<string | null>(places[0]?.id || null);
-  const [is3DMode, setIs3DMode] = useState(false);
-  const [mapPitch, setMapPitch] = useState(0);
   const [mapBearing, setMapBearing] = useState(0);
   const [isStyleLoaded, setIsStyleLoaded] = useState(false);
 
@@ -94,7 +88,7 @@ export const OuteraMap: React.FC<OuteraMapProps> = ({
     places.find((p) => p.id === activePlaceId) ||
     displayedPlaces[0];
 
-  // Initialize MapLibre GL with OpenFreeMap vector style
+  // Initialize flat 2D MapLibre GL with OpenFreeMap dark vector style
   useEffect(() => {
     if (!mapContainerRef.current) return;
     let isCancelled = false;
@@ -114,37 +108,50 @@ export const OuteraMap: React.FC<OuteraMapProps> = ({
         center: [initialLng, initialLat],
         zoom: initialZoom,
         pitch: 0,
+        maxPitch: 0,
         bearing: 0,
+        pitchWithRotate: false,
+        touchPitch: false,
         attributionControl: false,
-        maxPitch: 70,
       });
 
-      // Attribution control minimal OUTERA branding
+      // Maintain correct OpenFreeMap & OpenStreetMap attribution
       map.addControl(
         new maplibregl.AttributionControl({
           compact: true,
-          customAttribution: '<span class="text-[9px] text-zinc-500 font-mono">OUTERA · OpenFreeMap</span>',
+          customAttribution:
+            '<span class="text-[9px] text-zinc-400 font-mono">OUTERA · <a href="https://openfreemap.org" target="_blank" rel="noopener noreferrer">OpenFreeMap</a> · © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a></span>',
         }),
         'bottom-right'
       );
 
       map.on('load', () => {
         if (isCancelled) return;
-        ensure3DBuildingsLayer(map);
+        enforceFlat2DMap(map);
         setIsStyleLoaded(true);
-      });
-
-      map.on('pitch', () => {
-        const p = Math.round(map.getPitch());
-        setMapPitch(p);
-        setIs3DMode(p > 25);
       });
 
       map.on('rotate', () => {
         setMapBearing(Math.round(map.getBearing()));
       });
 
+      // Resize observer for responsive Android & Desktop containers
+      const resizeObserver = new ResizeObserver(() => {
+        try {
+          map.resize();
+        } catch {
+          // ignore
+        }
+      });
+      if (mapContainerRef.current) {
+        resizeObserver.observe(mapContainerRef.current);
+      }
+
       mapInstanceRef.current = map;
+
+      return () => {
+        resizeObserver.disconnect();
+      };
     };
 
     initMap();
@@ -178,15 +185,15 @@ export const OuteraMap: React.FC<OuteraMapProps> = ({
     if (currentLocation.coords) {
       const { lng, lat } = currentLocation.coords;
 
-      // Pulse element for real user location
+      // Pulse element for real user location in Electric Lime (#B7FF00)
       if (!userMarkerRef.current) {
         const el = document.createElement('div');
         el.className = 'outera-user-location-marker';
         el.innerHTML = `
           <div class="relative flex items-center justify-center -translate-x-1/2 -translate-y-1/2">
-            <span class="absolute w-8 h-8 rounded-full bg-[#C6FF00]/25 animate-ping pointer-events-none"></span>
-            <span class="absolute w-5 h-5 rounded-full bg-[#C6FF00]/40 pointer-events-none"></span>
-            <div class="w-3.5 h-3.5 rounded-full bg-[#C6FF00] border-2 border-black shadow-[0_0_12px_#C6FF00]"></div>
+            <span class="absolute w-8 h-8 rounded-full bg-[#B7FF00]/25 animate-ping pointer-events-none"></span>
+            <span class="absolute w-5 h-5 rounded-full bg-[#B7FF00]/40 pointer-events-none"></span>
+            <div class="w-3.5 h-3.5 rounded-full bg-[#B7FF00] border-2 border-black shadow-[0_0_12px_#B7FF00]"></div>
           </div>
         `;
 
@@ -218,7 +225,7 @@ export const OuteraMap: React.FC<OuteraMapProps> = ({
           type: 'fill',
           source: 'user-accuracy-source',
           paint: {
-            'fill-color': '#C6FF00',
+            'fill-color': OUTERA_MAP_ACCENT,
             'fill-opacity': 0.08,
           },
         });
@@ -228,7 +235,7 @@ export const OuteraMap: React.FC<OuteraMapProps> = ({
           type: 'line',
           source: 'user-accuracy-source',
           paint: {
-            'line-color': '#C6FF00',
+            'line-color': OUTERA_MAP_ACCENT,
             'line-width': 1,
             'line-opacity': 0.45,
             'line-dasharray': [3, 3],
@@ -267,23 +274,23 @@ export const OuteraMap: React.FC<OuteraMapProps> = ({
 
       const isSelected = activePlaceId === place.id;
 
-      // Color scheme: restrained, subtle, dark charcoal with Electric Lime only for selected/active
+      // Color scheme: dark charcoal with Electric Lime (#B7FF00) accents for selected/active/trending
       let badgeColor = '#E2E6E3';
       let bgColor = '#141715';
-      let borderColor = 'rgba(255, 255, 255, 0.2)';
+      let borderColor = 'rgba(255, 255, 255, 0.22)';
 
       if (isSelected) {
-        bgColor = '#C6FF00';
+        bgColor = OUTERA_MAP_ACCENT;
         badgeColor = '#000000';
-        borderColor = '#C6FF00';
+        borderColor = OUTERA_MAP_ACCENT;
       } else if (place.markerState === 'Popular') {
         bgColor = '#f59e0b';
         badgeColor = '#000000';
         borderColor = '#f59e0b';
       } else if (place.isTrending || place.markerState === 'Trending') {
-        bgColor = '#1e251e';
-        badgeColor = '#C6FF00';
-        borderColor = '#C6FF00';
+        bgColor = '#181E17';
+        badgeColor = OUTERA_MAP_ACCENT;
+        borderColor = OUTERA_MAP_ACCENT;
       } else if (place.isHiddenGem || place.markerState === 'HiddenGem') {
         bgColor = '#0891b2';
         badgeColor = '#000000';
@@ -306,7 +313,7 @@ export const OuteraMap: React.FC<OuteraMapProps> = ({
           </div>
           ${
             isSelected
-              ? '<span class="absolute -bottom-1 w-2 h-2 rounded-full bg-[#C6FF00] ring-2 ring-black"></span>'
+              ? '<span class="absolute -bottom-1 w-2 h-2 rounded-full bg-[#B7FF00] ring-2 ring-black"></span>'
               : ''
           }
         </div>
@@ -320,17 +327,17 @@ export const OuteraMap: React.FC<OuteraMapProps> = ({
       popupNode.className = 'p-3 min-w-[210px] max-w-[250px] space-y-1.5 text-white font-sans';
       popupNode.innerHTML = `
         <div class="flex items-center justify-between text-[10px] font-bold">
-          <span class="text-[#C6FF00] uppercase tracking-wider">${place.category}</span>
+          <span class="text-[#B7FF00] uppercase tracking-wider">${place.category}</span>
           ${distStr ? `<span class="text-zinc-200 font-mono font-bold">${distStr}</span>` : ''}
         </div>
         <h4 class="text-sm font-bold text-white tracking-tight line-clamp-1">${place.name}</h4>
         ${areaStr ? `<p class="text-[11px] text-zinc-400 line-clamp-1">${areaStr}</p>` : ''}
         <div class="flex items-center justify-between pt-1.5 border-t border-white/10 text-[11px]">
-          ${ratingStr ? `<span class="text-[#C6FF00] font-mono font-bold">${ratingStr}</span>` : '<span></span>'}
+          ${ratingStr ? `<span class="text-[#B7FF00] font-mono font-bold">${ratingStr}</span>` : '<span></span>'}
           <button
             type="button"
             id="popup-btn-${place.id}"
-            class="h-7 px-2.5 rounded-lg bg-[#C6FF00] hover:bg-[#d4ff1a] text-black font-extrabold text-[11px] uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1"
+            class="h-7 px-2.5 rounded-lg bg-[#B7FF00] hover:bg-[#c8ff33] text-black font-extrabold text-[11px] uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1"
           >
             <span>View Place</span>
             <span>→</span>
@@ -369,7 +376,8 @@ export const OuteraMap: React.FC<OuteraMapProps> = ({
         map.easeTo({
           center: [coords.lng, coords.lat],
           zoom: Math.max(map.getZoom(), 15),
-          duration: 600,
+          pitch: 0,
+          duration: 500,
         });
       });
 
@@ -386,26 +394,14 @@ export const OuteraMap: React.FC<OuteraMapProps> = ({
       map.flyTo({
         center: [currentLocation.coords.lng, currentLocation.coords.lat],
         zoom: 15,
-        duration: 900,
+        pitch: 0,
+        bearing: 0,
+        duration: 800,
       });
     } else if (onRequestGPS) {
       onRequestGPS();
     }
   }, [currentLocation.coords, onRequestGPS]);
-
-  const handleToggle3D = useCallback(() => {
-    const map = mapInstanceRef.current;
-    if (!map) return;
-
-    const targetPitch = is3DMode ? 0 : 54;
-    const targetBearing = is3DMode ? 0 : -18;
-
-    map.easeTo({
-      pitch: targetPitch,
-      bearing: targetBearing,
-      duration: 800,
-    });
-  }, [is3DMode]);
 
   const handleResetNorth = useCallback(() => {
     const map = mapInstanceRef.current;
@@ -414,16 +410,16 @@ export const OuteraMap: React.FC<OuteraMapProps> = ({
     map.easeTo({
       bearing: 0,
       pitch: 0,
-      duration: 600,
+      duration: 500,
     });
   }, []);
 
   const handleZoomIn = useCallback(() => {
-    mapInstanceRef.current?.zoomIn({ duration: 300 });
+    mapInstanceRef.current?.zoomIn({ duration: 250 });
   }, []);
 
   const handleZoomOut = useCallback(() => {
-    mapInstanceRef.current?.zoomOut({ duration: 300 });
+    mapInstanceRef.current?.zoomOut({ duration: 250 });
   }, []);
 
   const layers = [
@@ -456,26 +452,21 @@ export const OuteraMap: React.FC<OuteraMapProps> = ({
   ];
 
   return (
-    <div className="w-full rounded-2xl bg-[#0E1110] border border-white/[0.08] p-4 sm:p-5 space-y-4 shadow-xl">
-      {/* Top Header & Layer Tabs */}
+    <div className="w-full rounded-2xl bg-[#0E1110] border border-white/[0.08] p-3.5 sm:p-5 space-y-4 shadow-xl">
+      {/* Top Header & Controls */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-1.5 text-xs font-bold text-[#C6FF00] uppercase tracking-wider">
-            <Compass className="w-3.5 h-3.5" />
-            <span>OpenFreeMap Vector Engine</span>
-            {is3DMode && (
-              <span className="ml-1.5 px-1.5 py-0.2 rounded bg-[#C6FF00]/15 text-[#C6FF00] text-[10px] font-mono border border-[#C6FF00]/30">
-                3D Extrusion Active
-              </span>
-            )}
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5 text-xs font-bold text-[#B7FF00] uppercase tracking-wider">
+            <Compass className="w-3.5 h-3.5 shrink-0" />
+            <span>OpenFreeMap 2D Vector Map</span>
           </div>
-          <h2 className="text-base sm:text-lg font-black text-white tracking-tight mt-0.5">
+          <h2 className="text-base sm:text-lg font-black text-white tracking-tight mt-0.5 truncate">
             {currentLocation.neighborhoodName !== 'Location not set'
               ? `Spots around ${currentLocation.neighborhoodName}`
               : 'Community Discovery Map'}
           </h2>
           {currentLocation.coords && (
-            <p className="text-[11px] text-zinc-400 font-mono mt-0.5">
+            <p className="text-[11px] text-zinc-400 font-mono mt-0.5 truncate">
               GPS: {currentLocation.coords.lat.toFixed(4)}, {currentLocation.coords.lng.toFixed(4)}
               {currentLocation.accuracyMeters
                 ? ` · Accurate to ~${Math.round(currentLocation.accuracyMeters)}m`
@@ -484,14 +475,14 @@ export const OuteraMap: React.FC<OuteraMapProps> = ({
           )}
         </div>
 
-        {/* Minimal OUTERA Map Controls: GPS, 3D Toggle, Compass, Zoom */}
+        {/* Flat 2D Map Controls: GPS, North Compass, Zoom In/Out */}
         <div className="flex items-center gap-1.5 self-start sm:self-auto flex-wrap">
           <button
             type="button"
             onClick={handleRecenterOnUser}
-            className={`h-8 px-2.5 sm:px-3 rounded-lg text-xs font-bold flex items-center gap-1.5 border transition-all cursor-pointer ${
+            className={`h-9 sm:h-8 px-3 rounded-lg text-xs font-bold flex items-center gap-1.5 border transition-all cursor-pointer ${
               currentLocation.coords
-                ? 'bg-[#C6FF00] text-black border-[#C6FF00] hover:bg-[#d4ff1a]'
+                ? 'bg-[#B7FF00] text-black border-[#B7FF00] hover:bg-[#c8ff33]'
                 : 'bg-white/[0.06] text-white border-white/[0.1] hover:bg-white/[0.1]'
             }`}
             title="Re-center on my location"
@@ -500,27 +491,13 @@ export const OuteraMap: React.FC<OuteraMapProps> = ({
             <span>{currentLocation.coords ? 'Re-center' : 'Use My GPS'}</span>
           </button>
 
-          {/* 3D / 2D Extruded Building Toggle */}
-          <button
-            type="button"
-            onClick={handleToggle3D}
-            className={`h-8 px-2.5 rounded-lg text-xs font-bold flex items-center gap-1.5 border transition-all cursor-pointer ${
-              is3DMode
-                ? 'bg-[#C6FF00] text-black border-[#C6FF00]'
-                : 'bg-white/[0.04] text-zinc-300 border-white/[0.08] hover:bg-white/[0.08] hover:text-white'
-            }`}
-            title="Toggle 3D Buildings & Pitch"
-          >
-            <Box className="w-3.5 h-3.5" />
-            <span>{is3DMode ? `3D (${mapPitch}°)` : '3D View'}</span>
-          </button>
-
           {/* Reset North Compass Control */}
           <button
             type="button"
             onClick={handleResetNorth}
-            className="w-8 h-8 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] text-zinc-300 hover:text-white flex items-center justify-center border border-white/[0.06] transition-all cursor-pointer"
-            title="Reset North & Pitch"
+            className="w-9 h-9 sm:w-8 sm:h-8 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] text-zinc-300 hover:text-white flex items-center justify-center border border-white/[0.06] transition-all cursor-pointer"
+            title="Reset North"
+            aria-label="Reset North"
           >
             <Compass
               className="w-4 h-4 transition-transform duration-200"
@@ -532,16 +509,18 @@ export const OuteraMap: React.FC<OuteraMapProps> = ({
           <button
             type="button"
             onClick={handleZoomIn}
-            className="w-8 h-8 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] text-zinc-300 hover:text-white flex items-center justify-center border border-white/[0.06] transition-all cursor-pointer"
+            className="w-9 h-9 sm:w-8 sm:h-8 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] text-zinc-300 hover:text-white flex items-center justify-center border border-white/[0.06] transition-all cursor-pointer"
             title="Zoom in"
+            aria-label="Zoom in"
           >
             <ZoomIn className="w-4 h-4" />
           </button>
           <button
             type="button"
             onClick={handleZoomOut}
-            className="w-8 h-8 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] text-zinc-300 hover:text-white flex items-center justify-center border border-white/[0.06] transition-all cursor-pointer"
+            className="w-9 h-9 sm:w-8 sm:h-8 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] text-zinc-300 hover:text-white flex items-center justify-center border border-white/[0.06] transition-all cursor-pointer"
             title="Zoom out"
+            aria-label="Zoom out"
           >
             <ZoomOut className="w-4 h-4" />
           </button>
@@ -560,7 +539,7 @@ export const OuteraMap: React.FC<OuteraMapProps> = ({
                 onClick={() => onChangeLayer(layer.id)}
                 className={`shrink-0 h-8 px-3 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all border cursor-pointer ${
                   isActive
-                    ? 'bg-[#C6FF00] text-black border-[#C6FF00] font-bold shadow-sm'
+                    ? 'bg-[#B7FF00] text-black border-[#B7FF00] font-bold shadow-sm'
                     : 'bg-white/[0.03] text-zinc-300 border-white/[0.08] hover:bg-white/[0.06]'
                 }`}
               >
@@ -574,8 +553,8 @@ export const OuteraMap: React.FC<OuteraMapProps> = ({
         </div>
       )}
 
-      {/* Map Canvas Container */}
-      <div className="relative h-[320px] sm:h-[420px] lg:h-[480px] w-full rounded-2xl bg-[#0B0D0C] border border-white/[0.08] overflow-hidden">
+      {/* Map Canvas Container (Responsive for Android mobile & Desktop) */}
+      <div className="relative h-[340px] sm:h-[430px] lg:h-[490px] w-full rounded-2xl bg-[#0B0D0C] border border-white/[0.08] overflow-hidden touch-pan-x touch-pan-y">
         <div ref={mapContainerRef} className="w-full h-full z-0" />
 
         {/* Empty state overlay if no places on map */}
@@ -589,15 +568,11 @@ export const OuteraMap: React.FC<OuteraMapProps> = ({
           </div>
         )}
 
-        {/* 3D gesture & privacy badge */}
+        {/* Flat 2D Vector Map status badge */}
         <div className="absolute bottom-2.5 left-2.5 flex items-center gap-2 pointer-events-none z-10">
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-black/85 border border-white/10 text-[10px] text-zinc-400 backdrop-blur-sm">
-            <ShieldCheck className="w-3 h-3 text-[#C6FF00] shrink-0" />
-            <span>OpenFreeMap Vector Tiles · Deep Black</span>
-          </div>
-          <div className="hidden sm:flex items-center gap-1 px-2 py-1 rounded-md bg-black/85 border border-white/10 text-[10px] text-zinc-400 backdrop-blur-sm">
-            <Box className="w-2.5 h-2.5 text-[#C6FF00]" />
-            <span>Drag with right-click or two fingers to tilt 3D</span>
+            <ShieldCheck className="w-3 h-3 text-[#B7FF00] shrink-0" />
+            <span>OpenFreeMap 2D Vector · Deep Charcoal</span>
           </div>
         </div>
       </div>
@@ -607,7 +582,7 @@ export const OuteraMap: React.FC<OuteraMapProps> = ({
         <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/[0.08] flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-in fade-in duration-150">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5 text-xs font-medium mb-1 flex-wrap text-zinc-400">
-              <span className="text-[#C6FF00] font-bold">{activePlace.category}</span>
+              <span className="text-[#B7FF00] font-bold">{activePlace.category}</span>
               <span className="text-zinc-600">·</span>
               <span className="truncate max-w-[200px]">
                 {activePlace.address || `${activePlace.district}, ${activePlace.division}`}
@@ -637,7 +612,7 @@ export const OuteraMap: React.FC<OuteraMapProps> = ({
             <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-300 mt-2 font-medium">
               <span className="font-mono tabular-nums">{activePlace.priceLevel.label}</span>
               <span className="text-zinc-600">·</span>
-              <span className="text-[#C6FF00] font-mono tabular-nums">
+              <span className="text-[#B7FF00] font-mono tabular-nums">
                 {activePlace.communityScore}% worth it
               </span>
               <span className="text-zinc-600">·</span>
@@ -649,7 +624,7 @@ export const OuteraMap: React.FC<OuteraMapProps> = ({
             <button
               type="button"
               onClick={() => onSelectPlace(activePlace)}
-              className="w-full sm:w-auto h-11 px-4 rounded-xl bg-[#C6FF00] text-black font-extrabold text-xs tracking-wider uppercase flex items-center justify-center gap-1.5 hover:bg-[#d4ff1a] active:scale-[0.98] transition-all cursor-pointer whitespace-nowrap shadow-md shadow-[#C6FF00]/10"
+              className="w-full sm:w-auto h-11 px-4 rounded-xl bg-[#B7FF00] text-black font-extrabold text-xs tracking-wider uppercase flex items-center justify-center gap-1.5 hover:bg-[#c8ff33] active:scale-[0.98] transition-all cursor-pointer whitespace-nowrap shadow-md shadow-[#B7FF00]/10"
             >
               <span>View Spot Details</span>
               <ArrowRight className="w-3.5 h-3.5" />

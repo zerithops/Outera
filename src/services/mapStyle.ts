@@ -1,92 +1,47 @@
 import type { StyleSpecification } from 'maplibre-gl';
 
 export const OPENFREEMAP_DARK_STYLE_URL = 'https://tiles.openfreemap.org/styles/dark';
+export const OUTERA_MAP_ACCENT = '#B7FF00';
 
-// Cached processed style object
+// Cached processed flat 2D style object
 let cachedOuteraMapStyle: StyleSpecification | null = null;
 let fetchPromise: Promise<StyleSpecification | string> | null = null;
 
 /**
- * Builds the OUTERA 3D buildings layer definition targeting OpenFreeMap OpenMapTiles vector source.
- */
-export function create3DBuildingsLayer(id = 'outera-3d-buildings'): any {
-  return {
-    id,
-    type: 'fill-extrusion',
-    source: 'openmaptiles',
-    'source-layer': 'building',
-    minzoom: 13,
-    filter: ['!=', ['get', 'hide_3d'], true],
-    paint: {
-      // Subtle dark charcoal colors matching near-black OUTERA UI
-      'fill-extrusion-color': [
-        'interpolate',
-        ['linear'],
-        ['zoom'],
-        13,
-        '#141715',
-        15,
-        '#1b1f1d',
-        18,
-        '#252A27',
-      ],
-      // Realistic height transitions according to source data
-      'fill-extrusion-height': [
-        'interpolate',
-        ['linear'],
-        ['zoom'],
-        13,
-        0,
-        14.5,
-        ['coalesce', ['get', 'render_height'], ['get', 'height'], 8],
-      ],
-      'fill-extrusion-base': [
-        'interpolate',
-        ['linear'],
-        ['zoom'],
-        13,
-        0,
-        14.5,
-        ['coalesce', ['get', 'render_min_height'], ['get', 'min_height'], 0],
-      ],
-      // Smooth fade-in as user zooms in to 3D level
-      'fill-extrusion-opacity': [
-        'interpolate',
-        ['linear'],
-        ['zoom'],
-        13,
-        0,
-        13.5,
-        0.35,
-        15,
-        0.82,
-        17,
-        0.9,
-      ],
-      'fill-extrusion-vertical-gradient': true,
-    },
-  };
-}
-
-/**
- * Customizes an OpenFreeMap style object to enforce OUTERA's genuine deep-black palette:
- * - Background: near-black (#0B0D0C)
+ * Customizes an OpenFreeMap style object into OUTERA's flat 2D dark vector map:
+ * - Strictly removes all 3D building fill-extrusion layers and 3D terrain
+ * - Background: deep black/charcoal (#0B0D0C)
  * - Water: deep black (#080A09)
- * - Roads: subtle charcoal grey (#252A27)
+ * - Flat 2D building footprints: subtle dark charcoal (#121614)
+ * - Roads: subtle charcoal grey (#262B28 major / #1D221F local / #131615 casing)
  * - Borders: muted grey (#2A302D)
- * - Labels: soft off-white (#D4DAD6) and grey (#9CA39E)
- * - 3D Buildings: subtle dark charcoal fill-extrusion
+ * - Labels: soft off-white (#E2E6E3) and muted grey (#A3ABA5)
  */
 export function customizeOuteraStyle(rawStyle: any): StyleSpecification {
   const style = JSON.parse(JSON.stringify(rawStyle));
+
+  // Disable any 3D terrain definition
+  if ('terrain' in style) {
+    delete style.terrain;
+  }
 
   if (!style.layers || !Array.isArray(style.layers)) {
     return rawStyle;
   }
 
-  // 1. Process layers
+  // 1. Remove any 3D building extrusion layers or hillshade/terrain layers
+  style.layers = style.layers.filter((layer: any) => {
+    if (!layer) return false;
+    const id = String(layer.id || '').toLowerCase();
+    if (layer.type === 'fill-extrusion') return false;
+    if (layer.type === 'hillshade') return false;
+    if (id.includes('3d') || id.includes('extrusion') || id.includes('building-3d')) return false;
+    return true;
+  });
+
+  // 2. Customize remaining flat 2D layers
   for (const layer of style.layers) {
-    // Near-black background
+    // Near-black / charcoal background
     if (layer.type === 'background') {
       layer.paint = { ...(layer.paint || {}), 'background-color': '#0B0D0C' };
     }
@@ -103,26 +58,51 @@ export function customizeOuteraStyle(rawStyle: any): StyleSpecification {
       }
     }
 
-    // Landuse & Landcover: dark muted background
+    // Landuse & Landcover: dark charcoal surface
     if (layer['source-layer'] === 'landuse' || layer['source-layer'] === 'landcover') {
       if (layer.paint && layer.paint['fill-color']) {
-        layer.paint['fill-color'] = '#0d100e';
+        layer.paint['fill-color'] = '#0D100E';
       }
     }
 
-    // Roads & Transportation: subtle charcoal grey (#252A27)
+    // Flat 2D building footprints (no extrusion)
+    if (layer['source-layer'] === 'building') {
+      if (layer.type === 'fill') {
+        layer.paint = {
+          ...(layer.paint || {}),
+          'fill-color': '#121614',
+          'fill-outline-color': '#1A1F1D',
+          'fill-opacity': 0.75,
+        };
+      } else if (layer.type === 'line') {
+        layer.paint = {
+          ...(layer.paint || {}),
+          'line-color': '#1A1F1D',
+          'line-width': 0.5,
+        };
+      }
+    }
+
+    // Roads & Transportation: subtle grey roads (#262B28 / #1D221F)
     if (layer['source-layer'] === 'transportation') {
       if (layer.paint && layer.paint['line-color']) {
         if (layer.id.includes('casing')) {
-          layer.paint['line-color'] = '#141715';
-        } else if (layer.id.includes('motorway') || layer.id.includes('major')) {
-          layer.paint['line-color'] = '#252A27';
+          layer.paint['line-color'] = '#131615';
+        } else if (
+          layer.id.includes('motorway') ||
+          layer.id.includes('trunk') ||
+          layer.id.includes('primary') ||
+          layer.id.includes('major')
+        ) {
+          layer.paint['line-color'] = '#282E2B';
+        } else if (layer.id.includes('secondary') || layer.id.includes('tertiary')) {
+          layer.paint['line-color'] = '#212624';
         } else {
-          layer.paint['line-color'] = '#1c201e';
+          layer.paint['line-color'] = '#1B1F1D';
         }
       }
       if (layer.paint && layer.paint['fill-color']) {
-        layer.paint['fill-color'] = '#171b19';
+        layer.paint['fill-color'] = '#171B19';
       }
     }
 
@@ -136,10 +116,15 @@ export function customizeOuteraStyle(rawStyle: any): StyleSpecification {
     // Labels & Symbols: soft off-white & grey with near-black halo
     if (layer.type === 'symbol') {
       if (layer.paint) {
-        if (layer.id.includes('country') || layer.id.includes('city_large')) {
-          layer.paint['text-color'] = '#E2E6E3'; // soft off-white for major cities
+        if (
+          layer.id.includes('country') ||
+          layer.id.includes('city') ||
+          layer.id.includes('town') ||
+          layer.id.includes('place')
+        ) {
+          layer.paint['text-color'] = '#E2E6E3';
         } else {
-          layer.paint['text-color'] = '#A3ABA5'; // muted grey for streets/suburbs
+          layer.paint['text-color'] = '#A3ABA5';
         }
         layer.paint['text-halo-color'] = '#0B0D0C';
         layer.paint['text-halo-width'] = 1.6;
@@ -147,23 +132,11 @@ export function customizeOuteraStyle(rawStyle: any): StyleSpecification {
     }
   }
 
-  // 2. Add 3D building extrusion layer before symbols if not already present
-  const has3D = style.layers.some((l: any) => l.id === 'outera-3d-buildings' || l.type === 'fill-extrusion');
-  if (!has3D && style.sources?.openmaptiles) {
-    const firstSymbolIdx = style.layers.findIndex((l: any) => l.type === 'symbol');
-    const building3D = create3DBuildingsLayer('outera-3d-buildings');
-    if (firstSymbolIdx >= 0) {
-      style.layers.splice(firstSymbolIdx, 0, building3D);
-    } else {
-      style.layers.push(building3D);
-    }
-  }
-
   return style as StyleSpecification;
 }
 
 /**
- * Retrieves the customized OUTERA MapLibre style using OpenFreeMap vector tiles.
+ * Retrieves the customized flat 2D OUTERA MapLibre style using OpenFreeMap vector tiles.
  * Caches in memory for instant reuse across map instances.
  */
 export async function getOuteraMapStyle(): Promise<StyleSpecification | string> {
@@ -202,28 +175,46 @@ export async function getOuteraMapStyle(): Promise<StyleSpecification | string> 
 }
 
 /**
- * Adds the 3D building layer to a running MapLibre instance if it does not already exist.
+ * Enforces a strictly flat 2D map state on any running MapLibre instance:
+ * - Removes any residual fill-extrusion or 3D layers (e.g. if fallback URL was used)
+ * - Disables 3D terrain and locks pitch to 0°
  */
-export function ensure3DBuildingsLayer(map: any) {
-  if (!map || !map.getStyle()) return;
-
-  if (map.getLayer('outera-3d-buildings')) return;
-
-  const style = map.getStyle();
-  if (!style || !style.sources || !style.sources.openmaptiles) return;
-
-  const layers = style.layers || [];
-  let firstSymbolId: string | undefined;
-  for (const layer of layers) {
-    if (layer.type === 'symbol') {
-      firstSymbolId = layer.id;
-      break;
-    }
-  }
+export function enforceFlat2DMap(map: any) {
+  if (!map) return;
 
   try {
-    map.addLayer(create3DBuildingsLayer('outera-3d-buildings'), firstSymbolId);
-  } catch (err) {
-    console.debug('3D building layer add notice:', err);
+    if (typeof map.setTerrain === 'function') {
+      map.setTerrain(null);
+    }
+    if (typeof map.setMaxPitch === 'function') {
+      map.setMaxPitch(0);
+    }
+    if (typeof map.setPitch === 'function' && map.getPitch && map.getPitch() !== 0) {
+      map.setPitch(0);
+    }
+    if (map.touchPitch && typeof map.touchPitch.disable === 'function') {
+      map.touchPitch.disable();
+    }
+  } catch {
+    // ignore
+  }
+
+  const style = map.getStyle?.();
+  if (!style || !Array.isArray(style.layers)) return;
+
+  for (const layer of style.layers) {
+    if (
+      layer.type === 'fill-extrusion' ||
+      layer.type === 'hillshade' ||
+      String(layer.id || '').toLowerCase().includes('3d')
+    ) {
+      try {
+        if (map.getLayer(layer.id)) {
+          map.removeLayer(layer.id);
+        }
+      } catch {
+        // ignore
+      }
+    }
   }
 }

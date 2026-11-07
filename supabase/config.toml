@@ -1,0 +1,6 @@
+# Supabase Project Configuration for OUTERA (znyglvfsbxyjsctphigm)
+project_id = "znyglvfsbxyjsctphigm"
+
+[functions.navigation-route]
+verify_jwt = false
+entrypoint = "index.ts"

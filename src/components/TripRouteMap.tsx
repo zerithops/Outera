@@ -2,9 +2,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import '../services/maplibreSetup.ts';
 import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { Box, Compass, Maximize2, ZoomIn, ZoomOut } from 'lucide-react';
+import { Compass, Maximize2, ZoomIn, ZoomOut } from 'lucide-react';
 import { Coordinates, TripDayStop } from '../types/outera';
-import { getOuteraMapStyle, ensure3DBuildingsLayer } from '../services/mapStyle';
+import { getOuteraMapStyle, enforceFlat2DMap, OUTERA_MAP_ACCENT } from '../services/mapStyle';
 
 interface TripRouteMapProps {
   stops: TripDayStop[];
@@ -33,7 +33,6 @@ export const TripRouteMap: React.FC<TripRouteMapProps> = ({
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markersRef = useRef<maplibregl.Marker[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
-  const [is3D, setIs3D] = useState(false);
 
   const visibleStops =
     selectedDayFilter === 'all'
@@ -44,7 +43,7 @@ export const TripRouteMap: React.FC<TripRouteMapProps> = ({
     (s) => s.coordinates && typeof s.coordinates.lat === 'number' && typeof s.coordinates.lng === 'number'
   );
 
-  // Initialize MapLibre GL map
+  // Initialize flat 2D MapLibre GL map
   useEffect(() => {
     if (!containerRef.current) return;
     let cancelled = false;
@@ -63,22 +62,25 @@ export const TripRouteMap: React.FC<TripRouteMapProps> = ({
         center: initialCenter,
         zoom: 12,
         pitch: 0,
+        maxPitch: 0,
         bearing: 0,
+        pitchWithRotate: false,
+        touchPitch: false,
         attributionControl: false,
-        maxPitch: 70,
       });
 
       map.addControl(
         new maplibregl.AttributionControl({
           compact: true,
-          customAttribution: '<span class="text-[9px] text-zinc-500 font-mono">OUTERA · OpenFreeMap · OSRM</span>',
+          customAttribution:
+            '<span class="text-[9px] text-zinc-400 font-mono">OUTERA · <a href="https://openfreemap.org" target="_blank" rel="noopener noreferrer">OpenFreeMap</a> · © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> · OSRM</span>',
         }),
         'bottom-right'
       );
 
       map.on('load', () => {
         if (cancelled) return;
-        ensure3DBuildingsLayer(map);
+        enforceFlat2DMap(map);
         setIsLoaded(true);
       });
 
@@ -156,7 +158,7 @@ export const TripRouteMap: React.FC<TripRouteMapProps> = ({
             'line-cap': 'round',
           },
           paint: {
-            'line-color': '#C6FF00',
+            'line-color': OUTERA_MAP_ACCENT,
             'line-width': 3,
             'line-opacity': 0.95,
           },
@@ -173,7 +175,7 @@ export const TripRouteMap: React.FC<TripRouteMapProps> = ({
       el.type = 'button';
       el.className = 'group relative flex items-center justify-center focus:outline-none cursor-pointer';
       el.innerHTML = `
-        <div class="w-7 h-7 rounded-full bg-[#C6FF00] text-[#0B0D0C] font-mono font-extrabold text-xs flex items-center justify-center shadow-lg border-2 border-[#0B0D0C] transition-transform duration-150 group-hover:scale-110">
+        <div class="w-7 h-7 rounded-full bg-[#B7FF00] text-[#0B0D0C] font-mono font-extrabold text-xs flex items-center justify-center shadow-lg border-2 border-[#0B0D0C] transition-transform duration-150 group-hover:scale-110">
           ${index + 1}
         </div>
         <div class="absolute bottom-9 left-1/2 -translate-x-1/2 px-2.5 py-1 rounded-lg bg-[#0B0D0C]/95 border border-white/15 text-[11px] font-semibold text-white whitespace-nowrap pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity shadow-xl z-30">
@@ -186,6 +188,7 @@ export const TripRouteMap: React.FC<TripRouteMapProps> = ({
         map.flyTo({
           center: [coords.lng, coords.lat],
           zoom: Math.max(map.getZoom(), 14),
+          pitch: 0,
           duration: 600,
         });
         if (onSelectStop) onSelectStop(stop);
@@ -207,12 +210,14 @@ export const TripRouteMap: React.FC<TripRouteMapProps> = ({
       map.flyTo({
         center: [validStops[0].coordinates!.lng, validStops[0].coordinates!.lat],
         zoom: 13,
+        pitch: 0,
         duration: 600,
       });
     } else {
       map.flyTo({
         center: [destinationCenter.lng, destinationCenter.lat],
         zoom: 11,
+        pitch: 0,
         duration: 600,
       });
     }
@@ -229,21 +234,10 @@ export const TripRouteMap: React.FC<TripRouteMapProps> = ({
       map.flyTo({
         center: [validStops[0].coordinates!.lng, validStops[0].coordinates!.lat],
         zoom: 13.5,
+        pitch: 0,
         duration: 500,
       });
     }
-  };
-
-  const handleToggle3D = () => {
-    const map = mapRef.current;
-    if (!map) return;
-    const next = !is3D;
-    setIs3D(next);
-    map.easeTo({
-      pitch: next ? 52 : 0,
-      bearing: next ? -18 : 0,
-      duration: 500,
-    });
   };
 
   return (
@@ -257,7 +251,7 @@ export const TripRouteMap: React.FC<TripRouteMapProps> = ({
           onClick={() => onSelectDayFilter('all')}
           className={`h-8 px-3 rounded-lg text-xs font-bold whitespace-nowrap shrink-0 transition-all cursor-pointer border ${
             selectedDayFilter === 'all'
-              ? 'bg-[#C6FF00] text-[#0B0D0C] border-[#C6FF00]'
+              ? 'bg-[#B7FF00] text-[#0B0D0C] border-[#B7FF00]'
               : 'bg-[#0B0D0C]/90 text-zinc-300 border-white/10 hover:text-white'
           }`}
         >
@@ -272,7 +266,7 @@ export const TripRouteMap: React.FC<TripRouteMapProps> = ({
               onClick={() => onSelectDayFilter(dayNum)}
               className={`h-8 px-2.5 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 transition-all cursor-pointer border ${
                 selectedDayFilter === dayNum
-                  ? 'bg-[#C6FF00] text-[#0B0D0C] border-[#C6FF00]'
+                  ? 'bg-[#B7FF00] text-[#0B0D0C] border-[#B7FF00]'
                   : 'bg-[#0B0D0C]/90 text-zinc-300 border-white/10 hover:text-white'
               }`}
             >
@@ -282,7 +276,7 @@ export const TripRouteMap: React.FC<TripRouteMapProps> = ({
         })}
       </div>
 
-      {/* Top Right: Map Controls */}
+      {/* Top Right: Flat 2D Map Controls */}
       <div className="absolute top-3 right-3 z-10 flex flex-col gap-1.5">
         <button
           type="button"
@@ -301,19 +295,6 @@ export const TripRouteMap: React.FC<TripRouteMapProps> = ({
           aria-label="Zoom out"
         >
           <ZoomOut className="w-4 h-4" />
-        </button>
-        <button
-          type="button"
-          onClick={handleToggle3D}
-          className={`w-8 h-8 rounded-lg border flex items-center justify-center cursor-pointer transition-colors ${
-            is3D
-              ? 'bg-[#C6FF00] text-[#0B0D0C] border-[#C6FF00]'
-              : 'bg-[#0B0D0C]/90 hover:bg-[#161918] text-zinc-200 border-white/10'
-          }`}
-          title="Toggle 3D buildings tilt"
-          aria-label="Toggle 3D buildings tilt"
-        >
-          <Box className="w-4 h-4" />
         </button>
         <button
           type="button"
@@ -337,7 +318,7 @@ export const TripRouteMap: React.FC<TripRouteMapProps> = ({
 
       {/* Bottom Left Status Legend */}
       <div className="absolute bottom-3 left-3 z-10 px-3 py-1.5 rounded-lg bg-[#0B0D0C]/90 border border-white/10 text-[11px] text-zinc-300 flex items-center gap-3">
-        <span className="font-mono tabular-nums text-[#C6FF00] font-bold">
+        <span className="font-mono tabular-nums text-[#B7FF00] font-bold">
           {validStops.length} Mapped Stop{validStops.length === 1 ? '' : 's'}
         </span>
         <span aria-hidden="true" className="text-zinc-600">·</span>

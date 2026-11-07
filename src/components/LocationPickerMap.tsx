@@ -5,7 +5,7 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import { MapPin, Navigation, Search, X, Crosshair, Check } from 'lucide-react';
 import { Coordinates } from '../types/outera';
 import { requestBrowserLocation, reverseGeocodeNominatim } from '../services/location';
-import { getOuteraMapStyle } from '../services/mapStyle';
+import { getOuteraMapStyle, enforceFlat2DMap } from '../services/mapStyle';
 
 interface LocationPickerMapProps {
   coordinates: Coordinates | null;
@@ -37,7 +37,7 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
     el.className = 'outera-picker-marker-container cursor-grab active:cursor-grabbing';
     el.innerHTML = `
       <div class="relative flex items-center justify-center -translate-x-1/2 -translate-y-full">
-        <div class="w-8 h-8 rounded-full bg-[#C6FF00] text-black font-extrabold flex items-center justify-center border-2 border-black shadow-[0_4px_16px_rgba(198,255,0,0.45)]">
+        <div class="w-8 h-8 rounded-full bg-[#B7FF00] text-black font-extrabold flex items-center justify-center border-2 border-black shadow-[0_4px_16px_rgba(183,255,0,0.45)]">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/>
             <circle cx="12" cy="10" r="3"/>
@@ -101,7 +101,7 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
     [createPickerPinElement, onChangeCoordinates, onAddressDetected]
   );
 
-  // Initialize MapLibre GL instance
+  // Initialize flat 2D MapLibre GL instance
   useEffect(() => {
     if (!mapContainerRef.current) return;
     let isCancelled = false;
@@ -115,14 +115,29 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
         style: styleObj,
         center: [defaultCenterLng, defaultCenterLat],
         zoom: coordinates ? 15 : 12,
+        pitch: 0,
+        maxPitch: 0,
+        bearing: 0,
+        pitchWithRotate: false,
+        touchPitch: false,
         attributionControl: false,
       });
+
+      map.addControl(
+        new maplibregl.AttributionControl({
+          compact: true,
+          customAttribution:
+            '<span class="text-[9px] text-zinc-400 font-mono">OUTERA · <a href="https://openfreemap.org" target="_blank" rel="noopener noreferrer">OpenFreeMap</a> · © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a></span>',
+        }),
+        'bottom-right'
+      );
 
       map.on('click', (e: maplibregl.MapMouseEvent) => {
         setPinAt(e.lngLat.lat, e.lngLat.lng, true);
       });
 
       map.on('load', () => {
+        enforceFlat2DMap(map);
         if (coordinates) {
           setPinAt(coordinates.lat, coordinates.lng, false);
         }
@@ -250,9 +265,9 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <div>
           <div className="flex items-center gap-1.5 text-xs font-bold text-white">
-            <MapPin className="w-3.5 h-3.5 text-[#C6FF00]" />
+            <MapPin className="w-3.5 h-3.5 text-[#B7FF00]" />
             <span>Where is this place?</span>
-            <span className="text-[#C6FF00]">*</span>
+            <span className="text-[#B7FF00]">*</span>
           </div>
           <p className="text-[11px] text-zinc-400">
             Click map or use GPS to set exact coordinates on OUTERA's radar.
@@ -264,7 +279,7 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
             type="button"
             onClick={handleUseCurrentLocation}
             disabled={locatingCurrent}
-            className="h-8 px-2.5 rounded-lg bg-[#C6FF00] text-black font-extrabold text-[11px] flex items-center gap-1.5 hover:bg-[#d4ff1a] transition-all disabled:opacity-50 cursor-pointer shadow-md shadow-[#C6FF00]/10"
+            className="h-8 px-2.5 rounded-lg bg-[#B7FF00] text-black font-extrabold text-[11px] flex items-center gap-1.5 hover:bg-[#c8ff33] transition-all disabled:opacity-50 cursor-pointer shadow-md shadow-[#B7FF00]/10"
           >
             <Navigation className={`w-3 h-3 ${locatingCurrent ? 'animate-spin' : ''}`} />
             <span>{locatingCurrent ? 'Locating...' : 'Use My Current Location'}</span>
@@ -293,7 +308,7 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
             onChange={(e) => setSearchQuery(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSearchLocation(e)}
             placeholder="Search landmark or area (e.g. Dhanmondi Lake, Banani 11)..."
-            className="w-full h-8 pl-8 pr-3 rounded-lg bg-white/[0.03] border border-white/[0.08] text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#C6FF00]"
+            className="w-full h-8 pl-8 pr-3 rounded-lg bg-white/[0.03] border border-white/[0.08] text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#B7FF00]"
           />
         </div>
         <button
@@ -318,14 +333,14 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
 
         {/* Floating crosshair guideline */}
         <div className="absolute top-2 right-2 px-2 py-1 rounded-md bg-black/80 border border-white/10 text-[10px] text-zinc-300 font-medium pointer-events-none z-10 flex items-center gap-1 backdrop-blur-sm">
-          <Crosshair className="w-3 h-3 text-[#C6FF00]" />
+          <Crosshair className="w-3 h-3 text-[#B7FF00]" />
           <span>Click map to place pin</span>
         </div>
 
         {/* Selected location indicator badge */}
         {coordinates ? (
-          <div className="absolute bottom-2 left-2 max-w-[85%] px-2.5 py-1.5 rounded-md bg-black/90 border border-[#C6FF00]/50 text-[11px] text-[#C6FF00] font-medium z-10 flex items-center gap-1.5 shadow-lg backdrop-blur-sm">
-            <Check className="w-3.5 h-3.5 shrink-0 text-[#C6FF00]" />
+          <div className="absolute bottom-2 left-2 max-w-[85%] px-2.5 py-1.5 rounded-md bg-black/90 border border-[#B7FF00]/50 text-[11px] text-[#B7FF00] font-medium z-10 flex items-center gap-1.5 shadow-lg backdrop-blur-sm">
+            <Check className="w-3.5 h-3.5 shrink-0 text-[#B7FF00]" />
             <span className="truncate">
               📍 Location selected{selectedLabel ? `: ${selectedLabel}` : ''}
             </span>
