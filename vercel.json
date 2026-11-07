@@ -5,6 +5,10 @@
   "cleanUrls": true,
   "rewrites": [
     {
+      "source": "/api/navigation-route",
+      "destination": "/api/navigation-route"
+    },
+    {
       "source": "/p/:slug",
       "destination": "/api/post-share?slug=:slug"
     },

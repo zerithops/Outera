@@ -38,6 +38,7 @@ import {
 } from '../services/supabase';
 import { CreatePostModal } from './CreatePostModal';
 import { HowToGetThereSection } from './HowToGetThereSection';
+import { NavigationPreviewModal } from './NavigationPreviewModal';
 import { Place, UserLocation } from '../types/outera';
 import { shareCommunityPost, OUTERA_PRODUCTION_ORIGIN, slugifyText } from '../services/postUrl';
 
@@ -95,6 +96,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
   const [confirmingDeletePostId, setConfirmingDeletePostId] = useState<string | null>(null);
   const [deletingPostId, setDeletingPostId] = useState<string | null>(null);
   const [copiedPostId, setCopiedPostId] = useState<string | null>(null);
+  const [showNavigationPreview, setShowNavigationPreview] = useState<boolean>(false);
 
   const loadPlacePosts = React.useCallback(async () => {
     if (!place) return;
@@ -105,6 +107,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
   React.useEffect(() => {
     if (isOpen && place) {
       setMobileHeroIdx(0);
+      setShowNavigationPreview(false);
       loadPlacePosts();
     }
   }, [isOpen, place, loadPlacePosts]);
@@ -297,16 +300,8 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
     }
   };
 
-  const openGoogleMaps = () => {
-    const query =
-      place.coordinates?.lat && place.coordinates?.lng
-        ? `${place.coordinates.lat},${place.coordinates.lng}`
-        : encodeURIComponent(`${place.name}, ${place.address}`);
-    window.open(
-      `https://www.google.com/maps/search/?api=1&query=${query}`,
-      '_blank',
-      'noopener,noreferrer'
-    );
+  const openNavigationPreview = () => {
+    setShowNavigationPreview(true);
   };
 
   return (
@@ -1178,11 +1173,11 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
 
             <button
               type="button"
-              onClick={openGoogleMaps}
+              onClick={openNavigationPreview}
               className="w-full h-11 rounded-xl bg-white/[0.06] hover:bg-white/[0.1] active:scale-[0.98] border border-white/[0.08] text-xs font-bold text-white flex items-center justify-center gap-2 transition-all cursor-pointer"
             >
-              <Compass className="w-4 h-4 text-[#ccff00]" />
-              <span>Get Directions on Maps</span>
+              <Compass className="w-4 h-4 text-[#B7FF00]" />
+              <span>Let's Go · Preview Route</span>
             </button>
           </div>
 
@@ -1235,12 +1230,20 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
 
           <button
             type="button"
-            onClick={openGoogleMaps}
-            className="flex-1 min-w-[96px] h-11 sm:h-12 rounded-xl bg-[#ccff00] text-black font-extrabold text-[11px] sm:text-xs tracking-wider uppercase flex items-center justify-center gap-1.5 sm:gap-2 hover:bg-[#d4ff1a] active:scale-[0.98] transition-all electric-glow-sm cursor-pointer"
+            onClick={openNavigationPreview}
+            className="flex-1 min-w-[96px] h-11 sm:h-12 rounded-xl bg-[#B7FF00] text-black font-extrabold text-[11px] sm:text-xs tracking-wider uppercase flex items-center justify-center gap-1.5 sm:gap-2 hover:bg-[#c8ff33] active:scale-[0.98] transition-all electric-glow-sm cursor-pointer"
           >
-            <span>Let's Go</span>
+            <Navigation className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            <span>LET'S GO</span>
           </button>
         </div>
+
+        {/* Dedicated Navigation Preview Screen */}
+        <NavigationPreviewModal
+          place={place}
+          isOpen={showNavigationPreview}
+          onBackToPlace={() => setShowNavigationPreview(false)}
+        />
 
         {/* Business Claim Modal */}
         {showClaimModal && (

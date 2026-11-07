@@ -8,6 +8,7 @@ import {
   fetchApprovedPostForServerSeo,
   injectPostMetadataIntoHtml,
 } from './src/services/postServerSeo';
+import { handleNavigationRouteRequest } from './supabase/functions/navigation-route/index';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -17,8 +18,50 @@ function outeraPostSeoPlugin(): Plugin {
     name: 'outera-post-seo-plugin',
     configureServer(server) {
       server.middlewares.use(async (req, res, next) => {
-        if (!req.url || req.method !== 'GET') return next();
+        if (!req.url) return next();
         const urlPath = req.url.split('?')[0];
+
+        // Mount /api/navigation-route server-side handler
+        if (urlPath === '/api/navigation-route') {
+          try {
+            const chunks: Buffer[] = [];
+            for await (const chunk of req) {
+              chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+            }
+            const rawBody = Buffer.concat(chunks).toString('utf-8');
+            const headers = new Headers();
+            for (const [k, v] of Object.entries(req.headers)) {
+              if (typeof v === 'string') headers.set(k, v);
+              else if (Array.isArray(v)) headers.set(k, v.join(', '));
+            }
+            const webReq = new Request(`http://localhost:3000${req.url}`, {
+              method: req.method || 'POST',
+              headers,
+              body: req.method === 'POST' ? rawBody : undefined,
+            });
+            const webRes = await handleNavigationRouteRequest(webReq);
+            const text = await webRes.text();
+            res.statusCode = webRes.status;
+            webRes.headers.forEach((val, key) => {
+              res.setHeader(key, val);
+            });
+            res.end(text);
+            return;
+          } catch (err) {
+            console.warn('navigation-route middleware notice:', err);
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(
+              JSON.stringify({
+                ok: false,
+                error: { code: 'UPSTREAM_ERROR', message: 'Internal routing middleware error.' },
+              })
+            );
+            return;
+          }
+        }
+
+        if (req.method !== 'GET') return next();
         const postMatch = urlPath.match(/^\/p\/([^/?#]+)\/?$/i);
         if (!postMatch || !postMatch[1]) return next();
 
