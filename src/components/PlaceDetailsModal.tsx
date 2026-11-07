@@ -57,6 +57,7 @@ interface PlaceDetailsModalProps {
   isAdmin?: boolean;
   allPlaces?: Place[];
   onSelectAnotherPlace?: (place: Place) => void;
+  onPlanTripWithPlace?: (place: Place) => void;
 }
 
 export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
@@ -76,6 +77,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
   isAdmin = false,
   allPlaces = [],
   onSelectAnotherPlace,
+  onPlanTripWithPlace,
 }) => {
   const [copied, setCopied] = useState(false);
   const [activeTab, setActiveTab] = useState<'overview' | 'experiences' | 'transit'>('overview');
@@ -505,21 +507,33 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
               </div>
             </div>
 
-            {/* Quick Action: Create Community Post */}
-            <button
-              type="button"
-              onClick={() => {
-                if (!isAuthenticated && onRequireAuth) {
-                  onRequireAuth('write a community post');
-                  return;
-                }
-                setShowCreateModal(true);
-              }}
-              className="h-9 px-3.5 rounded-xl bg-[#ccff00] hover:bg-[#d8ff33] text-black font-extrabold text-xs uppercase tracking-wider flex items-center gap-1.5 shrink-0 self-start cursor-pointer shadow-md shadow-[#ccff00]/10"
-            >
-              <MessageSquarePlus className="w-3.5 h-3.5" />
-              <span>Create Community Post</span>
-            </button>
+            {/* Quick Actions: Plan Trip & Create Community Post */}
+            <div className="flex flex-wrap items-center gap-2 shrink-0 self-start">
+              {onPlanTripWithPlace && (
+                <button
+                  type="button"
+                  onClick={() => onPlanTripWithPlace(place)}
+                  className="h-9 px-3.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] border border-[#ccff00]/30 text-[#ccff00] font-extrabold text-xs uppercase tracking-wider flex items-center gap-1.5 cursor-pointer transition-all"
+                >
+                  <Calendar className="w-3.5 h-3.5" />
+                  <span>Add to Trip Plan</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  if (!isAuthenticated && onRequireAuth) {
+                    onRequireAuth('write a community post');
+                    return;
+                  }
+                  setShowCreateModal(true);
+                }}
+                className="h-9 px-3.5 rounded-xl bg-[#ccff00] hover:bg-[#d8ff33] text-black font-extrabold text-xs uppercase tracking-wider flex items-center gap-1.5 cursor-pointer shadow-md shadow-[#ccff00]/10"
+              >
+                <MessageSquarePlus className="w-3.5 h-3.5" />
+                <span>Create Community Post</span>
+              </button>
+            </div>
           </div>
 
           {/* Core Structured Info Grid: Budget, Best Time, Distance, Suitable For, Indoor/Outdoor, Crowd Level, Visitors */}

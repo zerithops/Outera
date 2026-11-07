@@ -462,4 +462,166 @@ export interface NearbyServiceItem {
   createdAt?: string;
 }
 
+// -------------------------------------------------------------
+// SMART TRAVEL PLANNING SYSTEM TYPES
+// -------------------------------------------------------------
+export type TripTimeSlot = 'Morning' | 'Afternoon' | 'Evening';
 
+export type TripPreferenceTag =
+  | 'Outdoors & Nature'
+  | 'Food & Cafes'
+  | 'Chill & Scenic'
+  | 'Fun & Activities'
+  | 'Heritage & Culture'
+  | 'Budget-Friendly'
+  | 'Family & Group';
+
+export type TripExpenseCategory =
+  | 'Transport'
+  | 'Hotel/Resort'
+  | 'Food'
+  | 'Entry Tickets'
+  | 'Local Transport'
+  | 'Other';
+
+export interface TripDayStop {
+  id: string;
+  tripId: string;
+  placeId: string;
+  placeName: string;
+  placeCategory: string;
+  placeDistrict: string;
+  placeNeighborhood: string;
+  coordinates: Coordinates | null;
+  dayNumber: number; // 1..durationDays
+  stopOrder: number;
+  timeSlot: TripTimeSlot;
+  estimatedSpendMin: number;
+  estimatedSpendMax: number;
+  priceSourceLabel: string; // e.g., "DB Place Range (৳150–৳350)", "Free Entry (৳0)", "Unlisted — User Editable"
+  bestTimeHint?: string;
+  customNote?: string;
+  image?: string;
+}
+
+export interface TripChecklistItem {
+  id: string;
+  tripId: string;
+  category: 'Essentials & ID' | 'Clothing & Weather' | 'Tech & Power' | 'Health & Safety' | 'Destination Specific' | string;
+  label: string;
+  isCompleted: boolean;
+  sortOrder: number;
+}
+
+export interface TripMember {
+  id: string;
+  tripId: string;
+  userId?: string | null;
+  name: string;
+  handleOrContact?: string;
+  role: 'Organizer' | 'Member';
+}
+
+export interface TripExpenseContribution {
+  id: string;
+  tripId: string;
+  paidByMemberId?: string | null;
+  paidByName: string;
+  category: TripExpenseCategory;
+  title: string;
+  amountBdt: number;
+  expenseDate: string;
+  notes?: string;
+  createdAt: string;
+}
+
+export interface CustomBudgetOverrides {
+  hotelPerNightBdt?: number | null;
+  foodPerPersonPerDayBdt?: number | null;
+  localTransportPerDayBdt?: number | null;
+  otherGroupExpenseBdt?: number | null;
+}
+
+export interface TripPlan {
+  id: string;
+  userId?: string | null;
+  ownerName?: string;
+  ownerHandle?: string;
+  title: string;
+  originName: string;
+  originDistrict: string;
+  originCoords: Coordinates | null;
+  destinationDivision: DivisionName | string;
+  destinationDistrict: string;
+  destinationArea?: string;
+  startDate: string; // YYYY-MM-DD
+  durationDays: number;
+  travelersCount: number;
+  totalBudgetBdt: number;
+  preferences: TripPreferenceTag[];
+  selectedTransportId?: string | null;
+  selectedStayId?: string | null;
+  roundTripTransport: boolean;
+  customBudgetOverrides: CustomBudgetOverrides;
+  stops: TripDayStop[];
+  checklist: TripChecklistItem[];
+  members: TripMember[];
+  expenses: TripExpenseContribution[];
+  isPublicShared: boolean;
+  shareToken: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TripBudgetCategoryLine {
+  category: TripExpenseCategory;
+  minGroupCost: number;
+  maxGroupCost: number;
+  estimatedGroupCost: number; // midpoint or user override
+  perPersonCost: number;
+  sourceLabel: string; // e.g., "Bangladesh Railway Official Fare", "DB Place Prices", "User Estimate", "No Hotel Selected"
+  sourceType: 'OFFICIAL' | 'OPERATOR' | 'COMMUNITY' | 'DATABASE' | 'USER_ESTIMATE' | 'MISSING';
+  details: string;
+}
+
+export interface TripBudgetBreakdown {
+  lines: TripBudgetCategoryLine[];
+  totalGroupMin: number;
+  totalGroupMax: number;
+  totalGroupEstimated: number;
+  perPersonMin: number;
+  perPersonMax: number;
+  perPersonEstimated: number;
+  totalBudgetBdt: number;
+  budgetRemainingBdt: number;
+  isOverBudget: boolean;
+  contributedExpensesTotal: number;
+}
+
+export interface RouteLegGeometry {
+  fromStopName: string;
+  toStopName: string;
+  fromCoords: Coordinates;
+  toCoords: Coordinates;
+  distanceKm: number;
+  durationMin: number;
+  provider: 'OSRM Road Routing' | 'Direct Geodesic Estimate';
+  geometryCoords: [number, number][]; // [lng, lat][]
+}
+
+export interface TouristEmergencyContact {
+  id: string;
+  division: string;
+  district: string;
+  category: 'Emergency Hotline' | 'Tourist Police' | 'Hospital' | 'Police Station' | 'Tourist Assistance';
+  name: string;
+  phone: string;
+  secondaryPhone?: string;
+  address: string;
+  coordinates?: Coordinates | null;
+  sourceName: string;
+  verified: boolean;
+  lastUpdated: string;
+  notes?: string;
+}

@@ -50,6 +50,7 @@ import { SavedView } from './components/SavedView';
 import { ProfileView } from './components/ProfileView';
 import { LocationHierarchyModal } from './components/LocationHierarchyModal';
 import { LocationHubView } from './components/LocationHubView';
+import { TripPlannerView } from './components/TripPlannerView';
 import { AuthModal, AuthModalMode } from './components/AuthModal';
 import { PlaceSuggestionModal } from './components/PlaceSuggestionModal';
 import {
@@ -113,6 +114,10 @@ export default function App() {
   const [selectedPost, setSelectedPost] = useState<PlacePost | null>(null);
   const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
   const [createPostModalOpen, setCreatePostModalOpen] = useState(false);
+
+  // Smart Trip Planner state
+  const [sharedTripToken, setSharedTripToken] = useState<string | null>(null);
+  const [tripPreselectedPlace, setTripPreselectedPlace] = useState<Place | null>(null);
 
   const navigateToAuthRoute = (
     route: 'none' | 'forgot-password' | 'reset-password' | 'auth-callback'
@@ -179,13 +184,20 @@ export default function App() {
     };
   }, []);
 
-  // Listen for #post/<id> in URL hash
+  // Listen for #post/<id> and #trip/<token> in URL hash
   useEffect(() => {
     const handleHashChange = () => {
       const hash = window.location.hash;
-      const match = hash.match(/^#post\/([a-zA-Z0-9_-]+)$/);
-      if (match && match[1]) {
-        setSelectedPostId(match[1]);
+      const postMatch = hash.match(/^#post\/([a-zA-Z0-9_-]+)$/);
+      if (postMatch && postMatch[1]) {
+        setSelectedPostId(postMatch[1]);
+        return;
+      }
+      const tripMatch = hash.match(/^#trip\/([a-zA-Z0-9_-]+)$/);
+      if (tripMatch && tripMatch[1]) {
+        setSharedTripToken(tripMatch[1]);
+        setShowLocationHub(false);
+        setActiveTab('trips');
       }
     };
 
@@ -651,6 +663,7 @@ export default function App() {
                 <HeroSection
                   onExploreNearMe={handleOpenExploreNearMe}
                   onSurpriseMe={() => setActiveTab('surprise')}
+                  onPlanTrip={() => setActiveTab('trips')}
                   currentNeighborhood={currentLocation.neighborhoodName}
                   onSuggestPlace={() =>
                     requireVerifiedScout('suggest a new place', () => setSuggestionModalOpen(true))
@@ -867,7 +880,27 @@ export default function App() {
               />
             )}
 
-            {/* Tab 3: Surprise */}
+            {/* Tab 3: Plan Your Trip (Smart Travel Planning System) */}
+            {activeTab === 'trips' && (
+              <TripPlannerView
+                allPlaces={places}
+                currentLocation={currentLocation}
+                authUser={authUser}
+                initialSharedTripToken={sharedTripToken}
+                preselectedPlace={tripPreselectedPlace}
+                onClearPreselectedPlace={() => setTripPreselectedPlace(null)}
+                onSelectPlaceDetails={(p) => {
+                  const found = rankedPlaces.find((rp) => rp.id === p.id);
+                  setDetailsPlace(found || (p as PlaceWithDistance));
+                }}
+                onRequireAuth={(action) => {
+                  setAuthContextAction(action);
+                  setAuthModalOpen(true);
+                }}
+              />
+            )}
+
+            {/* Tab 4: Surprise */}
             {activeTab === 'surprise' && (
               <SurpriseMeView
                 places={places}
@@ -881,7 +914,7 @@ export default function App() {
               />
             )}
 
-            {/* Tab 4: Saved */}
+            {/* Tab 5: Saved */}
             {activeTab === 'saved' && (
               <SavedView
                 savedPlaces={savedPlacesWithDistance}
@@ -898,7 +931,7 @@ export default function App() {
               />
             )}
 
-            {/* Tab 5: Profile */}
+            {/* Tab 6: Profile */}
             {activeTab === 'profile' && (
               <ProfileView
                 currentLocation={currentLocation}
@@ -992,6 +1025,18 @@ export default function App() {
                     className="hover:text-[#ccff00] transition-colors cursor-pointer"
                   >
                     Explore Places & Community
+                  </button>
+                </li>
+                <li>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowLocationHub(false);
+                      handleTabChange('trips');
+                    }}
+                    className="hover:text-[#ccff00] transition-colors cursor-pointer"
+                  >
+                    Plan Your Trip (Smart Itinerary & Budget)
                   </button>
                 </li>
                 <li>
@@ -1109,6 +1154,11 @@ export default function App() {
         onSelectAnotherPlace={(p) => {
           const foundRanked = rankedPlaces.find((rp) => rp.id === p.id);
           setDetailsPlace(foundRanked || (p as PlaceWithDistance));
+        }}
+        onPlanTripWithPlace={(p) => {
+          setDetailsPlace(null);
+          setTripPreselectedPlace(p);
+          setActiveTab('trips');
         }}
       />
 

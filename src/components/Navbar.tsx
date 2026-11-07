@@ -1,5 +1,5 @@
 import React from 'react';
-import { MapPin, Search, Flame, Compass, Sparkles, Bookmark, User } from 'lucide-react';
+import { MapPin, Search, Flame, Compass, Sparkles, Bookmark, User, Route } from 'lucide-react';
 import { UserLocation } from '../types/outera';
 import { NavTab } from './BottomNav';
 import { OuteraLogo } from './OuteraLogo';
@@ -24,6 +24,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   const desktopNavItems: { id: NavTab; label: string; icon: any; badge?: number }[] = [
     { id: 'discover', label: 'Discover', icon: Flame },
     { id: 'explore', label: 'Explore', icon: Compass },
+    { id: 'trips', label: 'Plan Trip', icon: Route },
     { id: 'surprise', label: 'Surprise', icon: Sparkles },
     { id: 'saved', label: 'Saved', icon: Bookmark, badge: savedCount > 0 ? savedCount : undefined },
     { id: 'profile', label: 'Profile', icon: User },

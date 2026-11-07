@@ -1,10 +1,11 @@
 import React from 'react';
-import { Navigation, Sparkles, Plus, MessageSquarePlus, MapPin } from 'lucide-react';
+import { Navigation, Sparkles, Plus, MessageSquarePlus, MapPin, Route } from 'lucide-react';
 import { OuteraLogo } from './OuteraLogo';
 
 interface HeroSectionProps {
   onExploreNearMe: () => void;
   onSurpriseMe: () => void;
+  onPlanTrip?: () => void;
   currentNeighborhood: string;
   onSuggestPlace?: () => void;
   onCreatePost?: () => void;
@@ -13,6 +14,7 @@ interface HeroSectionProps {
 export const HeroSection: React.FC<HeroSectionProps> = ({
   onExploreNearMe,
   onSurpriseMe,
+  onPlanTrip,
   currentNeighborhood,
   onSuggestPlace,
   onCreatePost,
@@ -55,7 +57,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
             </p>
 
             {/* Primary CTAs */}
-            <div className="flex flex-col xs:flex-row sm:flex-row items-stretch sm:items-center gap-2.5 sm:gap-3 mt-6">
+            <div className="flex flex-col xs:flex-row sm:flex-row flex-wrap items-stretch sm:items-center gap-2.5 sm:gap-3 mt-6">
               <button
                 type="button"
                 onClick={onExploreNearMe}
@@ -64,6 +66,17 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
                 <Navigation className="w-4 h-4 shrink-0" />
                 <span>Explore Near Me</span>
               </button>
+
+              {onPlanTrip && (
+                <button
+                  type="button"
+                  onClick={onPlanTrip}
+                  className="h-11 sm:h-12 px-5 sm:px-6 rounded-xl bg-white/[0.08] hover:bg-white/[0.14] active:scale-[0.98] border border-[#ccff00]/40 text-[#ccff00] font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all whitespace-nowrap cursor-pointer"
+                >
+                  <Route className="w-4 h-4 text-[#ccff00] shrink-0" />
+                  <span>Plan Your Trip</span>
+                </button>
+              )}
 
               <button
                 type="button"
