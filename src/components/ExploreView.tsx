@@ -1,5 +1,20 @@
-import React, { useState } from 'react';
-import { Search, MapPin, SlidersHorizontal, LayoutGrid, Map as MapIcon, X, Clock, Navigation, Plus, MessageSquarePlus, Sparkles } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  Search,
+  MapPin,
+  SlidersHorizontal,
+  LayoutGrid,
+  Map as MapIcon,
+  X,
+  Clock,
+  Navigation,
+  Plus,
+  MessageSquarePlus,
+  Sparkles,
+  Share2,
+  Star,
+  CheckCircle2,
+} from 'lucide-react';
 import { FilterState, UserLocation } from '../types/outera';
 import { PlaceWithDistance } from '../services/discoveryEngine';
 import { PlaceCard } from './PlaceCard';
@@ -7,7 +22,12 @@ import { FilterBar } from './FilterBar';
 import { DiscoveryMap } from './DiscoveryMap';
 import { formatDistance } from '../services/location';
 import { useSearchHistory } from '../hooks/useSearchHistory';
-import { PlacePost } from '../services/supabase';
+import {
+  PlacePost,
+  fetchPublicPlacePosts,
+  subscribeToPostChanges,
+} from '../services/supabase';
+import { shareCommunityPost } from '../services/postUrl';
 
 interface ExploreViewProps {
   places: PlaceWithDistance[];
@@ -41,7 +61,25 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
   onSelectPost,
 }) => {
   const [viewMode, setViewMode] = useState<'grid' | 'map'>('grid');
-  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [publicPosts, setPublicPosts] = useState<PlacePost[]>([]);
+  const [copiedPostId, setCopiedPostId] = useState<string | null>(null);
+
+  const loadApprovedPosts = useCallback(async () => {
+    const posts = await fetchPublicPlacePosts();
+    setPublicPosts(posts || []);
+  }, []);
+
+  useEffect(() => {
+    loadApprovedPosts();
+    const unsub = subscribeToPostChanges((evt) => {
+      if (evt.type === 'deleted') {
+        setPublicPosts((prev) => prev.filter((p) => p.id !== evt.postId));
+      } else {
+        loadApprovedPosts();
+      }
+    });
+    return () => unsub();
+  }, [loadApprovedPosts]);
 
   // Hook that automatically records user's searches into Supabase search_history
   const { recentSearches } = useSearchHistory(
@@ -309,6 +347,107 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
           onRequestGPS={onRequestGPS}
           isDetectingGPS={isDetectingGPS}
         />
+      )}
+
+      {/* Approved Community Posts Feed Section */}
+      {publicPosts.length > 0 && (
+        <section className="pt-6 border-t border-white/[0.06] space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-[#ccff00]">
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Approved Community Posts</span>
+              </div>
+              <h2 className="text-lg sm:text-xl font-black text-white tracking-tight mt-0.5">
+                Recent Scout Experiences & Reviews
+              </h2>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {publicPosts.slice(0, 6).map((post) => (
+              <div
+                key={post.id}
+                onClick={() => onSelectPost && onSelectPost(post)}
+                className="p-4 rounded-2xl bg-[#111317] border border-white/[0.08] hover:border-[#ccff00]/40 transition-all cursor-pointer flex flex-col justify-between gap-3 group"
+              >
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="font-bold text-white truncate">
+                        {post.author_name || 'OUTERA Scout'}
+                      </span>
+                      <span className="text-zinc-500 font-mono text-[11px] truncate">
+                        {post.author_username || '@scout'}
+                      </span>
+                      {post.is_visited && (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20 shrink-0">
+                          <CheckCircle2 className="w-2.5 h-2.5" />
+                          <span>Visited</span>
+                        </span>
+                      )}
+                    </div>
+                    <span className="flex items-center gap-1 text-xs font-mono font-bold text-[#ccff00] shrink-0">
+                      <Star className="w-3.5 h-3.5 fill-[#ccff00]" />
+                      <span>{post.rating}/5</span>
+                    </span>
+                  </div>
+
+                  {post.place_name && (
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-white/[0.04] border border-white/[0.07] text-[11px] font-bold text-[#ccff00]">
+                      <MapPin className="w-3 h-3" />
+                      <span>{post.place_name}</span>
+                    </div>
+                  )}
+
+                  <h3 className="text-sm font-extrabold text-white group-hover:text-[#ccff00] transition-colors">
+                    {post.title}
+                  </h3>
+                  <p className="text-xs text-zinc-300 leading-relaxed line-clamp-2">
+                    {post.content}
+                  </p>
+
+                  {post.images && post.images.length > 0 && (
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                      {post.images.slice(0, 2).map((imgUrl, idx) => (
+                        <img
+                          key={idx}
+                          src={imgUrl}
+                          alt={`${post.title} photo ${idx + 1}`}
+                          className="w-full h-28 rounded-xl object-cover border border-white/[0.08]"
+                          loading="lazy"
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="pt-2.5 border-t border-white/[0.05] flex items-center justify-between text-[11px] text-zinc-400">
+                  <span className="font-mono text-[10px] text-zinc-500 truncate max-w-[60%]">
+                    /p/{post.slug}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      await shareCommunityPost(post);
+                      setCopiedPostId(post.id);
+                      setTimeout(
+                        () => setCopiedPostId((prev) => (prev === post.id ? null : prev)),
+                        2500
+                      );
+                    }}
+                    className="h-7 px-2.5 rounded-lg bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.08] text-xs font-bold text-white hover:text-[#ccff00] flex items-center gap-1.5 transition-all cursor-pointer shrink-0"
+                    title="Share unique post link"
+                  >
+                    <Share2 className="w-3 h-3 text-[#ccff00]" />
+                    <span>{copiedPostId === post.id ? 'Link Copied!' : 'Share'}</span>
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
       )}
     </div>
   );

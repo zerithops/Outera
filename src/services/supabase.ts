@@ -9,6 +9,12 @@ import {
   CommunityConfidenceLevel,
 } from '../types/outera';
 import { calculateDistanceKm } from './location';
+import {
+  buildPostSlugWithId,
+  doesPostMatchRoute,
+  getPostUniqueId,
+  parsePostRouteParam,
+} from './postUrl';
 
 // Resolve Supabase configuration safely across Vite / Next.js / Node
 const getEnvVar = (key: string, fallback: string): string => {
@@ -3136,6 +3142,8 @@ export interface PlacePost {
   comments_count?: number;
   helpful_count?: number;
   user_marked_helpful?: boolean;
+  short_id?: string;
+  slug?: string;
 }
 
 const MODERATION_NOTES_STORAGE_KEY = 'outera_post_moderation_notes';
@@ -3455,6 +3463,14 @@ async function hydratePlacePosts(rawPosts: any[]): Promise<PlacePost[]> {
         images: postPhotos,
         helpful_count: helpfulCountMap.get(p.id) || 0,
         user_marked_helpful: userHelpfulSet.has(p.id),
+        short_id: getPostUniqueId({ id: p.id, short_id: p.short_id }),
+        slug: buildPostSlugWithId({
+          id: p.id,
+          title: p.title || '',
+          place_name: place.name || 'Selected Place',
+          slug: p.slug,
+          short_id: p.short_id,
+        }),
       };
     })
     .filter(Boolean) as PlacePost[];
@@ -3721,26 +3737,83 @@ export async function updateUserPendingPost(
   }
 }
 
-// Fetch a single place post by ID with defensive null-safety (never exposes rejected/hidden publicly)
-export async function fetchPlacePostById(postId: string): Promise<PlacePost | null> {
-  if (!postId || typeof postId !== 'string') return null;
+// Fetch a single place post by ID, short_id, or {slug}-{uniqueId} with defensive null-safety
+// Never exposes deleted, rejected, pending, or hidden posts to public visitors
+export async function fetchPlacePostById(postIdOrSlug: string): Promise<PlacePost | null> {
+  if (!postIdOrSlug || typeof postIdOrSlug !== 'string') return null;
+  const parsed = parsePostRouteParam(postIdOrSlug);
+  if (!parsed) return null;
+
   try {
-    const { data, error } = await supabase
-      .from('place_posts')
-      .select('*, places(id, name, category, address)')
-      .eq('id', postId.trim())
-      .maybeSingle();
-
-    if (error || !data) {
-      return null;
-    }
-
     const deletedIds = getDeletedPostIds();
-    if (deletedIds.has(postId.trim())) {
+    let matchedRow: any = null;
+
+    // 1. If the parameter contains a full UUID, query directly by primary key `id`
+    if (parsed.isFullUuid) {
+      if (deletedIds.has(parsed.uniqueId)) return null;
+      const { data, error } = await supabase
+        .from('place_posts')
+        .select('*, places(id, name, category, address)')
+        .eq('id', parsed.uniqueId)
+        .maybeSingle();
+
+      if (!error && data) {
+        matchedRow = data;
+      }
+    } else {
+      // 2. Try querying by `short_id` or `slug` columns first (if migration has been applied)
+      try {
+        const { data: byColumn, error: colErr } = await supabase
+          .from('place_posts')
+          .select('*, places(id, name, category, address)')
+          .or(`short_id.eq.${parsed.uniqueId},slug.eq.${parsed.rawParam}`)
+          .is('deleted_at', null)
+          .limit(1)
+          .maybeSingle();
+
+        if (!colErr && byColumn) {
+          matchedRow = byColumn;
+        }
+      } catch {
+        // Fallback below if `short_id` / `slug` columns are not yet created in DB
+      }
+
+      // 3. Fallback: resolve against `place_posts` using deterministic shortId / slug / UUID prefix-suffix matching
+      if (!matchedRow) {
+        const { data: candidates, error: candErr } = await supabase
+          .from('place_posts')
+          .select('*, places(id, name, category, address)')
+          .is('deleted_at', null)
+          .order('created_at', { ascending: false })
+          .limit(500);
+
+        if (!candErr && candidates && candidates.length > 0) {
+          matchedRow =
+            candidates.find((row: any) =>
+              doesPostMatchRoute(
+                {
+                  id: row.id,
+                  title: row.title,
+                  place_name: row.places?.name,
+                  slug: row.slug,
+                  short_id: row.short_id,
+                },
+                postIdOrSlug
+              )
+            ) || null;
+        }
+      }
+    }
+
+    if (!matchedRow || !matchedRow.id) {
       return null;
     }
 
-    const hydratedList = await hydratePlacePosts([data]);
+    if (deletedIds.has(matchedRow.id)) {
+      return null;
+    }
+
+    const hydratedList = await hydratePlacePosts([matchedRow]);
     if (!hydratedList || hydratedList.length === 0) return null;
 
     const post = hydratedList[0];

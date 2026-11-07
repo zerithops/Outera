@@ -39,6 +39,7 @@ import {
 import { CreatePostModal } from './CreatePostModal';
 import { HowToGetThereSection } from './HowToGetThereSection';
 import { Place, UserLocation } from '../types/outera';
+import { shareCommunityPost, OUTERA_PRODUCTION_ORIGIN, slugifyText } from '../services/postUrl';
 
 interface PlaceDetailsModalProps {
   place: PlaceWithDistance | null;
@@ -93,6 +94,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
   const [mobileHeroIdx, setMobileHeroIdx] = useState(0);
   const [confirmingDeletePostId, setConfirmingDeletePostId] = useState<string | null>(null);
   const [deletingPostId, setDeletingPostId] = useState<string | null>(null);
+  const [copiedPostId, setCopiedPostId] = useState<string | null>(null);
 
   const loadPlacePosts = React.useCallback(async () => {
     if (!place) return;
@@ -235,29 +237,63 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
     }, 1500);
   };
 
+  const handleQuickSharePost = async (e: React.MouseEvent, post: PlacePost) => {
+    e.stopPropagation();
+    await shareCommunityPost({
+      ...post,
+      place_name: post.place_name || place.name,
+    });
+    setCopiedPostId(post.id);
+    setTimeout(() => setCopiedPostId((prev) => (prev === post.id ? null : prev)), 2500);
+  };
+
   const handleShare = async () => {
+    if (publicPosts.length > 0 && activeTab === 'experiences') {
+      await shareCommunityPost({
+        ...publicPosts[0],
+        place_name: publicPosts[0].place_name || place.name,
+      });
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+      return;
+    }
+
+    const placeUrl =
+      publicPosts.length > 0
+        ? (
+            await shareCommunityPost(
+              {
+                ...publicPosts[0],
+                place_name: publicPosts[0].place_name || place.name,
+              },
+              { preferCopyOnly: true }
+            )
+          ).url
+        : `${OUTERA_PRODUCTION_ORIGIN}/?spot=${encodeURIComponent(
+            slugifyText(place.name) + '-' + place.id.slice(0, 6)
+          )}`;
+
     const shareData = {
       title: `${place.name} on OUTERA`,
       text: `Check out ${place.name} on OUTERA — ${place.shortDescription}`,
-      url: window.location.href,
+      url: placeUrl,
     };
 
     if (typeof navigator !== 'undefined' && navigator.share) {
       try {
         await navigator.share(shareData);
+        return;
       } catch {
-        // User cancelled share
+        // Fallback to clipboard
       }
-    } else {
-      try {
-        await navigator.clipboard.writeText(
-          `${place.name} — ${place.neighborhood}: ${window.location.origin}`
-        );
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      } catch (err) {
-        console.warn(err);
-      }
+    }
+
+    try {
+      await navigator.clipboard.writeText(placeUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.warn(err);
     }
   };
 
@@ -840,6 +876,15 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
                               <MessageCircle className="w-3.5 h-3.5" />
                               <span>Comments</span>
                             </span>
+                            <button
+                              type="button"
+                              onClick={(e) => handleQuickSharePost(e, p)}
+                              className="flex items-center gap-1 font-semibold text-zinc-300 hover:text-[#ccff00] transition-colors cursor-pointer"
+                              title="Share unique post link"
+                            >
+                              <Share2 className="w-3.5 h-3.5" />
+                              <span>{copiedPostId === p.id ? 'Link Copied!' : 'Share'}</span>
+                            </button>
                           </div>
                           <div className="flex items-center gap-2">
                             {(isAdmin || (currentUserId && p.user_id === currentUserId)) && (
@@ -1028,6 +1073,15 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
                               <MessageCircle className="w-3.5 h-3.5" />
                               <span>Comments & Details</span>
                             </span>
+                            <button
+                              type="button"
+                              onClick={(e) => handleQuickSharePost(e, p)}
+                              className="flex items-center gap-1 font-semibold text-zinc-300 hover:text-[#ccff00] transition-colors cursor-pointer"
+                              title="Share unique post link"
+                            >
+                              <Share2 className="w-3.5 h-3.5" />
+                              <span>{copiedPostId === p.id ? 'Link Copied!' : 'Share'}</span>
+                            </button>
                           </div>
                           <div className="flex items-center gap-2">
                             {(isAdmin || (currentUserId && p.user_id === currentUserId)) && (

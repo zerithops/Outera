@@ -19,6 +19,8 @@ import {
   Flag,
   Edit3,
   Check,
+  Copy,
+  Link2,
 } from 'lucide-react';
 import {
   PlacePost,
@@ -33,6 +35,13 @@ import {
   updateUserPendingPost,
   subscribeToPostChanges,
 } from '../services/supabase';
+import {
+  applyClientPostMetadata,
+  buildPostPath,
+  buildSharePostUrl,
+  doesPostMatchRoute,
+  shareCommunityPost,
+} from '../services/postUrl';
 
 interface PostDetailsModalProps {
   postId: string | null;
@@ -97,8 +106,9 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  // Share feedback toast
+  // Share feedback toast & copied URL state
   const [shareToast, setShareToast] = useState(false);
+  const [copiedUrlText, setCopiedUrlText] = useState<string | null>(null);
 
   const activePostId = postId || initialPost?.id;
 
@@ -112,10 +122,20 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
       if (!fetched) {
         setIsNotFound(true);
         setCurrentPost(null);
+        applyClientPostMetadata(null);
       } else {
         setCurrentPost(fetched);
         setHelpfulCount(fetched.helpful_count || 0);
         setUserMarkedHelpful(Boolean(fetched.user_marked_helpful));
+        applyClientPostMetadata(fetched);
+
+        if (typeof window !== 'undefined' && window.history?.replaceState) {
+          const canonicalPath = buildPostPath(fetched);
+          if (window.location.pathname !== canonicalPath || window.location.hash.startsWith('#post')) {
+            window.history.replaceState({ postId: fetched.id }, '', canonicalPath);
+          }
+        }
+
         if (fetched.comments) {
           setComments(fetched.comments);
         } else {
@@ -153,6 +173,7 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
       setIsEditing(false);
       setCommentError(null);
       setNewCommentText('');
+      setCopiedUrlText(null);
 
       if (initialPost) {
         setCurrentPost(initialPost);
@@ -161,6 +182,13 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
         setComments(initialPost.comments || []);
         setIsNotFound(false);
         setErrorMessage(null);
+        applyClientPostMetadata(initialPost);
+        if (typeof window !== 'undefined' && window.history?.replaceState) {
+          const canonicalPath = buildPostPath(initialPost);
+          if (window.location.pathname !== canonicalPath || window.location.hash.startsWith('#post')) {
+            window.history.replaceState({ postId: initialPost.id }, '', canonicalPath);
+          }
+        }
         loadComments(initialPost.id);
       } else if (postId) {
         loadPostData(postId);
@@ -170,6 +198,7 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
       setComments([]);
       setIsNotFound(false);
       setErrorMessage(null);
+      applyClientPostMetadata(null);
     }
   }, [isOpen, postId, initialPost, loadPostData]);
 
@@ -178,7 +207,11 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
     if (!isOpen || !activePostId) return;
 
     const unsubscribe = subscribeToPostChanges((event) => {
-      if (event.postId === activePostId) {
+      const targetId = currentPost?.id || activePostId;
+      if (
+        event.postId === targetId ||
+        (currentPost && doesPostMatchRoute(currentPost, event.postId))
+      ) {
         if (event.type === 'deleted') {
           if (onPostDeleted) onPostDeleted(event.postId);
           onClose();
@@ -187,7 +220,7 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
             if (onPostDeleted) onPostDeleted(event.postId);
             onClose();
           } else {
-            loadPostData(activePostId);
+            loadPostData(targetId);
           }
         }
       }
@@ -196,7 +229,7 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
     return () => {
       unsubscribe();
     };
-  }, [isOpen, activePostId, onPostDeleted, onClose, loadPostData]);
+  }, [isOpen, activePostId, currentPost, onPostDeleted, onClose, loadPostData]);
 
   if (!isOpen) return null;
 
@@ -285,32 +318,12 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
     }
   };
 
-  const handleShare = async () => {
-    const shareUrl = `${window.location.origin}${window.location.pathname}#post/${activePostId}`;
-    const shareData = {
-      title: currentPost?.title || 'OUTERA Community Post',
-      text: currentPost?.content
-        ? `${currentPost.content.slice(0, 100)}...`
-        : 'Check out this post on OUTERA',
-      url: shareUrl,
-    };
-
-    if (navigator.share) {
-      try {
-        await navigator.share(shareData);
-        return;
-      } catch {
-        // Fallback to clipboard
-      }
-    }
-
-    try {
-      await navigator.clipboard.writeText(shareUrl);
-      setShareToast(true);
-      setTimeout(() => setShareToast(false), 2000);
-    } catch {
-      // Clipboard unavailable
-    }
+  const handleShare = async (preferCopyOnly = false) => {
+    if (!currentPost) return;
+    const result = await shareCommunityPost(currentPost, { preferCopyOnly });
+    setCopiedUrlText(result.url);
+    setShareToast(true);
+    setTimeout(() => setShareToast(false), 3000);
   };
 
   const handleAddComment = async (e: React.FormEvent) => {
@@ -397,20 +410,23 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
           </button>
 
           <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={handleShare}
-              className="p-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] text-zinc-300 hover:text-white transition-all border border-white/[0.06] relative"
-              title="Share post"
-              aria-label="Share post"
-            >
-              <Share2 className="w-4 h-4" />
-              {shareToast && (
-                <span className="absolute -bottom-8 right-0 bg-[#ccff00] text-black text-[10px] font-black px-2 py-0.5 rounded shadow-lg whitespace-nowrap">
-                  Link Copied!
-                </span>
-              )}
-            </button>
+            {currentPost && (
+              <button
+                type="button"
+                onClick={() => handleShare(false)}
+                className="h-9 px-3 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] text-zinc-200 hover:text-white transition-all border border-white/[0.06] flex items-center gap-1.5 text-xs font-bold relative cursor-pointer"
+                title="Share unique post link"
+                aria-label="Share post"
+              >
+                <Share2 className="w-3.5 h-3.5 text-[#ccff00]" />
+                <span>Share</span>
+                {shareToast && (
+                  <span className="absolute -bottom-8 right-0 bg-[#ccff00] text-black text-[10px] font-black px-2.5 py-0.5 rounded shadow-lg whitespace-nowrap z-30">
+                    Unique Post Link Copied!
+                  </span>
+                )}
+              </button>
+            )}
 
             {isOwner && !isEditing && (
               <button
@@ -799,6 +815,43 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
                 </div>
               )}
 
+              {/* Unique Post Share Link Bar */}
+              <div className="p-3 rounded-xl bg-white/[0.025] border border-white/[0.07] flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Link2 className="w-3.5 h-3.5 text-[#ccff00] shrink-0" />
+                  <span className="text-[11px] font-mono text-zinc-300 truncate select-all">
+                    {copiedUrlText || buildSharePostUrl(currentPost)}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleShare(true)}
+                    className="h-7 px-2.5 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.1] text-[11px] font-bold text-white flex items-center gap-1 transition-all cursor-pointer"
+                  >
+                    {shareToast ? (
+                      <>
+                        <Check className="w-3 h-3 text-[#ccff00]" />
+                        <span className="text-[#ccff00]">Copied</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3 h-3 text-[#ccff00]" />
+                        <span>Copy Link</span>
+                      </>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleShare(false)}
+                    className="h-7 px-2.5 rounded-lg bg-[#ccff00]/15 hover:bg-[#ccff00]/25 border border-[#ccff00]/30 text-[11px] font-bold text-[#ccff00] flex items-center gap-1 transition-all cursor-pointer"
+                  >
+                    <Share2 className="w-3 h-3" />
+                    <span>Share Post</span>
+                  </button>
+                </div>
+              </div>
+
               {/* Helpful & Report Action Bar */}
               <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-white/[0.06]">
                 <div className="flex flex-wrap items-center gap-2">
@@ -806,7 +859,7 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
                     type="button"
                     disabled={togglingHelpful}
                     onClick={handleToggleHelpful}
-                    className={`h-9 px-3.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition-all ${
+                    className={`h-9 px-3.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
                       userMarkedHelpful
                         ? 'bg-[#ccff00]/15 border-[#ccff00]/40 text-[#ccff00]'
                         : 'bg-white/[0.03] hover:bg-white/[0.07] border-white/[0.08] text-zinc-300 hover:text-white'
@@ -825,7 +878,7 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
                     <button
                       type="button"
                       onClick={handleStartEdit}
-                      className="h-9 px-3 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-xs font-bold text-zinc-200 hover:text-white flex items-center gap-1.5 transition-all"
+                      className="h-9 px-3 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-xs font-bold text-zinc-200 hover:text-white flex items-center gap-1.5 transition-all cursor-pointer"
                     >
                       <Edit3 className="w-3.5 h-3.5" />
                       <span>Edit</span>
@@ -836,7 +889,7 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
                     <button
                       type="button"
                       onClick={() => setShowDeleteConfirm(true)}
-                      className="h-9 px-3 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/25 text-xs font-bold text-rose-400 hover:text-rose-300 flex items-center gap-1.5 transition-all"
+                      className="h-9 px-3 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/25 text-xs font-bold text-rose-400 hover:text-rose-300 flex items-center gap-1.5 transition-all cursor-pointer"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                       <span>Delete</span>
@@ -847,7 +900,7 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setShowReportModal((prev) => !prev)}
-                  className="h-8 px-2.5 rounded-lg bg-white/[0.02] hover:bg-white/[0.06] border border-white/[0.06] text-[11px] font-semibold text-zinc-400 hover:text-rose-300 flex items-center gap-1 transition-all"
+                  className="h-8 px-2.5 rounded-lg bg-white/[0.02] hover:bg-white/[0.06] border border-white/[0.06] text-[11px] font-semibold text-zinc-400 hover:text-rose-300 flex items-center gap-1 transition-all cursor-pointer"
                 >
                   <Flag className="w-3 h-3" />
                   <span>Report</span>

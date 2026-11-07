@@ -35,6 +35,12 @@ import {
   subscribeToPostChanges,
   PlacePost,
 } from './services/supabase';
+import {
+  applyClientPostMetadata,
+  buildPostPath,
+  doesPostMatchRoute,
+  parsePostRouteFromLocation,
+} from './services/postUrl';
 import { Navbar } from './components/Navbar';
 import { BottomNav, NavTab } from './components/BottomNav';
 import { HeroSection } from './components/HeroSection';
@@ -184,15 +190,24 @@ export default function App() {
     };
   }, []);
 
-  // Listen for #post/<id> and #trip/<token> in URL hash
+  // Direct Post Access (/p/{slug}-{uniqueId} and legacy #post/{id}) + #trip/<token> routing
   useEffect(() => {
-    const handleHashChange = () => {
-      const hash = window.location.hash;
-      const postMatch = hash.match(/^#post\/([a-zA-Z0-9_-]+)$/);
-      if (postMatch && postMatch[1]) {
-        setSelectedPostId(postMatch[1]);
+    const syncPostAndTripRoutes = () => {
+      const parsedPost = parsePostRouteFromLocation(
+        window.location.pathname,
+        window.location.hash,
+        window.location.search
+      );
+      if (parsedPost) {
+        setSelectedPostId(parsedPost.rawParam);
         return;
+      } else {
+        setSelectedPost(null);
+        setSelectedPostId(null);
+        applyClientPostMetadata(null);
       }
+
+      const hash = window.location.hash;
       const tripMatch = hash.match(/^#trip\/([a-zA-Z0-9_-]+)$/);
       if (tripMatch && tripMatch[1]) {
         setSharedTripToken(tripMatch[1]);
@@ -201,22 +216,41 @@ export default function App() {
       }
     };
 
-    handleHashChange();
-    window.addEventListener('hashchange', handleHashChange);
-    return () => window.removeEventListener('hashchange', handleHashChange);
+    syncPostAndTripRoutes();
+    window.addEventListener('popstate', syncPostAndTripRoutes);
+    window.addEventListener('hashchange', syncPostAndTripRoutes);
+    return () => {
+      window.removeEventListener('popstate', syncPostAndTripRoutes);
+      window.removeEventListener('hashchange', syncPostAndTripRoutes);
+    };
   }, []);
 
   const handleOpenPostDetails = (post: PlacePost) => {
     setSelectedPost(post);
     setSelectedPostId(post.id);
-    window.location.hash = `post/${post.id}`;
+    applyClientPostMetadata(post);
+    if (typeof window !== 'undefined' && window.history?.pushState) {
+      const postPath = buildPostPath(post);
+      if (window.location.pathname !== postPath || window.location.hash) {
+        window.history.pushState({ postId: post.id }, '', postPath);
+      }
+    }
   };
 
   const handleClosePostDetails = () => {
     setSelectedPost(null);
     setSelectedPostId(null);
-    if (window.location.hash.startsWith('#post/')) {
-      history.replaceState(null, '', window.location.pathname + window.location.search);
+    applyClientPostMetadata(null);
+    if (typeof window !== 'undefined' && window.history?.pushState) {
+      if (
+        window.location.pathname.startsWith('/p/') ||
+        window.location.hash.startsWith('#post') ||
+        window.location.hash.startsWith('#p/') ||
+        window.location.search.includes('post=') ||
+        window.location.search.includes('p=')
+      ) {
+        window.history.pushState({}, '', '/');
+      }
     }
   };
 
@@ -279,7 +313,12 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = subscribeToPostChanges((event) => {
       refreshData();
-      if (event.type === 'deleted' && selectedPostId === event.postId) {
+      if (
+        event.type === 'deleted' &&
+        selectedPostId &&
+        (selectedPostId === event.postId ||
+          (selectedPost && doesPostMatchRoute(selectedPost, event.postId)))
+      ) {
         handleClosePostDetails();
       }
     });
@@ -287,7 +326,7 @@ export default function App() {
     return () => {
       unsubscribe();
     };
-  }, [selectedPostId]);
+  }, [selectedPostId, selectedPost]);
 
   // Handle URL hashtag routes for /bangladesh, /dhaka, etc.
   useEffect(() => {

@@ -14,7 +14,9 @@ import {
   MapPin,
   Sparkles,
   ThumbsUp,
+  Share2,
 } from 'lucide-react';
+import { shareCommunityPost } from '../services/postUrl';
 import { UserLocation } from '../types/outera';
 import {
   saveUserProfile,
@@ -802,6 +804,22 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                           </div>
                         ) : (
                           <>
+                            {post.status === 'approved' && (
+                              <button
+                                type="button"
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  const res = await shareCommunityPost(post);
+                                  setPostActionNotice(`Post link copied: ${res.url}`);
+                                  setTimeout(() => setPostActionNotice(null), 3000);
+                                }}
+                                className="h-7 px-2.5 rounded-lg bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.08] text-xs font-bold text-white flex items-center gap-1 transition-colors cursor-pointer"
+                                title="Share unique post link"
+                              >
+                                <Share2 className="w-3 h-3 text-[#ccff00]" />
+                                <span>Share</span>
+                              </button>
+                            )}
                             <button
                               type="button"
                               onClick={(e) => {
