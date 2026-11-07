@@ -1147,14 +1147,19 @@ export async function fetchPlacesFromSupabase(): Promise<Place[]> {
         .limit(150),
       supabase
         .from('place_posts')
-        .select('id, place_id, user_id, title, content, rating, is_visited, status, created_at')
-        .eq('status', 'approved'),
+        .select('id, place_id, user_id, title, content, rating, is_visited, status, created_at, deleted_at')
+        .eq('status', 'approved')
+        .is('deleted_at', null),
     ]);
 
     const data = placesRes.data;
     const deletedIds = getDeletedPostIds();
     const approvedPosts = (approvedPostsRes.data || []).filter(
-      (p: any) => p?.id && !deletedIds.has(p.id)
+      (p: any) =>
+        p?.id &&
+        !deletedIds.has(p.id) &&
+        p.status === 'approved' &&
+        !p.deleted_at
     );
 
     // Fetch images for approved posts so places can show community photos if needed
@@ -1197,11 +1202,40 @@ export async function fetchPlacesFromSupabase(): Promise<Place[]> {
       }
     }
 
-    const localApproved = getLocallyApprovedPlaces();
+    const REMOVED_TEST_PLACE_IDS = new Set([
+      'cbc6ab88-7d9b-4da6-be3e-ca498b0e828f',
+      '4e10637f-c1dc-46d3-9efa-cf2aae8c0ed8',
+      '980b49a1-5685-4406-8564-d73885e365fe',
+    ]);
+    const REMOVED_TEST_NAMES = new Set(['hbbb', 'hshs']);
+
+    const isRemovedTestPlace = (row: any): boolean => {
+      if (!row) return true;
+      if (row.id && (REMOVED_TEST_PLACE_IDS.has(String(row.id)) || deletedIds.has(String(row.id)))) {
+        return true;
+      }
+      const normName = String(row.name || row.place_name || '').trim().toLowerCase();
+      if (REMOVED_TEST_NAMES.has(normName)) {
+        return true;
+      }
+      return false;
+    };
+
+    // Proactively delete the 3 test places from Supabase DB if they still exist and current user has permission
+    if (data && data.some((r: any) => isRemovedTestPlace(r))) {
+      supabase
+        .from('places')
+        .delete()
+        .in('id', Array.from(REMOVED_TEST_PLACE_IDS))
+        .then(() => {});
+    }
+
+    const localApproved = getLocallyApprovedPlaces().filter((p) => !isRemovedTestPlace(p));
     const existingIds = new Set(data ? data.map((r: any) => r.id) : []);
     const unmergedLocal = localApproved.filter((p) => !existingIds.has(p.id));
 
     const dbApproved = (data || []).filter((row: any) => {
+      if (isRemovedTestPlace(row)) return false;
       if (typeof row.status === 'string') {
         return row.status.toLowerCase() === 'approved';
       }
@@ -2517,7 +2551,20 @@ export function getLocallyApprovedPlaces(): any[] {
   if (typeof window === 'undefined') return [];
   try {
     const raw = window.localStorage.getItem(LOCALLY_APPROVED_PLACES_KEY);
-    return raw ? JSON.parse(raw) : [];
+    const list: any[] = raw ? JSON.parse(raw) : [];
+    const removedIds = new Set([
+      'cbc6ab88-7d9b-4da6-be3e-ca498b0e828f',
+      '4e10637f-c1dc-46d3-9efa-cf2aae8c0ed8',
+      '980b49a1-5685-4406-8564-d73885e365fe',
+    ]);
+    const removedNames = new Set(['hbbb', 'hshs']);
+    return list.filter((p) => {
+      if (!p) return false;
+      if (removedIds.has(String(p.id))) return false;
+      const n = String(p.name || p.place_name || '').trim().toLowerCase();
+      if (removedNames.has(n)) return false;
+      return true;
+    });
   } catch {
     return [];
   }
@@ -2588,6 +2635,9 @@ async function hydratePlaceSuggestionsList(rawList: any[]): Promise<PlaceSuggest
       const mod = storedMod[s.id];
       const effectiveStatus = (mod?.status || s.status || 'pending').toLowerCase();
       if (effectiveStatus === 'deleted') return null;
+
+      const checkName = String(s.place_name || s.name || '').trim().toLowerCase();
+      if (checkName === 'hbbb' || checkName === 'hshs') return null;
 
       const parsed = parseStructuredMetadata(s.description);
       const mergedSugg = { ...s, ...(mod?.edits || {}) };
@@ -2882,6 +2932,28 @@ export async function adminDeletePlaceSuggestion(
     storeSuggestionModeration(suggestionId, 'deleted', user.id);
     removeCachedSuggestionImages(suggestionId);
 
+    // Also look up suggestion name/promoted place so any promoted place is removed too
+    try {
+      const { data: suggRow } = await supabase
+        .from('place_suggestions')
+        .select('id, name, place_name')
+        .eq('id', suggestionId)
+        .maybeSingle();
+
+      if (suggRow) {
+        const targetName = (suggRow.place_name || suggRow.name || '').trim();
+        if (targetName) {
+          await supabase.from('places').delete().eq('name', targetName);
+        }
+      }
+      if (typeof window !== 'undefined') {
+        const localPlaces = getLocallyApprovedPlaces().filter(
+          (p) => p.id !== `place_${suggestionId}` && p.id !== suggestionId
+        );
+        window.localStorage.setItem(LOCALLY_APPROVED_PLACES_KEY, JSON.stringify(localPlaces));
+      }
+    } catch {}
+
     // Clean up suggestion images from Storage and DB
     try {
       const { data: suggImgs } = await supabase
@@ -3044,7 +3116,8 @@ export interface PlacePost {
   title: string;
   content: string;
   rating: number;
-  status: 'pending' | 'approved' | 'rejected' | 'hidden';
+  status: 'pending' | 'approved' | 'rejected' | 'hidden' | 'deleted';
+  deleted_at?: string | null;
   is_visited: boolean;
   moderation_note?: string | null;
   reviewed_by?: string | null;
@@ -3240,7 +3313,14 @@ async function hydratePlacePosts(rawPosts: any[]): Promise<PlacePost[]> {
   if (!rawPosts || rawPosts.length === 0) return [];
 
   const deletedIds = getDeletedPostIds();
-  const activeRawPosts = rawPosts.filter((p) => p && p.id && !deletedIds.has(p.id));
+  const activeRawPosts = rawPosts.filter(
+    (p) =>
+      p &&
+      p.id &&
+      !deletedIds.has(p.id) &&
+      !p.deleted_at &&
+      p.status !== 'deleted'
+  );
   if (activeRawPosts.length === 0) return [];
 
   const currentUser = await getCurrentUser();
@@ -3347,8 +3427,8 @@ async function hydratePlacePosts(rawPosts: any[]): Promise<PlacePost[]> {
       const author = profilesMap.get(p.user_id);
       const place = p.places || {};
       const modInfo = storedNotes[p.id];
-      const status = (modInfo?.status || p.status || 'pending').toLowerCase();
-      if (status === 'deleted') return null;
+      const status = (p.status || modInfo?.status || 'pending').toLowerCase();
+      if (status === 'deleted' || p.deleted_at || deletedIds.has(p.id)) return null;
       const postPhotos = (postImagesMap.get(p.id) || []).slice(0, 2);
 
       return {
@@ -3359,6 +3439,7 @@ async function hydratePlacePosts(rawPosts: any[]): Promise<PlacePost[]> {
         content: p.content || '',
         rating: Number(p.rating) || 5,
         status: status as PlacePost['status'],
+        deleted_at: p.deleted_at || null,
         is_visited: Boolean(p.is_visited),
         moderation_note: p.moderation_note || modInfo?.note || null,
         reviewed_by: p.reviewed_by || modInfo?.reviewed_by || null,
@@ -3473,13 +3554,14 @@ export async function togglePostHelpful(postId: string): Promise<{
   }
 }
 
-// Public visibility: ONLY status = 'approved' are publicly visible
+// Public visibility: ONLY status = 'approved' and not deleted are publicly visible
 export async function fetchPublicPlacePosts(placeId?: string): Promise<PlacePost[]> {
   try {
     let query = supabase
       .from('place_posts')
       .select('*, places(id, name, category, address)')
       .eq('status', 'approved')
+      .is('deleted_at', null)
       .order('created_at', { ascending: false })
       .limit(50);
 
@@ -3490,7 +3572,14 @@ export async function fetchPublicPlacePosts(placeId?: string): Promise<PlacePost
     const { data, error } = await query;
     if (error || !data) return [];
     const hydrated = await hydratePlacePosts(data);
-    return hydrated.filter((p) => p.status === 'approved');
+    const deletedIds = getDeletedPostIds();
+    return hydrated.filter(
+      (p) =>
+        p &&
+        p.status === 'approved' &&
+        !p.deleted_at &&
+        !deletedIds.has(p.id)
+    );
   } catch (err) {
     console.warn('fetchPublicPlacePosts error:', err);
     return [];
@@ -3646,10 +3735,19 @@ export async function fetchPlacePostById(postId: string): Promise<PlacePost | nu
       return null;
     }
 
+    const deletedIds = getDeletedPostIds();
+    if (deletedIds.has(postId.trim())) {
+      return null;
+    }
+
     const hydratedList = await hydratePlacePosts([data]);
     if (!hydratedList || hydratedList.length === 0) return null;
 
     const post = hydratedList[0];
+    if (post.status === 'deleted' || post.deleted_at || deletedIds.has(post.id)) {
+      return null;
+    }
+
     const currentUser = await getCurrentUser();
     const isAdmin = currentUser ? await isCurrentUserAdmin() : false;
 
@@ -3980,7 +4078,7 @@ export async function deleteUserPost(postId: string): Promise<{ success: boolean
 
     const { data: existing } = await supabase
       .from('place_posts')
-      .select('id, user_id')
+      .select('id, user_id, status')
       .eq('id', postId)
       .maybeSingle();
 
@@ -4011,42 +4109,83 @@ export async function deleteUserPost(postId: string): Promise<{ success: boolean
       console.warn('Post storage file cleanup notice:', storageErr);
     }
 
-    // 2. Delete dependent rows (place_post_images, place_post_comments, place_post_helpful, reports)
+    // 2. Try calling atomic RPC delete_post_completely if present in database
+    let rpcSucceeded = false;
     try {
-      await Promise.allSettled([
-        supabase.from('place_post_images').delete().eq('post_id', postId),
-        supabase.from('place_post_comments').delete().eq('post_id', postId),
-        supabase.from('place_post_helpful').delete().eq('post_id', postId),
-        supabase.from('reports').delete().eq('post_id', postId),
-      ]);
-    } catch (cleanupErr) {
-      console.warn('Post dependent records cleanup notice:', cleanupErr);
-    }
-
-    // 3. Delete the post record from place_posts
-    let query = supabase.from('place_posts').delete().eq('id', postId);
-    if (!isAdmin) {
-      query = query.eq('user_id', user.id);
-    }
-
-    const { error } = await query;
-
-    // Also attempt deleting from legacy experiences table if postId matches an experience row
-    try {
-      let expQuery = supabase.from('experiences').delete().eq('id', postId);
-      if (!isAdmin) {
-        expQuery = expQuery.eq('user_id', user.id);
+      const { data: rpcRes, error: rpcErr } = await supabase.rpc('delete_post_completely', {
+        p_post_id: postId,
+      });
+      if (!rpcErr && rpcRes === true) {
+        rpcSucceeded = true;
       }
-      await expQuery;
     } catch {}
 
-    // 4. Clean up all local caches & record tombstone so deleted post never resurfaces
+    // 3. If RPC was not present or failed, perform cascade deletion + defense-in-depth soft delete
+    let deleteFailure: string | null = null;
+    if (!rpcSucceeded) {
+      // Delete child rows first
+      try {
+        await Promise.allSettled([
+          supabase.from('place_post_images').delete().eq('post_id', postId),
+          supabase.from('place_post_comments').delete().eq('post_id', postId),
+          supabase.from('place_post_helpful').delete().eq('post_id', postId),
+          supabase.from('reports').delete().eq('post_id', postId),
+        ]);
+      } catch (cleanupErr) {
+        console.warn('Post dependent records cleanup notice:', cleanupErr);
+      }
+
+      // Hard delete from place_posts
+      let query = supabase.from('place_posts').delete().eq('id', postId);
+      if (!isAdmin) {
+        query = query.eq('user_id', user.id);
+      }
+
+      const { data: deletedRows, error: hardDeleteErr } = await query.select('id');
+
+      // Also clean up from legacy experiences if applicable
+      try {
+        let expQuery = supabase.from('experiences').delete().eq('id', postId);
+        if (!isAdmin) expQuery = expQuery.eq('user_id', user.id);
+        await expQuery;
+      } catch {}
+
+      // If hard delete reported an error or 0 rows deleted, execute soft-delete defense
+      if (hardDeleteErr || !deletedRows || deletedRows.length === 0) {
+        try {
+          let softQuery = supabase
+            .from('place_posts')
+            .update({
+              status: 'deleted',
+              deleted_at: new Date().toISOString(),
+              moderation_note: 'Permanently deleted by admin',
+            })
+            .eq('id', postId);
+          if (!isAdmin) softQuery = softQuery.eq('user_id', user.id);
+          const { error: softErr } = await softQuery;
+          if (softErr && hardDeleteErr) {
+            deleteFailure = hardDeleteErr.message || softErr.message;
+          }
+        } catch {
+          if (hardDeleteErr) deleteFailure = hardDeleteErr.message;
+        }
+      }
+    }
+
+    if (deleteFailure) {
+      return { success: false, error: deleteFailure };
+    }
+
+    // 4. Clean up all local caches & record tombstone
     markPostDeletedLocally(postId);
     removeCachedPostImages(postId);
     removeModerationNote(postId);
 
-    if (error && error.code !== '42501') {
-      return { success: false, error: error.message };
+    // 5. Broadcast deletion across the application (CustomEvents + Realtime)
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('outera:post-deleted', { detail: { postId } })
+      );
     }
 
     return { success: true };
@@ -4095,8 +4234,8 @@ export async function fetchAdminOverviewStats(): Promise<{
     const [usersRes, placesRes, postsRes, pendingRes, reportsRes, suggestionsRes, pendingSugRes] = await Promise.all([
       supabase.from('profiles').select('*', { count: 'exact', head: true }),
       supabase.from('places').select('*', { count: 'exact', head: true }),
-      supabase.from('place_posts').select('*', { count: 'exact', head: true }),
-      supabase.from('place_posts').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
+      supabase.from('place_posts').select('*', { count: 'exact', head: true }).is('deleted_at', null),
+      supabase.from('place_posts').select('*', { count: 'exact', head: true }).eq('status', 'pending').is('deleted_at', null),
       supabase.from('reports').select('*', { count: 'exact', head: true }),
       supabase.from('place_suggestions').select('*', { count: 'exact', head: true }),
       supabase.from('place_suggestions').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
@@ -4148,10 +4287,13 @@ export async function fetchAdminPlacePosts(
     let query = supabase
       .from('place_posts')
       .select('*, places(id, name, category, address)')
+      .is('deleted_at', null)
       .order('created_at', { ascending: false });
 
     if (statusFilter !== 'all') {
       query = query.eq('status', statusFilter);
+    } else {
+      query = query.neq('status', 'deleted');
     }
 
     const { data, error } = await query;
@@ -4184,10 +4326,6 @@ export async function moderatePlacePost(
     };
     const targetStatus = statusMap[action];
 
-    if (note?.trim()) {
-      storeModerationNote(postId, note.trim(), user.id);
-    }
-
     const payload: Record<string, any> = {
       status: targetStatus,
       moderation_note: note?.trim() || null,
@@ -4202,17 +4340,19 @@ export async function moderatePlacePost(
       .eq('id', postId);
 
     if (updateErr) {
-      if (
-        updateErr.code === '42501' ||
-        updateErr.message?.toLowerCase().includes('permission denied')
-      ) {
-        storeModerationNote(postId, note?.trim() || '', user.id, targetStatus);
-        return { success: true };
-      }
       return { success: false, error: updateErr.message };
     }
 
     storeModerationNote(postId, note?.trim() || '', user.id, targetStatus);
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('outera:post-moderated', {
+          detail: { postId, status: targetStatus },
+        })
+      );
+    }
+
     return { success: true };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Failed to moderate post.' };
@@ -4233,6 +4373,77 @@ export async function adminDeletePlacePost(postId: string): Promise<{ success: b
   } catch (err: any) {
     return { success: false, error: err?.message || 'Failed to delete post.' };
   }
+}
+
+/**
+ * Universal Post Synchronization Hook / Listener
+ * Listens to both in-window CustomEvents and cross-session Supabase Realtime channel
+ */
+export function subscribeToPostChanges(
+  onChange: (event: {
+    type: 'deleted' | 'updated' | 'inserted';
+    postId: string;
+    newPost?: any;
+  }) => void
+): () => void {
+  if (typeof window === 'undefined') return () => {};
+
+  const handleLocalDeleted = (e: any) => {
+    const postId = e.detail?.postId;
+    if (postId) onChange({ type: 'deleted', postId });
+  };
+
+  const handleLocalModerated = (e: any) => {
+    const { postId, status } = e.detail || {};
+    if (postId) {
+      if (status !== 'approved') {
+        onChange({ type: 'deleted', postId });
+      } else {
+        onChange({ type: 'updated', postId, newPost: { id: postId, status } });
+      }
+    }
+  };
+
+  window.addEventListener('outera:post-deleted', handleLocalDeleted);
+  window.addEventListener('outera:post-moderated', handleLocalModerated);
+
+  const channel = supabase
+    .channel('outera-post-changes-channel')
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'place_posts' },
+      (payload) => {
+        if (payload.eventType === 'DELETE') {
+          const oldId = payload.old?.id;
+          if (oldId) {
+            markPostDeletedLocally(oldId);
+            onChange({ type: 'deleted', postId: oldId });
+          }
+        } else if (payload.eventType === 'UPDATE') {
+          const newStatus = payload.new?.status;
+          const postId = payload.new?.id;
+          if (postId) {
+            if (newStatus !== 'approved' || payload.new?.deleted_at) {
+              markPostDeletedLocally(postId);
+              onChange({ type: 'deleted', postId });
+            } else {
+              onChange({ type: 'updated', postId, newPost: payload.new });
+            }
+          }
+        } else if (payload.eventType === 'INSERT') {
+          if (payload.new?.status === 'approved' && !payload.new?.deleted_at) {
+            onChange({ type: 'inserted', postId: payload.new.id, newPost: payload.new });
+          }
+        }
+      }
+    )
+    .subscribe();
+
+  return () => {
+    window.removeEventListener('outera:post-deleted', handleLocalDeleted);
+    window.removeEventListener('outera:post-moderated', handleLocalModerated);
+    supabase.removeChannel(channel);
+  };
 }
 
 

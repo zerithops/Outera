@@ -31,6 +31,7 @@ import {
   togglePostHelpful,
   submitReportToSupabase,
   updateUserPendingPost,
+  subscribeToPostChanges,
 } from '../services/supabase';
 
 interface PostDetailsModalProps {
@@ -171,6 +172,31 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
       setErrorMessage(null);
     }
   }, [isOpen, postId, initialPost, loadPostData]);
+
+  // Synchronize modal state if active post is deleted or rejected/hidden in database or admin dashboard
+  useEffect(() => {
+    if (!isOpen || !activePostId) return;
+
+    const unsubscribe = subscribeToPostChanges((event) => {
+      if (event.postId === activePostId) {
+        if (event.type === 'deleted') {
+          if (onPostDeleted) onPostDeleted(event.postId);
+          onClose();
+        } else if (event.type === 'updated') {
+          if (event.newPost && event.newPost.status !== 'approved') {
+            if (onPostDeleted) onPostDeleted(event.postId);
+            onClose();
+          } else {
+            loadPostData(activePostId);
+          }
+        }
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [isOpen, activePostId, onPostDeleted, onClose, loadPostData]);
 
   if (!isOpen) return null;
 

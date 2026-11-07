@@ -43,6 +43,7 @@ import {
   PlaceSuggestion,
   getCurrentUser,
   fetchProfile,
+  subscribeToPostChanges,
 } from '../services/supabase';
 import {
   fetchAdminTransportRoutes,
@@ -217,6 +218,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
 
   useEffect(() => {
     loadData();
+  }, [loadData]);
+
+  // Keep admin view in sync with real-time post changes
+  useEffect(() => {
+    const unsubscribe = subscribeToPostChanges((event) => {
+      if (event.type === 'deleted') {
+        setPosts((prev) => prev.filter((p) => p.id !== event.postId));
+      }
+      loadData();
+    });
+
+    return () => {
+      unsubscribe();
+    };
   }, [loadData]);
 
   // Handle APPROVE POST

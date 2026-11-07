@@ -57,38 +57,66 @@
   padding-bottom: max(env(safe-area-inset-bottom, 0px), 10px);
 }
 
-/* Leaflet Dark Mode & Custom Markers */
-.leaflet-container {
-  background-color: #090a0c !important;
+/* MapLibre GL Dark Mode & Custom Popups */
+.maplibregl-map {
+  background-color: #0B0D0C !important;
   font-family: inherit;
-  z-index: 1;
 }
 
-.leaflet-control-zoom a {
-  background-color: #12151a !important;
+.maplibregl-canvas {
+  outline: none !important;
+}
+
+.maplibregl-popup-content {
+  background: #111413 !important;
   color: #f4f4f5 !important;
-  border-color: rgba(255, 255, 255, 0.1) !important;
-}
-
-.leaflet-control-zoom a:hover {
-  background-color: #1c2129 !important;
-  color: #ccff00 !important;
-}
-
-.leaflet-popup-content-wrapper {
-  background: #111317 !important;
-  color: #f4f4f5 !important;
-  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
   border-radius: 16px !important;
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.7) !important;
+  padding: 0 !important;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.8) !important;
 }
 
-.leaflet-popup-tip {
-  background: #111317 !important;
+.maplibregl-popup-anchor-bottom .maplibregl-popup-tip {
+  border-top-color: #111413 !important;
+}
+.maplibregl-popup-anchor-top .maplibregl-popup-tip {
+  border-bottom-color: #111413 !important;
+}
+.maplibregl-popup-anchor-left .maplibregl-popup-tip {
+  border-right-color: #111413 !important;
+}
+.maplibregl-popup-anchor-right .maplibregl-popup-tip {
+  border-left-color: #111413 !important;
+}
+
+.maplibregl-popup-close-button {
+  color: #a1a1aa !important;
+  padding: 6px 10px !important;
+  font-size: 16px !important;
+  outline: none !important;
+  transition: color 0.15s ease;
+}
+
+.maplibregl-popup-close-button:hover {
+  color: #ffffff !important;
+  background-color: transparent !important;
+}
+
+.maplibregl-ctrl-attrib {
+  background-color: rgba(11, 13, 12, 0.85) !important;
+  color: #71717a !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 6px !important;
+  margin: 6px !important;
+}
+
+.maplibregl-ctrl-attrib a {
+  color: #a1a1aa !important;
 }
 
 .outera-user-location-marker,
-.outera-place-marker {
+.outera-place-marker-wrapper,
+.outera-picker-marker-container {
   background: transparent !important;
   border: none !important;
 }

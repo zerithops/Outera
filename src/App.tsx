@@ -31,6 +31,8 @@ import {
   getCurrentUser,
   subscribeToAuthChanges,
   isEmailVerified,
+  isCurrentUserAdmin,
+  subscribeToPostChanges,
   PlacePost,
 } from './services/supabase';
 import { Navbar } from './components/Navbar';
@@ -89,6 +91,7 @@ export default function App() {
 
   // Auth state
   const [authUser, setAuthUser] = useState<any>(null);
+  const [isAdmin, setIsAdmin] = useState<boolean>(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authModalInitialMode, setAuthModalInitialMode] = useState<AuthModalMode>('signup');
   const [authContextAction, setAuthContextAction] = useState<string | undefined>(undefined);
@@ -244,6 +247,35 @@ export default function App() {
       unsubscribeAuth();
     };
   }, []);
+
+  // Check genuine database admin status whenever auth user changes
+  useEffect(() => {
+    let active = true;
+    if (authUser) {
+      isCurrentUserAdmin().then((admin) => {
+        if (active) setIsAdmin(Boolean(admin));
+      });
+    } else {
+      setIsAdmin(false);
+    }
+    return () => {
+      active = false;
+    };
+  }, [authUser]);
+
+  // Subscribe to real-time database changes and in-window events to instantly sync feed on post deletion/moderation
+  useEffect(() => {
+    const unsubscribe = subscribeToPostChanges((event) => {
+      refreshData();
+      if (event.type === 'deleted' && selectedPostId === event.postId) {
+        handleClosePostDetails();
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [selectedPostId]);
 
   // Handle URL hashtag routes for /bangladesh, /dhaka, etc.
   useEffect(() => {
@@ -1072,7 +1104,7 @@ export default function App() {
         userLocation={currentLocation}
         onSelectPost={handleOpenPostDetails}
         currentUserId={authUser?.id}
-        isAdmin={authUser?.role === 'admin'}
+        isAdmin={isAdmin}
         allPlaces={places}
         onSelectAnotherPlace={(p) => {
           const foundRanked = rankedPlaces.find((rp) => rp.id === p.id);
@@ -1098,7 +1130,7 @@ export default function App() {
           }
         }}
         currentUserId={authUser?.id}
-        isAdmin={authUser?.role === 'admin'}
+        isAdmin={isAdmin}
         onRequireAuth={(action) => {
           setAuthContextAction(action);
           setAuthModalOpen(true);

@@ -1,8 +1,11 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import L from 'leaflet';
+import '../services/maplibreSetup.ts';
+import * as maplibregl from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
 import { MapPin, Navigation, Search, X, Crosshair, Check } from 'lucide-react';
 import { Coordinates } from '../types/outera';
 import { requestBrowserLocation, reverseGeocodeNominatim } from '../services/location';
+import { getOuteraMapStyle } from '../services/mapStyle';
 
 interface LocationPickerMapProps {
   coordinates: Coordinates | null;
@@ -16,22 +19,25 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
   onAddressDetected,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
-  const mapInstanceRef = useRef<L.Map | null>(null);
-  const markerRef = useRef<L.Marker | null>(null);
+  const mapInstanceRef = useRef<maplibregl.Map | null>(null);
+  const markerRef = useRef<maplibregl.Marker | null>(null);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searching, setSearching] = useState(false);
   const [locatingCurrent, setLocatingCurrent] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [selectedLabel, setSelectedLabel] = useState<string>('');
 
-  // Default center if no coordinates chosen yet
-  const defaultCenterLat = coordinates?.lat || 23.8103;
+  // Default center if no coordinates chosen yet [lng, lat]
   const defaultCenterLng = coordinates?.lng || 90.4125;
+  const defaultCenterLat = coordinates?.lat || 23.8103;
 
-  const createPickerPinIcon = useCallback(() => {
-    const html = `
-      <div class="relative flex items-center justify-center -translate-x-1/2 -translate-y-full cursor-grab active:cursor-grabbing">
-        <div class="w-8 h-8 rounded-full bg-[#ccff00] text-black font-extrabold flex items-center justify-center border-2 border-black shadow-[0_4px_16px_rgba(204,255,0,0.5)]">
+  const createPickerPinElement = useCallback(() => {
+    const el = document.createElement('div');
+    el.className = 'outera-picker-marker-container cursor-grab active:cursor-grabbing';
+    el.innerHTML = `
+      <div class="relative flex items-center justify-center -translate-x-1/2 -translate-y-full">
+        <div class="w-8 h-8 rounded-full bg-[#C6FF00] text-black font-extrabold flex items-center justify-center border-2 border-black shadow-[0_4px_16px_rgba(198,255,0,0.45)]">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/>
             <circle cx="12" cy="10" r="3"/>
@@ -40,16 +46,8 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
         <span class="absolute -bottom-1 w-2 h-2 rounded-full bg-black"></span>
       </div>
     `;
-
-    return L.divIcon({
-      className: 'outera-picker-marker',
-      html,
-      iconSize: [32, 32],
-      iconAnchor: [16, 32],
-    });
+    return el;
   }, []);
-
-  const [selectedLabel, setSelectedLabel] = useState<string>('');
 
   // Update or place marker at specific coords
   const setPinAt = useCallback(
@@ -63,15 +61,18 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
       onChangeCoordinates({ lat: roundedLat, lng: roundedLng });
 
       if (!markerRef.current) {
-        const marker = L.marker([roundedLat, roundedLng], {
-          icon: createPickerPinIcon(),
+        const marker = new maplibregl.Marker({
+          element: createPickerPinElement(),
           draggable: true,
-        }).addTo(map);
+          anchor: 'bottom',
+        })
+          .setLngLat([roundedLng, roundedLat])
+          .addTo(map);
 
         marker.on('dragend', async () => {
-          const pos = marker.getLatLng();
-          const dLat = Math.round(pos.lat * 100000) / 100000;
-          const dLng = Math.round(pos.lng * 100000) / 100000;
+          const lngLat = marker.getLngLat();
+          const dLat = Math.round(lngLat.lat * 100000) / 100000;
+          const dLng = Math.round(lngLat.lng * 100000) / 100000;
           onChangeCoordinates({ lat: dLat, lng: dLng });
           const geocoded = await reverseGeocodeNominatim(dLat, dLng);
           if (geocoded.neighborhoodName) {
@@ -84,7 +85,7 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
 
         markerRef.current = marker;
       } else {
-        markerRef.current.setLatLng([roundedLat, roundedLng]);
+        markerRef.current.setLngLat([roundedLng, roundedLat]);
       }
 
       if (reverseLookup) {
@@ -97,46 +98,51 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
         }
       }
     },
-    [createPickerPinIcon, onChangeCoordinates, onAddressDetected]
+    [createPickerPinElement, onChangeCoordinates, onAddressDetected]
   );
 
-  // Initialize Map
+  // Initialize MapLibre GL instance
   useEffect(() => {
     if (!mapContainerRef.current) return;
+    let isCancelled = false;
 
-    if (!mapInstanceRef.current) {
-      const map = L.map(mapContainerRef.current, {
-        center: [defaultCenterLat, defaultCenterLng],
+    const initMap = async () => {
+      const styleObj = await getOuteraMapStyle();
+      if (isCancelled || !mapContainerRef.current) return;
+
+      const map = new maplibregl.Map({
+        container: mapContainerRef.current,
+        style: styleObj,
+        center: [defaultCenterLng, defaultCenterLat],
         zoom: coordinates ? 15 : 12,
-        zoomControl: false,
         attributionControl: false,
       });
 
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        maxZoom: 19,
-        subdomains: 'abcd',
-      }).addTo(map);
+      map.on('click', (e: maplibregl.MapMouseEvent) => {
+        setPinAt(e.lngLat.lat, e.lngLat.lng, true);
+      });
 
-      // Click to place/move pin
-      map.on('click', (e: L.LeafletMouseEvent) => {
-        setPinAt(e.latlng.lat, e.latlng.lng, true);
+      map.on('load', () => {
+        if (coordinates) {
+          setPinAt(coordinates.lat, coordinates.lng, false);
+        }
       });
 
       mapInstanceRef.current = map;
+    };
 
-      // If coordinates already existed, render pin
-      if (coordinates) {
-        setPinAt(coordinates.lat, coordinates.lng, false);
-      }
-    }
-
-    const map = mapInstanceRef.current;
-    const timer = setTimeout(() => {
-      map.invalidateSize();
-    }, 200);
+    initMap();
 
     return () => {
-      clearTimeout(timer);
+      isCancelled = true;
+      if (markerRef.current) {
+        markerRef.current.remove();
+        markerRef.current = null;
+      }
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+      }
     };
   }, []);
 
@@ -152,7 +158,11 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
       const { lat, lng } = result.location.coords;
       const map = mapInstanceRef.current;
       if (map) {
-        map.flyTo([lat, lng], 16, { duration: 0.6 });
+        map.flyTo({
+          center: [lng, lat],
+          zoom: 16,
+          duration: 700,
+        });
       }
       if (result.location.neighborhoodName) {
         setSelectedLabel(result.location.neighborhoodName);
@@ -206,7 +216,11 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
 
       const map = mapInstanceRef.current;
       if (map) {
-        map.flyTo([lat, lng], 15, { duration: 0.6 });
+        map.flyTo({
+          center: [lng, lat],
+          zoom: 15,
+          duration: 700,
+        });
       }
 
       setSelectedLabel(first.name || first.display_name?.split(',')?.[0] || 'Selected spot');
@@ -224,8 +238,8 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
   const handleClearPin = () => {
     onChangeCoordinates(null);
     setSelectedLabel('');
-    if (markerRef.current && mapInstanceRef.current) {
-      mapInstanceRef.current.removeLayer(markerRef.current);
+    if (markerRef.current) {
+      markerRef.current.remove();
       markerRef.current = null;
     }
   };
@@ -236,12 +250,12 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <div>
           <div className="flex items-center gap-1.5 text-xs font-bold text-white">
-            <MapPin className="w-3.5 h-3.5 text-[#ccff00]" />
+            <MapPin className="w-3.5 h-3.5 text-[#C6FF00]" />
             <span>Where is this place?</span>
-            <span className="text-[#ccff00]">*</span>
+            <span className="text-[#C6FF00]">*</span>
           </div>
           <p className="text-[11px] text-zinc-400">
-            Click map or use GPS so this place appears accurately on OUTERA's radar.
+            Click map or use GPS to set exact coordinates on OUTERA's radar.
           </p>
         </div>
 
@@ -250,7 +264,7 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
             type="button"
             onClick={handleUseCurrentLocation}
             disabled={locatingCurrent}
-            className="h-8 px-2.5 rounded-lg bg-[#ccff00] text-black font-extrabold text-[11px] flex items-center gap-1.5 hover:bg-[#d4ff1a] transition-all disabled:opacity-50 cursor-pointer shadow-md shadow-[#ccff00]/10"
+            className="h-8 px-2.5 rounded-lg bg-[#C6FF00] text-black font-extrabold text-[11px] flex items-center gap-1.5 hover:bg-[#d4ff1a] transition-all disabled:opacity-50 cursor-pointer shadow-md shadow-[#C6FF00]/10"
           >
             <Navigation className={`w-3 h-3 ${locatingCurrent ? 'animate-spin' : ''}`} />
             <span>{locatingCurrent ? 'Locating...' : 'Use My Current Location'}</span>
@@ -279,7 +293,7 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
             onChange={(e) => setSearchQuery(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSearchLocation(e)}
             placeholder="Search landmark or area (e.g. Dhanmondi Lake, Banani 11)..."
-            className="w-full h-8 pl-8 pr-3 rounded-lg bg-white/[0.03] border border-white/[0.08] text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#ccff00]"
+            className="w-full h-8 pl-8 pr-3 rounded-lg bg-white/[0.03] border border-white/[0.08] text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#C6FF00]"
           />
         </div>
         <button
@@ -298,26 +312,26 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
         </p>
       )}
 
-      {/* Leaflet Picker Map */}
-      <div className="relative h-44 sm:h-52 w-full rounded-2xl bg-zinc-950 border border-white/[0.1] overflow-hidden">
+      {/* MapLibre Picker Canvas */}
+      <div className="relative h-44 sm:h-52 w-full rounded-2xl bg-[#0B0D0C] border border-white/[0.1] overflow-hidden">
         <div ref={mapContainerRef} className="w-full h-full z-0" />
 
         {/* Floating crosshair guideline */}
-        <div className="absolute top-2 right-2 px-2 py-1 rounded-md bg-black/80 border border-white/10 text-[10px] text-zinc-300 font-medium pointer-events-none z-10 flex items-center gap-1">
-          <Crosshair className="w-3 h-3 text-[#ccff00]" />
+        <div className="absolute top-2 right-2 px-2 py-1 rounded-md bg-black/80 border border-white/10 text-[10px] text-zinc-300 font-medium pointer-events-none z-10 flex items-center gap-1 backdrop-blur-sm">
+          <Crosshair className="w-3 h-3 text-[#C6FF00]" />
           <span>Click map to place pin</span>
         </div>
 
-        {/* Selected location indicator badge: Shows clean address/area instead of raw coordinates */}
+        {/* Selected location indicator badge */}
         {coordinates ? (
-          <div className="absolute bottom-2 left-2 max-w-[85%] px-2.5 py-1.5 rounded-md bg-black/90 border border-[#ccff00]/50 text-[11px] text-[#ccff00] font-medium z-10 flex items-center gap-1.5 shadow-lg">
-            <Check className="w-3.5 h-3.5 shrink-0 text-[#ccff00]" />
+          <div className="absolute bottom-2 left-2 max-w-[85%] px-2.5 py-1.5 rounded-md bg-black/90 border border-[#C6FF00]/50 text-[11px] text-[#C6FF00] font-medium z-10 flex items-center gap-1.5 shadow-lg backdrop-blur-sm">
+            <Check className="w-3.5 h-3.5 shrink-0 text-[#C6FF00]" />
             <span className="truncate">
               📍 Location selected{selectedLabel ? `: ${selectedLabel}` : ''}
             </span>
           </div>
         ) : (
-          <div className="absolute bottom-2 left-2 px-2.5 py-1 rounded-md bg-black/80 border border-white/10 text-[10px] text-zinc-400 z-10">
+          <div className="absolute bottom-2 left-2 px-2.5 py-1 rounded-md bg-black/80 border border-white/10 text-[10px] text-zinc-400 z-10 backdrop-blur-sm">
             Click map to place pin
           </div>
         )}

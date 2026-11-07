@@ -33,6 +33,7 @@ import {
   fetchPublicPlacePosts,
   togglePostHelpful,
   deleteUserPost,
+  subscribeToPostChanges,
   PlacePost,
 } from '../services/supabase';
 import { CreatePostModal } from './CreatePostModal';
@@ -102,6 +103,31 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
       setMobileHeroIdx(0);
       loadPlacePosts();
     }
+  }, [isOpen, place, loadPlacePosts]);
+
+  // Subscribe to real-time and in-app post modifications/deletions so removed/rejected posts vanish immediately
+  React.useEffect(() => {
+    if (!isOpen || !place) return;
+
+    const unsubscribe = subscribeToPostChanges((event) => {
+      if (event.type === 'deleted') {
+        setPublicPosts((prev) => prev.filter((p) => p.id !== event.postId));
+      } else if (event.type === 'updated') {
+        if (event.newPost && event.newPost.status !== 'approved') {
+          setPublicPosts((prev) => prev.filter((p) => p.id !== event.postId));
+        } else {
+          loadPlacePosts();
+        }
+      } else if (event.type === 'inserted') {
+        if (event.newPost && event.newPost.place_id === place.id && event.newPost.status === 'approved') {
+          loadPlacePosts();
+        }
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
   }, [isOpen, place, loadPlacePosts]);
 
   if (!isOpen || !place) return null;
