@@ -4375,18 +4375,86 @@ export async function adminDeletePlacePost(postId: string): Promise<{ success: b
   }
 }
 
+type PostChangeEvent = {
+  type: 'deleted' | 'updated' | 'inserted';
+  postId: string;
+  newPost?: any;
+};
+
+type PostChangeListener = (event: PostChangeEvent) => void;
+
+const postChangeListeners = new Set<PostChangeListener>();
+let sharedPostRealtimeChannel: ReturnType<typeof supabase.channel> | null = null;
+let postChannelInstanceCounter = 0;
+
+function notifyPostChangeListeners(event: PostChangeEvent) {
+  postChangeListeners.forEach((listener) => {
+    try {
+      listener(event);
+    } catch (err) {
+      console.warn('subscribeToPostChanges listener error:', err);
+    }
+  });
+}
+
+function ensureSharedPostRealtimeChannel() {
+  if (sharedPostRealtimeChannel) return;
+
+  try {
+    postChannelInstanceCounter += 1;
+    const channelName = `outera-post-changes-channel-${postChannelInstanceCounter}`;
+    sharedPostRealtimeChannel = supabase
+      .channel(channelName)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'place_posts' },
+        (payload) => {
+          if (payload.eventType === 'DELETE') {
+            const oldId = (payload.old as any)?.id;
+            if (oldId) {
+              markPostDeletedLocally(oldId);
+              notifyPostChangeListeners({ type: 'deleted', postId: oldId });
+            }
+          } else if (payload.eventType === 'UPDATE') {
+            const newRow = payload.new as any;
+            const newStatus = newRow?.status;
+            const postId = newRow?.id;
+            if (postId) {
+              if (newStatus !== 'approved' || newRow?.deleted_at) {
+                markPostDeletedLocally(postId);
+                notifyPostChangeListeners({ type: 'deleted', postId });
+              } else {
+                notifyPostChangeListeners({ type: 'updated', postId, newPost: newRow });
+              }
+            }
+          } else if (payload.eventType === 'INSERT') {
+            const newRow = payload.new as any;
+            if (newRow?.status === 'approved' && !newRow?.deleted_at) {
+              notifyPostChangeListeners({
+                type: 'inserted',
+                postId: newRow.id,
+                newPost: newRow,
+              });
+            }
+          }
+        }
+      )
+      .subscribe();
+  } catch (err) {
+    console.warn('Realtime channel subscription notice:', err);
+    sharedPostRealtimeChannel = null;
+  }
+}
+
 /**
  * Universal Post Synchronization Hook / Listener
- * Listens to both in-window CustomEvents and cross-session Supabase Realtime channel
+ * Listens to both in-window CustomEvents and a shared cross-session Supabase Realtime channel
  */
-export function subscribeToPostChanges(
-  onChange: (event: {
-    type: 'deleted' | 'updated' | 'inserted';
-    postId: string;
-    newPost?: any;
-  }) => void
-): () => void {
+export function subscribeToPostChanges(onChange: PostChangeListener): () => void {
   if (typeof window === 'undefined') return () => {};
+
+  postChangeListeners.add(onChange);
+  ensureSharedPostRealtimeChannel();
 
   const handleLocalDeleted = (e: any) => {
     const postId = e.detail?.postId;
@@ -4407,44 +4475,17 @@ export function subscribeToPostChanges(
   window.addEventListener('outera:post-deleted', handleLocalDeleted);
   window.addEventListener('outera:post-moderated', handleLocalModerated);
 
-  const channel = supabase
-    .channel('outera-post-changes-channel')
-    .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: 'place_posts' },
-      (payload) => {
-        if (payload.eventType === 'DELETE') {
-          const oldId = payload.old?.id;
-          if (oldId) {
-            markPostDeletedLocally(oldId);
-            onChange({ type: 'deleted', postId: oldId });
-          }
-        } else if (payload.eventType === 'UPDATE') {
-          const newStatus = payload.new?.status;
-          const postId = payload.new?.id;
-          if (postId) {
-            if (newStatus !== 'approved' || payload.new?.deleted_at) {
-              markPostDeletedLocally(postId);
-              onChange({ type: 'deleted', postId });
-            } else {
-              onChange({ type: 'updated', postId, newPost: payload.new });
-            }
-          }
-        } else if (payload.eventType === 'INSERT') {
-          if (payload.new?.status === 'approved' && !payload.new?.deleted_at) {
-            onChange({ type: 'inserted', postId: payload.new.id, newPost: payload.new });
-          }
-        }
-      }
-    )
-    .subscribe();
-
   return () => {
     window.removeEventListener('outera:post-deleted', handleLocalDeleted);
     window.removeEventListener('outera:post-moderated', handleLocalModerated);
-    supabase.removeChannel(channel);
+    postChangeListeners.delete(onChange);
+
+    if (postChangeListeners.size === 0 && sharedPostRealtimeChannel) {
+      const chanToRemove = sharedPostRealtimeChannel;
+      sharedPostRealtimeChannel = null;
+      try {
+        supabase.removeChannel(chanToRemove);
+      } catch {}
+    }
   };
 }
-
-
-
