@@ -334,12 +334,15 @@ export default async function handler(req, res) {
 
   let baseHtml = COMPILED_INDEX_HTML;
 
-  if (baseHtml.includes('/src/main.tsx') && req.headers?.host) {
+  if (req.headers?.host) {
     try {
       const proto = req.headers['x-forwarded-proto'] || 'https';
       const resp = await fetch(`${proto}://${req.headers.host}/index.html`);
       if (resp.ok) {
-        baseHtml = await resp.text();
+        const fetchedHtml = await resp.text();
+        if (fetchedHtml && fetchedHtml.includes('<div id="root">')) {
+          baseHtml = fetchedHtml;
+        }
       }
     } catch {}
   }

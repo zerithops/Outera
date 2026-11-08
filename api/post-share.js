@@ -269,13 +269,16 @@ export default async function handler(req, res) {
 
   let baseHtml = COMPILED_INDEX_HTML;
 
-  // Attempt to load the freshly deployed index.html from origin if needed
-  if (baseHtml.includes('/src/main.tsx') && req.headers?.host) {
+  // Attempt to load the freshly deployed index.html from origin so asset hashes always match
+  if (req.headers?.host) {
     try {
       const proto = req.headers['x-forwarded-proto'] || 'https';
       const resp = await fetch(`${proto}://${req.headers.host}/index.html`);
       if (resp.ok) {
-        baseHtml = await resp.text();
+        const fetchedHtml = await resp.text();
+        if (fetchedHtml && fetchedHtml.includes('<div id="root">')) {
+          baseHtml = fetchedHtml;
+        }
       }
     } catch {}
   }
