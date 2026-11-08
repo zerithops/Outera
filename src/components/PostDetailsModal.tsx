@@ -49,6 +49,7 @@ interface PostDetailsModalProps {
   isOpen: boolean;
   onClose: () => void;
   onPostDeleted?: (postId: string) => void;
+  onPostUpdated?: () => void;
   onSelectPlace?: (placeId: string) => void;
   currentUserId?: string;
   isAdmin?: boolean;
@@ -61,6 +62,7 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
   isOpen,
   onClose,
   onPostDeleted,
+  onPostUpdated,
   onSelectPlace,
   currentUserId,
   isAdmin = false,
@@ -301,6 +303,7 @@ export const PostDetailsModal: React.FC<PostDetailsModalProps> = ({
         status: 'pending',
       });
       setIsEditing(false);
+      if (onPostUpdated) onPostUpdated();
     }
   };
 

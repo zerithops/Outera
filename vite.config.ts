@@ -12,6 +12,8 @@ import {
   fetchApprovedPlaceForServerSeo,
   injectPlaceMetadataIntoHtml,
 } from './src/services/placeServerSeo';
+import { generateDynamicSitemapXml } from './src/services/sitemapGenerator';
+import { isPrivateOrNoIndexRoute } from './src/services/seoEngine';
 import { handleAdminUsersServerRequest } from './src/services/adminServerAuth';
 import { handleNavigationRouteRequest } from './supabase/functions/navigation-route/index';
 
@@ -59,11 +61,13 @@ function outeraPostSeoPlugin(): Plugin {
             res.statusCode = result.status;
             res.setHeader('Content-Type', 'application/json; charset=utf-8');
             res.setHeader('Cache-Control', 'no-store, must-revalidate');
+            res.setHeader('X-Robots-Tag', 'noindex, nofollow');
             res.end(JSON.stringify(result.body));
             return;
           } catch (err: any) {
             res.statusCode = 500;
             res.setHeader('Content-Type', 'application/json; charset=utf-8');
+            res.setHeader('X-Robots-Tag', 'noindex, nofollow');
             res.end(
               JSON.stringify({
                 success: false,
@@ -98,12 +102,14 @@ function outeraPostSeoPlugin(): Plugin {
             webRes.headers.forEach((val, key) => {
               res.setHeader(key, val);
             });
+            res.setHeader('X-Robots-Tag', 'noindex, nofollow');
             res.end(text);
             return;
           } catch (err) {
             console.warn('navigation-route middleware notice:', err);
             res.statusCode = 500;
             res.setHeader('Content-Type', 'application/json');
+            res.setHeader('X-Robots-Tag', 'noindex, nofollow');
             res.end(
               JSON.stringify({
                 ok: false,
@@ -114,7 +120,48 @@ function outeraPostSeoPlugin(): Plugin {
           }
         }
 
-        if (req.method !== 'GET') return next();
+        if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+
+        // Dynamic XML Sitemap (/sitemap.xml and /api/sitemap)
+        if (urlPath === '/sitemap.xml' || urlPath === '/api/sitemap') {
+          try {
+            const { xml } = await generateDynamicSitemapXml();
+            res.statusCode = 200;
+            res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+            res.setHeader('Cache-Control', 'public, s-maxage=900, stale-while-revalidate=3600');
+            res.setHeader('X-Robots-Tag', 'all');
+            res.end(xml);
+            return;
+          } catch (err) {
+            console.warn('sitemap middleware notice:', err);
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+            res.end('Failed to generate sitemap.xml');
+            return;
+          }
+        }
+
+        // robots.txt handler
+        if (urlPath === '/robots.txt') {
+          try {
+            const robotsPath = path.resolve(__dirname, 'public', 'robots.txt');
+            if (fs.existsSync(robotsPath)) {
+              const robotsTxt = fs.readFileSync(robotsPath, 'utf-8');
+              res.statusCode = 200;
+              res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+              res.setHeader('Cache-Control', 'public, max-age=3600');
+              res.end(robotsTxt);
+              return;
+            }
+          } catch (err) {
+            console.warn('robots.txt middleware notice:', err);
+          }
+        }
+
+        // Prevent private, admin, login, and account pages from being indexed
+        if (isPrivateOrNoIndexRoute(urlPath)) {
+          res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+        }
 
         // Handle /place/:slug and /places/:slug server-side SEO & Open Graph injection
         const placeMatch = urlPath.match(/^\/places?\/([^/?#]+)\/?$/i);
@@ -129,6 +176,10 @@ function outeraPostSeoPlugin(): Plugin {
 
             res.statusCode = place ? 200 : 404;
             res.setHeader('Content-Type', 'text/html; charset=utf-8');
+            res.setHeader(
+              'X-Robots-Tag',
+              place ? 'index, follow, max-image-preview:large' : 'noindex, nofollow'
+            );
             res.end(finalHtml);
             return;
           } catch (err) {
@@ -137,27 +188,76 @@ function outeraPostSeoPlugin(): Plugin {
           }
         }
 
+        // Handle /p/:slug server-side SEO & Open Graph injection
         const postMatch = urlPath.match(/^\/p\/([^/?#]+)\/?$/i);
-        if (!postMatch || !postMatch[1]) return next();
+        if (postMatch && postMatch[1]) {
+          try {
+            const slugParam = decodeURIComponent(postMatch[1]);
+            const indexHtmlPath = path.resolve(__dirname, 'index.html');
+            const rawHtml = fs.readFileSync(indexHtmlPath, 'utf-8');
+            const transformedHtml = await server.transformIndexHtml(req.url, rawHtml);
+            const post = await fetchApprovedPostForServerSeo(slugParam);
+            const finalHtml = injectPostMetadataIntoHtml(transformedHtml, post, slugParam);
 
-        try {
-          const slugParam = decodeURIComponent(postMatch[1]);
-          const indexHtmlPath = path.resolve(__dirname, 'index.html');
-          const rawHtml = fs.readFileSync(indexHtmlPath, 'utf-8');
-          const transformedHtml = await server.transformIndexHtml(req.url, rawHtml);
-          const post = await fetchApprovedPostForServerSeo(slugParam);
-          const finalHtml = injectPostMetadataIntoHtml(transformedHtml, post, slugParam);
-
-          res.statusCode = 200;
-          res.setHeader('Content-Type', 'text/html; charset=utf-8');
-          res.end(finalHtml);
-        } catch (err) {
-          console.warn('outera-post-seo-plugin middleware notice:', err);
-          next();
+            res.statusCode = post ? 200 : 404;
+            res.setHeader('Content-Type', 'text/html; charset=utf-8');
+            res.setHeader('X-Robots-Tag', post ? 'index, follow' : 'noindex, nofollow');
+            res.end(finalHtml);
+            return;
+          } catch (err) {
+            console.warn('outera-post-seo-plugin middleware notice:', err);
+            return next();
+          }
         }
+
+        // Return proper HTTP 404 response for unknown non-asset client paths
+        const isViteOrStaticAsset =
+          urlPath.startsWith('/@') ||
+          urlPath.startsWith('/src/') ||
+          urlPath.startsWith('/node_modules/') ||
+          urlPath.startsWith('/assets/') ||
+          /\.[a-z0-9]{2,8}$/i.test(urlPath);
+
+        if (!isViteOrStaticAsset) {
+          const cleanRoute = urlPath.toLowerCase().replace(/\/+$/, '') || '/';
+          const isKnownAppRoute =
+            cleanRoute === '/' ||
+            cleanRoute === '/index.html' ||
+            cleanRoute === '/explore' ||
+            cleanRoute === '/surprise' ||
+            cleanRoute === '/trips' ||
+            cleanRoute === '/bangladesh' ||
+            cleanRoute.startsWith('/location/') ||
+            cleanRoute === '/forgot-password' ||
+            cleanRoute === '/reset-password' ||
+            cleanRoute.startsWith('/auth/') ||
+            cleanRoute === '/login' ||
+            cleanRoute === '/signup' ||
+            cleanRoute === '/profile' ||
+            cleanRoute === '/saved' ||
+            cleanRoute.startsWith('/admin');
+
+          if (!isKnownAppRoute) {
+            try {
+              const indexHtmlPath = path.resolve(__dirname, 'index.html');
+              const rawHtml = fs.readFileSync(indexHtmlPath, 'utf-8');
+              const transformedHtml = await server.transformIndexHtml(req.url, rawHtml);
+              const notFoundHtml = injectPlaceMetadataIntoHtml(transformedHtml, null, cleanRoute);
+              res.statusCode = 404;
+              res.setHeader('Content-Type', 'text/html; charset=utf-8');
+              res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+              res.end(notFoundHtml);
+              return;
+            } catch {
+              // Fall through to standard middleware if transform fails
+            }
+          }
+        }
+
+        return next();
       });
     },
-    closeBundle() {
+    async closeBundle() {
       try {
         const distHtmlPath = path.resolve(__dirname, 'dist', 'index.html');
         if (fs.existsSync(distHtmlPath)) {
@@ -168,8 +268,13 @@ function outeraPostSeoPlugin(): Plugin {
           )};\n`;
           fs.writeFileSync(apiTemplatePath, jsContent, 'utf-8');
         }
+        const distSitemapPath = path.resolve(__dirname, 'dist', 'sitemap.xml');
+        const { xml: sitemapXml } = await generateDynamicSitemapXml();
+        if (fs.existsSync(path.resolve(__dirname, 'dist'))) {
+          fs.writeFileSync(distSitemapPath, sitemapXml, 'utf-8');
+        }
       } catch (err) {
-        console.warn('Failed to sync dist/index.html to api/_htmlTemplate.js:', err);
+        console.warn('Failed to sync dist/index.html or sitemap.xml:', err);
       }
     },
   };

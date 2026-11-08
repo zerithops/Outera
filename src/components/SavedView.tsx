@@ -3,7 +3,7 @@ import { Bookmark, Sparkles, FolderPlus, ArrowRight, Trash2 } from 'lucide-react
 import { Place, SavedCollection } from '../types/outera';
 import { PlaceWithDistance } from '../services/discoveryEngine';
 import { PlaceCard } from './PlaceCard';
-import { saveCollection } from '../services/storage';
+import { deleteCollection, saveCollection } from '../services/storage';
 
 interface SavedViewProps {
   savedPlaces: PlaceWithDistance[];
@@ -79,6 +79,15 @@ export const SavedView: React.FC<SavedViewProps> = ({
     setActiveCollectionId(newCol.id);
   };
 
+  const handleDeleteCollection = (e: React.MouseEvent, colId: string) => {
+    e.stopPropagation();
+    deleteCollection(colId);
+    if (activeCollectionId === colId) {
+      setActiveCollectionId('all');
+    }
+    onRefreshCollections();
+  };
+
   return (
     <div className="w-full px-4 sm:px-6 py-4 space-y-6">
       {/* Header */}
@@ -109,25 +118,25 @@ export const SavedView: React.FC<SavedViewProps> = ({
           className="p-4 rounded-2xl bg-white/[0.03] border border-white/[0.08] space-y-3 animate-in fade-in duration-150"
         >
           <p className="text-xs font-bold text-white">Create a Custom Outing List</p>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <input
               type="text"
               value={newCollectionName}
               onChange={(e) => setNewCollectionName(e.target.value)}
               placeholder="e.g. Rainy Day Rooftops, Late Night Runs..."
-              className="flex-1 h-10 px-3 rounded-xl bg-black/40 border border-white/[0.1] text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#ccff00]"
+              className="flex-1 min-w-[180px] h-10 px-3 rounded-xl bg-black/40 border border-white/[0.1] text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#ccff00]"
               autoFocus
             />
             <button
               type="submit"
-              className="h-10 px-4 rounded-xl bg-[#ccff00] text-black font-bold text-xs"
+              className="h-10 px-4 rounded-xl bg-[#ccff00] text-black font-bold text-xs cursor-pointer"
             >
               Create
             </button>
             <button
               type="button"
               onClick={() => setIsCreating(false)}
-              className="h-10 px-3 rounded-xl bg-white/[0.06] text-zinc-400 hover:text-white text-xs"
+              className="h-10 px-3 rounded-xl bg-white/[0.06] text-zinc-400 hover:text-white text-xs cursor-pointer"
             >
               Cancel
             </button>
@@ -140,7 +149,7 @@ export const SavedView: React.FC<SavedViewProps> = ({
         <button
           type="button"
           onClick={() => setActiveCollectionId('all')}
-          className={`shrink-0 h-9 px-3.5 rounded-xl text-xs font-semibold transition-all border ${
+          className={`shrink-0 h-9 px-3.5 rounded-xl text-xs font-semibold transition-all border cursor-pointer ${
             activeCollectionId === 'all'
               ? 'bg-[#ccff00] text-black border-[#ccff00] font-bold'
               : 'bg-white/[0.03] text-zinc-300 border-white/[0.08] hover:bg-white/[0.06]'
@@ -152,18 +161,30 @@ export const SavedView: React.FC<SavedViewProps> = ({
         {collections.map((col) => {
           const isSelected = activeCollectionId === col.id;
           return (
-            <button
+            <div
               key={col.id}
-              type="button"
               onClick={() => setActiveCollectionId(col.id)}
-              className={`shrink-0 h-9 px-3.5 rounded-xl text-xs font-semibold transition-all border ${
+              className={`shrink-0 h-9 px-3 rounded-xl text-xs font-semibold transition-all border flex items-center gap-2 cursor-pointer ${
                 isSelected
                   ? 'bg-[#ccff00] text-black border-[#ccff00] font-bold'
                   : 'bg-white/[0.03] text-zinc-300 border-white/[0.08] hover:bg-white/[0.06]'
               }`}
             >
               <span>{col.name}</span>
-            </button>
+              <button
+                type="button"
+                onClick={(e) => handleDeleteCollection(e, col.id)}
+                className={`p-1 rounded-md transition-colors cursor-pointer ${
+                  isSelected
+                    ? 'hover:bg-black/15 text-black/80'
+                    : 'hover:bg-white/10 text-zinc-400 hover:text-rose-400'
+                }`}
+                title={`Delete list "${col.name}"`}
+                aria-label={`Delete list ${col.name}`}
+              >
+                <Trash2 className="w-3 h-3" />
+              </button>
+            </div>
           );
         })}
       </div>

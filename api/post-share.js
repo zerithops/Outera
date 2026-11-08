@@ -11,7 +11,7 @@ const SUPABASE_ANON_KEY =
   process.env.VITE_SUPABASE_ANON_KEY ||
   'sb_publishable_1lRtsi9_-0131cjmSg76BQ_w8wzpFF3';
 
-const OUTERA_PRODUCTION_ORIGIN = 'https://www.outerabd.buzz';
+const OUTERA_PRODUCTION_ORIGIN = 'https://outerabd.buzz';
 const OUTERA_DEFAULT_OG_IMAGE = `${OUTERA_PRODUCTION_ORIGIN}/assets/aistudio/Neon_Lime_OUTERA_Tech_Logo_8daa6fb0.png`;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
@@ -314,8 +314,9 @@ export default async function handler(req, res) {
     <meta name="twitter:image" content="${escapeHtmlAttr(OUTERA_DEFAULT_OG_IMAGE)}" />`;
 
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
     res.setHeader('Cache-Control', 'no-store, must-revalidate');
-    return res.status(200).send(cleanedHtml.replace('<head>', `<head>${headBlock}`));
+    return res.status(404).send(cleanedHtml.replace('<head>', `<head>${headBlock}`));
   }
 
   const canonicalUrl = `${OUTERA_PRODUCTION_ORIGIN}/p/${post.slug}`;

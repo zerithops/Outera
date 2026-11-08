@@ -12,7 +12,7 @@ const SUPABASE_ANON_KEY =
   'sb_publishable_1lRtsi9_-0131cjmSg76BQ_w8wzpFF3';
 
 const OUTERA_PLACE_CANONICAL_ORIGIN = 'https://outerabd.buzz';
-const OUTERA_DEFAULT_OG_IMAGE = 'https://www.outerabd.buzz/assets/aistudio/Neon_Lime_OUTERA_Tech_Logo_8daa6fb0.png';
+const OUTERA_DEFAULT_OG_IMAGE = 'https://outerabd.buzz/assets/aistudio/Neon_Lime_OUTERA_Tech_Logo_8daa6fb0.png';
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
@@ -378,6 +378,7 @@ export default async function handler(req, res) {
     <meta name="twitter:image" content="${escapeHtmlAttr(OUTERA_DEFAULT_OG_IMAGE)}" />`;
 
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
     res.setHeader('Cache-Control', 'no-store, must-revalidate');
     return res.status(404).send(cleanedHtml.replace('<head>', `<head>${headBlock}`));
   }
@@ -385,6 +386,7 @@ export default async function handler(req, res) {
   const canonicalUrl = `${OUTERA_PLACE_CANONICAL_ORIGIN}/place/${place.slug}`;
   const areaPart = (place.neighborhood || place.upazila || '').trim();
   const districtPart = (place.district || place.division || 'Bangladesh').trim();
+  const divisionPart = (place.division || districtPart || 'Bangladesh').trim();
   const locationLabel =
     areaPart && areaPart.toLowerCase() !== districtPart.toLowerCase()
       ? `${areaPart}, ${districtPart}`
@@ -393,14 +395,26 @@ export default async function handler(req, res) {
   const pageTitle = `${place.name} (${place.category}) — ${locationLabel} | OUTERA`;
   const ogTitle = `${place.name} · ${place.category} in ${locationLabel} — OUTERA`;
   const description = place.description
-    ? `${place.description.slice(0, 125).trim()}${place.description.length > 125 ? '...' : ''} — Explore ${place.name} (${place.category}) in ${locationLabel} on OUTERA.`
+    ? `${place.description.slice(0, 115).trim()}${place.description.length > 115 ? '...' : ''} — Explore ${place.name} (${place.category}) in ${locationLabel} on OUTERA.`
     : `Discover ${place.name}, a verified ${place.category} spot in ${locationLabel} on OUTERA. View photos, community reviews, and directions.`;
   const ogDesc = (place.description || description).slice(0, 200);
   const ogImageAlt = `${place.name} (${place.category}) in ${locationLabel} on OUTERA`;
 
-  const jsonLd = {
-    '@context': 'https://schema.org',
-    '@type': 'Place',
+  const catLower = String(place.category || '').toLowerCase();
+  const schemaTypes =
+    catLower === 'cafe'
+      ? ['Place', 'LocalBusiness', 'FoodEstablishment', 'CafeOrCoffeeShop']
+      : catLower === 'food'
+      ? ['Place', 'LocalBusiness', 'FoodEstablishment', 'Restaurant']
+      : catLower === 'stay'
+      ? ['Place', 'LocalBusiness', 'LodgingBusiness']
+      : catLower === 'shopping'
+      ? ['Place', 'LocalBusiness', 'Store']
+      : ['Place', 'LocalBusiness', 'TouristAttraction'];
+
+  const placeNode = {
+    '@type': schemaTypes,
+    '@id': `${canonicalUrl}#place`,
     name: place.name,
     description: ogDesc,
     url: canonicalUrl,
@@ -409,13 +423,13 @@ export default async function handler(req, res) {
       '@type': 'PostalAddress',
       streetAddress: place.address || locationLabel,
       addressLocality: districtPart,
-      addressRegion: place.division || districtPart,
+      addressRegion: divisionPart,
       addressCountry: 'BD',
     },
   };
 
   if (typeof place.latitude === 'number' && typeof place.longitude === 'number') {
-    jsonLd.geo = {
+    placeNode.geo = {
       '@type': 'GeoCoordinates',
       latitude: place.latitude,
       longitude: place.longitude,
@@ -423,7 +437,7 @@ export default async function handler(req, res) {
   }
 
   if (typeof place.communityRating === 'number' && place.communityRating > 0) {
-    jsonLd.aggregateRating = {
+    placeNode.aggregateRating = {
       '@type': 'AggregateRating',
       ratingValue: place.communityRating,
       bestRating: 5,
@@ -432,9 +446,41 @@ export default async function handler(req, res) {
     };
   }
 
+  const jsonLd = {
+    '@context': 'https://schema.org',
+    '@graph': [
+      placeNode,
+      {
+        '@type': 'BreadcrumbList',
+        '@id': `${canonicalUrl}#breadcrumb`,
+        itemListElement: [
+          {
+            '@type': 'ListItem',
+            position: 1,
+            name: 'OUTERA Bangladesh',
+            item: OUTERA_PLACE_CANONICAL_ORIGIN,
+          },
+          {
+            '@type': 'ListItem',
+            position: 2,
+            name: divisionPart,
+            item: `${OUTERA_PLACE_CANONICAL_ORIGIN}/location/${divisionPart.toLowerCase()}`,
+          },
+          {
+            '@type': 'ListItem',
+            position: 3,
+            name: place.name,
+            item: canonicalUrl,
+          },
+        ],
+      },
+    ],
+  };
+
   const headBlock = `
     <title>${escapeHtmlAttr(pageTitle)}</title>
     <meta name="description" content="${escapeHtmlAttr(description.slice(0, 160))}" />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
     <link rel="canonical" href="${escapeHtmlAttr(canonicalUrl)}" />
     <meta property="og:type" content="place" />
     <meta property="og:site_name" content="OUTERA" />

@@ -6,15 +6,19 @@ import {
   ArrowRight,
   Bookmark,
   Share2,
+  Check,
+  Compass,
 } from 'lucide-react';
 import { Place, UserLocation } from '../types/outera';
 import { getSurpriseRecommendation, PlaceWithDistance } from '../services/discoveryEngine';
 import { formatDistance } from '../services/location';
+import { sharePlace } from '../services/placeUrl';
 
 interface SurpriseMeViewProps {
   places: Place[];
   userLocation: UserLocation;
   isSaved: boolean;
+  savedPlaceIds?: string[];
   onToggleSave: (id: string) => void;
   onSelectPlace: (place: PlaceWithDistance) => void;
   onSuggestPlace?: () => void;
@@ -24,11 +28,14 @@ export const SurpriseMeView: React.FC<SurpriseMeViewProps> = ({
   places,
   userLocation,
   isSaved,
+  savedPlaceIds,
   onToggleSave,
   onSelectPlace,
   onSuggestPlace,
 }) => {
   const [animating, setAnimating] = useState(false);
+  const [imageError, setImageError] = useState(false);
+  const [copiedShare, setCopiedShare] = useState(false);
   const [currentRecommendation, setCurrentRecommendation] = useState<{
     place: PlaceWithDistance;
     reason: string;
@@ -49,6 +56,8 @@ export const SurpriseMeView: React.FC<SurpriseMeViewProps> = ({
       return;
     }
     setAnimating(true);
+    setImageError(false);
+    setCopiedShare(false);
     setTimeout(() => {
       const rec = getSurpriseRecommendation(
         places,
@@ -63,20 +72,20 @@ export const SurpriseMeView: React.FC<SurpriseMeViewProps> = ({
   const handleShare = async () => {
     if (!currentRecommendation) return;
     const { place } = currentRecommendation;
-    if (navigator.share) {
-      try {
-        await navigator.share({
-          title: `Surprise pick: ${place.name}`,
-          text: `Found on OUTERA: ${place.name} (${place.neighborhood})`,
-          url: window.location.href,
-        });
-      } catch {
-        // cancelled
-      }
+    const res = await sharePlace(place);
+    if (res.method === 'clipboard') {
+      setCopiedShare(true);
+      setTimeout(() => setCopiedShare(false), 2000);
     }
   };
 
   const currentPlace = currentRecommendation?.place;
+  const isCurrentPlaceSaved = currentPlace
+    ? Array.isArray(savedPlaceIds)
+      ? savedPlaceIds.includes(currentPlace.id)
+      : isSaved
+    : false;
+  const coverImage = currentPlace?.images?.[0] || currentPlace?.image;
 
   if (places.length === 0) {
     return (
@@ -134,12 +143,23 @@ export const SurpriseMeView: React.FC<SurpriseMeViewProps> = ({
         <div className="w-full rounded-3xl bg-[#121418] border border-white/[0.1] overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-200">
           {/* Image */}
           <div className="relative aspect-[16/10] w-full overflow-hidden bg-zinc-900">
-            <img
-              src={currentPlace.images[0]}
-              alt={currentPlace.name}
-              className="w-full h-full object-cover"
-              referrerPolicy="no-referrer"
-            />
+            {!imageError && coverImage ? (
+              <img
+                src={coverImage}
+                alt={currentPlace.name}
+                onError={() => setImageError(true)}
+                className="w-full h-full object-cover"
+                referrerPolicy="no-referrer"
+              />
+            ) : (
+              <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-[#161a22] via-[#111317] to-[#0c0e12] p-6 text-center">
+                <div className="w-11 h-11 rounded-2xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mb-2.5 text-[#ccff00]">
+                  <Compass className="w-5 h-5" />
+                </div>
+                <span className="text-sm font-bold text-zinc-200 line-clamp-1">{currentPlace.name}</span>
+                <span className="text-xs text-zinc-500 mt-0.5">{currentPlace.category}</span>
+              </div>
+            )}
             <div className="absolute inset-0 bg-gradient-to-t from-[#121418] via-transparent to-black/30 pointer-events-none" />
 
             {/* Float badges */}
@@ -153,22 +173,31 @@ export const SurpriseMeView: React.FC<SurpriseMeViewProps> = ({
               <button
                 type="button"
                 onClick={handleShare}
-                className="w-9 h-9 rounded-full bg-black/60 text-white flex items-center justify-center backdrop-blur-md border border-white/10 active:scale-90 transition-all"
+                className={`w-9 h-9 rounded-full flex items-center justify-center backdrop-blur-md transition-all active:scale-90 cursor-pointer ${
+                  copiedShare
+                    ? 'bg-[#ccff00] text-black shadow-md'
+                    : 'bg-black/60 text-white border border-white/10 hover:bg-black/80'
+                }`}
                 aria-label="Share pick"
+                title={copiedShare ? 'Link copied!' : `Share ${currentPlace.name}`}
               >
-                <Share2 className="w-4 h-4" />
+                {copiedShare ? (
+                  <Check className="w-4 h-4 stroke-[2.5]" />
+                ) : (
+                  <Share2 className="w-4 h-4" />
+                )}
               </button>
               <button
                 type="button"
                 onClick={() => onToggleSave(currentPlace.id)}
-                className={`w-9 h-9 rounded-full flex items-center justify-center backdrop-blur-md transition-all active:scale-90 ${
-                  isSaved
+                className={`w-9 h-9 rounded-full flex items-center justify-center backdrop-blur-md transition-all active:scale-90 cursor-pointer ${
+                  isCurrentPlaceSaved
                     ? 'bg-[#ccff00] text-black shadow-lg shadow-[#ccff00]/20'
                     : 'bg-black/60 text-white border border-white/10'
                 }`}
                 aria-label="Save pick"
               >
-                <Bookmark className={`w-4 h-4 ${isSaved ? 'fill-black' : ''}`} />
+                <Bookmark className={`w-4 h-4 ${isCurrentPlaceSaved ? 'fill-black' : ''}`} />
               </button>
             </div>
           </div>

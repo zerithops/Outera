@@ -38,6 +38,7 @@ import { shareCommunityPost } from '../services/postUrl';
 interface ExploreViewProps {
   places: PlaceWithDistance[];
   allPlaces?: Place[];
+  initialPosts?: PlacePost[];
   currentLocation: UserLocation;
   filters: FilterState;
   onChangeFilters: (filters: FilterState) => void;
@@ -55,6 +56,7 @@ interface ExploreViewProps {
 export const ExploreView: React.FC<ExploreViewProps> = ({
   places,
   allPlaces,
+  initialPosts,
   currentLocation,
   filters,
   onChangeFilters,
@@ -69,7 +71,7 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
   onSelectPost,
 }) => {
   const [viewMode, setViewMode] = useState<'grid' | 'map'>('grid');
-  const [publicPosts, setPublicPosts] = useState<PlacePost[]>([]);
+  const [publicPosts, setPublicPosts] = useState<PlacePost[]>(() => initialPosts || []);
   const [copiedPostId, setCopiedPostId] = useState<string | null>(null);
 
   const catalogPlaces = useMemo(
@@ -93,6 +95,10 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
   }, []);
 
   useEffect(() => {
+    if (Array.isArray(initialPosts)) {
+      setPublicPosts(initialPosts);
+      return;
+    }
     loadApprovedPosts();
     const unsub = subscribeToPostChanges((evt) => {
       if (evt.type === 'deleted') {
@@ -102,7 +108,7 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
       }
     });
     return () => unsub();
-  }, [loadApprovedPosts]);
+  }, [initialPosts, loadApprovedPosts]);
 
   // Hook that automatically records user's searches into Supabase search_history
   const { recentSearches } = useSearchHistory(

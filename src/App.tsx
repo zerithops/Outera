@@ -23,6 +23,7 @@ import {
   getSavedCollections,
   getSavedPlaceIds,
   getUserExperienceReports,
+  setSavedPlaceIdsInStorage,
   toggleSavePlace,
   addExperienceReport,
 } from './services/storage';
@@ -51,6 +52,11 @@ import {
   doesPlaceMatchRoute,
   parsePlaceRouteFromLocation,
 } from './services/placeUrl';
+import {
+  applyPageSeoToDocument,
+  buildPageSeoConfig,
+  OUTERA_CANONICAL_ORIGIN,
+} from './services/seoEngine';
 import { Navbar } from './components/Navbar';
 import { BottomNav, NavTab } from './components/BottomNav';
 import { HeroSection } from './components/HeroSection';
@@ -151,6 +157,7 @@ export default function App() {
   // Smart Trip Planner state
   const [sharedTripToken, setSharedTripToken] = useState<string | null>(null);
   const [tripPreselectedPlace, setTripPreselectedPlace] = useState<Place | null>(null);
+  const [isUnknownRoute, setIsUnknownRoute] = useState<boolean>(false);
 
   const navigateToAuthRoute = (
     route: 'none' | 'forgot-password' | 'reset-password' | 'auth-callback'
@@ -358,11 +365,14 @@ export default function App() {
         if (user) {
           fetchUserSavedPlaces().then((supabaseSaved) => {
             if (isMounted && supabaseSaved) {
-              setSavedPlaceIds(Array.from(new Set(supabaseSaved)));
+              const uniqueSaved = Array.from(new Set(supabaseSaved));
+              setSavedPlaceIds(uniqueSaved);
+              setSavedPlaceIdsInStorage(uniqueSaved);
             }
           });
         } else {
           setSavedPlaceIds([]);
+          setSavedPlaceIdsInStorage([]);
         }
       }
     });
@@ -407,43 +417,97 @@ export default function App() {
     };
   }, [selectedPostId, selectedPost]);
 
-  // Handle URL hashtag routes for /bangladesh, /dhaka, etc.
+  // Handle URL path & hashtag routes for /bangladesh, /location/:division, /explore, /surprise, /trips, and 404 detection
   useEffect(() => {
-    const handleHashRoute = () => {
+    const handleLocationRoute = () => {
+      const rawPath = window.location.pathname.toLowerCase().replace(/\/+$/, '') || '/';
       const hash = window.location.hash.toLowerCase().replace('#', '').replace(/^\//, '');
-      if (hash === 'bangladesh') {
+
+      const resolveDivision = (slug: string): DivisionName | null => {
+        const map: Record<string, DivisionName> = {
+          dhaka: 'Dhaka',
+          chattogram: 'Chattogram',
+          sylhet: 'Sylhet',
+          rajshahi: 'Rajshahi',
+          khulna: 'Khulna',
+          barishal: 'Barishal',
+          rangpur: 'Rangpur',
+          mymensingh: 'Mymensingh',
+        };
+        return map[slug] || null;
+      };
+
+      if (rawPath === '/bangladesh' || hash === 'bangladesh') {
         setActiveHubDivision('all');
         setShowLocationHub(true);
-      } else if (hash === 'dhaka' || hash === 'location/dhaka') {
-        setActiveHubDivision('Dhaka');
-        setShowLocationHub(true);
-      } else if (hash === 'chattogram' || hash === 'location/chattogram') {
-        setActiveHubDivision('Chattogram');
-        setShowLocationHub(true);
-      } else if (hash === 'sylhet' || hash === 'location/sylhet') {
-        setActiveHubDivision('Sylhet');
-        setShowLocationHub(true);
-      } else if (hash === 'rajshahi' || hash === 'location/rajshahi') {
-        setActiveHubDivision('Rajshahi');
-        setShowLocationHub(true);
-      } else if (hash === 'khulna' || hash === 'location/khulna') {
-        setActiveHubDivision('Khulna');
-        setShowLocationHub(true);
-      } else if (hash === 'barishal' || hash === 'location/barishal') {
-        setActiveHubDivision('Barishal');
-        setShowLocationHub(true);
-      } else if (hash === 'rangpur' || hash === 'location/rangpur') {
-        setActiveHubDivision('Rangpur');
-        setShowLocationHub(true);
-      } else if (hash === 'mymensingh' || hash === 'location/mymensingh') {
-        setActiveHubDivision('Mymensingh');
-        setShowLocationHub(true);
+        setIsUnknownRoute(false);
+        return;
       }
+
+      const pathDivMatch = rawPath.match(/^\/location\/([a-z]+)$/);
+      const hashDivMatch = hash.match(/^(?:location\/)?(dhaka|chattogram|sylhet|rajshahi|khulna|barishal|rangpur|mymensingh)$/);
+      const matchedDivSlug = pathDivMatch?.[1] || hashDivMatch?.[1];
+      if (matchedDivSlug) {
+        const div = resolveDivision(matchedDivSlug);
+        if (div) {
+          setActiveHubDivision(div);
+          setShowLocationHub(true);
+          setIsUnknownRoute(false);
+          return;
+        }
+      }
+
+      if (rawPath === '/explore') {
+        setActiveTab('explore');
+        setShowLocationHub(false);
+        setIsUnknownRoute(false);
+        return;
+      }
+      if (rawPath === '/surprise') {
+        setActiveTab('surprise');
+        setShowLocationHub(false);
+        setIsUnknownRoute(false);
+        return;
+      }
+      if (rawPath === '/trips') {
+        setActiveTab('trips');
+        setShowLocationHub(false);
+        setIsUnknownRoute(false);
+        return;
+      }
+      if (rawPath === '/saved') {
+        setActiveTab('saved');
+        setShowLocationHub(false);
+        setIsUnknownRoute(false);
+        return;
+      }
+      if (rawPath === '/profile') {
+        setActiveTab('profile');
+        setShowLocationHub(false);
+        setIsUnknownRoute(false);
+        return;
+      }
+
+      const isKnownRoute =
+        rawPath === '/' ||
+        rawPath === '/index.html' ||
+        rawPath.startsWith('/place/') ||
+        rawPath.startsWith('/places/') ||
+        rawPath.startsWith('/p/') ||
+        rawPath === '/forgot-password' ||
+        rawPath === '/reset-password' ||
+        rawPath.startsWith('/auth/');
+
+      setIsUnknownRoute(!isKnownRoute);
     };
 
-    handleHashRoute();
-    window.addEventListener('hashchange', handleHashRoute);
-    return () => window.removeEventListener('hashchange', handleHashRoute);
+    handleLocationRoute();
+    window.addEventListener('popstate', handleLocationRoute);
+    window.addEventListener('hashchange', handleLocationRoute);
+    return () => {
+      window.removeEventListener('popstate', handleLocationRoute);
+      window.removeEventListener('hashchange', handleLocationRoute);
+    };
   }, []);
 
   // Filtered and ranked places list
@@ -456,17 +520,58 @@ export default function App() {
     return filterAndRankPlaces(places, currentLocation.coords, INITIAL_FILTERS);
   }, [places, currentLocation.coords]);
 
-  // Sync detailsPlace when selectedPlaceRouteParam matches a loaded place
+  // Sync detailsPlace when selectedPlaceRouteParam matches a loaded place and normalize duplicate URLs
   useEffect(() => {
     if (!selectedPlaceRouteParam) return;
-    if (detailsPlace && doesPlaceMatchRoute(detailsPlace, selectedPlaceRouteParam)) return;
-    const match = allPlacesWithDistance.find((p) =>
-      doesPlaceMatchRoute(p, selectedPlaceRouteParam)
-    );
+    const match =
+      detailsPlace && doesPlaceMatchRoute(detailsPlace, selectedPlaceRouteParam)
+        ? detailsPlace
+        : allPlacesWithDistance.find((p) => doesPlaceMatchRoute(p, selectedPlaceRouteParam));
     if (match) {
-      setDetailsPlace(match);
+      if (!detailsPlace || detailsPlace.id !== match.id) {
+        setDetailsPlace(match);
+      }
+      if (typeof window !== 'undefined' && window.history?.replaceState) {
+        const canonicalPath = buildPlacePath(match);
+        if (window.location.pathname !== canonicalPath) {
+          window.history.replaceState({ placeId: match.id }, '', canonicalPath);
+        }
+      }
     }
   }, [selectedPlaceRouteParam, allPlacesWithDistance, detailsPlace]);
+
+  // Apply unique SEO title, description, canonical URL, robots directive, and structured data for every view
+  useEffect(() => {
+    // Individual Place or Post modals manage their own specific place/post metadata while open
+    if (detailsPlace || selectedPlaceRouteParam || selectedPost || selectedPostId) {
+      return;
+    }
+
+    const seoConfig = buildPageSeoConfig({
+      activeTab,
+      filters,
+      showLocationHub,
+      activeHubDivision,
+      authRoute,
+      isAuthModalOpen: authModalOpen,
+      isNotFound: isUnknownRoute,
+      places,
+    });
+    applyPageSeoToDocument(seoConfig);
+  }, [
+    activeTab,
+    filters,
+    showLocationHub,
+    activeHubDivision,
+    authRoute,
+    authModalOpen,
+    isUnknownRoute,
+    places,
+    detailsPlace,
+    selectedPlaceRouteParam,
+    selectedPost,
+    selectedPostId,
+  ]);
 
   // Filtered approved public posts list
   const filteredPublicPosts = useMemo(() => {
@@ -493,7 +598,7 @@ export default function App() {
       return;
     }
 
-    const updated = toggleSavePlace(placeId);
+    const updated = toggleSavePlace(placeId, savedPlaceIds);
     setSavedPlaceIds(updated);
   };
 
@@ -769,6 +874,56 @@ export default function App() {
             }}
             onGoHome={() => navigateToAuthRoute('none')}
           />
+        ) : isUnknownRoute ? (
+          <section
+            aria-label="404 Page Not Found"
+            className="px-4 sm:px-6 py-16 max-w-2xl mx-auto text-center space-y-5"
+          >
+            <div className="w-14 h-14 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-center mx-auto text-rose-400">
+              <Compass className="w-7 h-7" />
+            </div>
+            <div className="space-y-2">
+              <span className="inline-block text-[10px] font-mono uppercase tracking-[0.2em] text-rose-400 bg-rose-500/10 border border-rose-500/20 px-2.5 py-1 rounded-md">
+                HTTP 404 · Page Not Found
+              </span>
+              <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
+                This page is unavailable on OUTERA
+              </h1>
+              <p className="text-sm text-zinc-400 leading-relaxed">
+                The URL you requested does not match an active public page or approved place on{' '}
+                <span className="text-zinc-200 font-mono">{OUTERA_CANONICAL_ORIGIN}</span>.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+              <a
+                href="/"
+                onClick={(e) => {
+                  e.preventDefault();
+                  setIsUnknownRoute(false);
+                  setShowLocationHub(false);
+                  setActiveTab('discover');
+                  window.history.pushState({}, '', '/');
+                }}
+                className="h-10 px-5 rounded-xl bg-[#ccff00] text-black font-extrabold text-xs uppercase tracking-wider hover:bg-[#d8ff33] transition-all inline-flex items-center gap-2"
+              >
+                <span>Explore Public Places</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </a>
+              <a
+                href="/explore"
+                onClick={(e) => {
+                  e.preventDefault();
+                  setIsUnknownRoute(false);
+                  setShowLocationHub(false);
+                  setActiveTab('explore');
+                  window.history.pushState({}, '', '/explore');
+                }}
+                className="h-10 px-4 rounded-xl bg-white/[0.06] hover:bg-white/[0.1] border border-white/[0.1] text-white font-semibold text-xs transition-all inline-flex items-center gap-2"
+              >
+                <span>Open Interactive Map</span>
+              </a>
+            </div>
+          </section>
         ) : showLocationHub ? (
           <div className="space-y-4">
             <div className="px-4 sm:px-6 pt-4 flex items-center justify-between">
@@ -1234,6 +1389,7 @@ export default function App() {
               <ExploreView
                 places={rankedPlaces}
                 allPlaces={places}
+                initialPosts={publicPosts}
                 currentLocation={currentLocation}
                 filters={filters}
                 onChangeFilters={setFilters}
@@ -1281,6 +1437,7 @@ export default function App() {
                 places={places}
                 userLocation={currentLocation}
                 isSaved={Boolean(places[0] && savedPlaceIds.includes(places[0].id))}
+                savedPlaceIds={savedPlaceIds}
                 onToggleSave={(id) => handleToggleSave(undefined, id)}
                 onSelectPlace={(place) => handleOpenPlaceDetails(place)}
                 onSuggestPlace={() =>
@@ -1375,89 +1532,116 @@ export default function App() {
             {/* Navigation Column */}
             <div className="lg:col-span-3 space-y-2.5">
               <h3 className="text-[11px] font-bold uppercase tracking-[0.14em] text-zinc-400 font-mono">
-                Navigation
+                Navigation & Contact
               </h3>
               <ul className="space-y-2 text-xs text-zinc-300">
                 <li>
-                  <button
-                    type="button"
-                    onClick={() => {
+                  <a
+                    href="/"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setIsUnknownRoute(false);
                       setShowLocationHub(false);
                       handleTabChange('discover');
+                      window.history.pushState({}, '', '/');
                     }}
                     className="hover:text-[#ccff00] transition-colors cursor-pointer"
                   >
                     Discover Feed
-                  </button>
+                  </a>
                 </li>
                 <li>
-                  <button
-                    type="button"
-                    onClick={() => {
+                  <a
+                    href="/explore"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setIsUnknownRoute(false);
                       setShowLocationHub(false);
                       handleTabChange('explore');
+                      window.history.pushState({}, '', '/explore');
                     }}
                     className="hover:text-[#ccff00] transition-colors cursor-pointer"
                   >
                     Explore Places & Community
-                  </button>
+                  </a>
                 </li>
                 <li>
-                  <button
-                    type="button"
-                    onClick={() => {
+                  <a
+                    href="/trips"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setIsUnknownRoute(false);
                       setShowLocationHub(false);
                       handleTabChange('trips');
+                      window.history.pushState({}, '', '/trips');
                     }}
                     className="hover:text-[#ccff00] transition-colors cursor-pointer"
                   >
                     Plan Your Trip (Smart Itinerary & Budget)
-                  </button>
+                  </a>
                 </li>
                 <li>
-                  <button
-                    type="button"
-                    onClick={() => {
+                  <a
+                    href="/surprise"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setIsUnknownRoute(false);
                       setShowLocationHub(false);
                       handleTabChange('surprise');
+                      window.history.pushState({}, '', '/surprise');
                     }}
                     className="hover:text-[#ccff00] transition-colors cursor-pointer"
                   >
                     Surprise Me Generator
-                  </button>
+                  </a>
                 </li>
                 <li>
-                  <button
-                    type="button"
-                    onClick={() => {
+                  <a
+                    href="/saved"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setIsUnknownRoute(false);
                       setShowLocationHub(false);
                       handleTabChange('saved');
                     }}
                     className="hover:text-[#ccff00] transition-colors cursor-pointer"
                   >
                     Saved Collections ({savedPlaceIds.length})
-                  </button>
+                  </a>
                 </li>
                 <li>
-                  <button
-                    type="button"
-                    onClick={() => {
+                  <a
+                    href="/profile"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setIsUnknownRoute(false);
                       setShowLocationHub(false);
                       handleTabChange('profile');
                     }}
                     className="hover:text-[#ccff00] transition-colors cursor-pointer"
                   >
                     Scout Profile & Security
-                  </button>
+                  </a>
                 </li>
                 <li>
-                  <button
-                    type="button"
-                    onClick={() => navigateToAuthRoute('forgot-password')}
+                  <a
+                    href="/forgot-password"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      navigateToAuthRoute('forgot-password');
+                    }}
                     className="hover:text-[#ccff00] transition-colors cursor-pointer"
                   >
                     Forgot / Reset Password
-                  </button>
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="mailto:support@outerabd.buzz"
+                    className="hover:text-[#ccff00] transition-colors cursor-pointer"
+                  >
+                    Contact & Scout Support (support@outerabd.buzz)
+                  </a>
                 </li>
               </ul>
             </div>
@@ -1480,23 +1664,62 @@ export default function App() {
                     'Mymensingh',
                   ] as DivisionName[]
                 ).map((div) => (
-                  <button
+                  <a
                     key={div}
-                    type="button"
-                    onClick={() => {
+                    href={`/location/${div.toLowerCase()}`}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setIsUnknownRoute(false);
                       setActiveHubDivision(div);
                       setShowLocationHub(true);
-                      window.location.hash = `#location/${div.toLowerCase()}`;
+                      window.history.pushState({}, '', `/location/${div.toLowerCase()}`);
                       window.scrollTo({ top: 0, behavior: 'smooth' });
                     }}
                     className="text-left hover:text-[#ccff00] transition-colors truncate cursor-pointer"
                   >
                     {div} Division
-                  </button>
+                  </a>
                 ))}
               </div>
             </div>
           </div>
+
+          {/* Crawlable Public Places Directory for Search Engine Internal Link Discovery */}
+          {allPlacesWithDistance.length > 0 && (
+            <nav
+              aria-label="Indexable Places in Bangladesh"
+              className="py-5 border-b border-white/[0.06] space-y-2.5"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-[11px] font-bold uppercase tracking-[0.14em] text-zinc-400 font-mono">
+                  Verified Places Directory ({allPlacesWithDistance.length})
+                </h3>
+                <a
+                  href="/sitemap.xml"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[11px] font-mono text-zinc-500 hover:text-[#ccff00] transition-colors"
+                >
+                  XML Sitemap
+                </a>
+              </div>
+              <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-zinc-400">
+                {allPlacesWithDistance.slice(0, 36).map((place) => (
+                  <a
+                    key={place.id}
+                    href={buildPlacePath(place)}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      handleOpenPlaceDetails(place);
+                    }}
+                    className="hover:text-[#ccff00] transition-colors truncate max-w-[220px]"
+                  >
+                    {place.name} ({place.district || place.division})
+                  </a>
+                ))}
+              </div>
+            </nav>
+          )}
 
           <div className="pt-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-[11px] text-zinc-500">
             <p>© {new Date().getFullYear()} OUTERA · Hyper-Local Discovery & Transit Network.</p>
@@ -1548,6 +1771,9 @@ export default function App() {
         onClose={handleClosePostDetails}
         onPostDeleted={() => {
           handleClosePostDetails();
+          refreshData();
+        }}
+        onPostUpdated={() => {
           refreshData();
         }}
         onSelectPlace={(placeId) => {

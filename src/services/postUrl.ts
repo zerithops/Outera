@@ -1,10 +1,10 @@
 // ============================================================================
 // OUTERA — UNIQUE POST-SHARING URL, SLUG & DYNAMIC METADATA SYSTEM
-// Canonical URL Structure: https://www.outerabd.buzz/p/{slug}-{uniqueId}
-// Example:                 https://www.outerabd.buzz/p/raaga-art-caffe-8f3k2a
+// Canonical URL Structure: https://outerabd.buzz/p/{slug}-{uniqueId}
+// Example:                 https://outerabd.buzz/p/raaga-art-caffe-8f3k2a
 // ============================================================================
 
-export const OUTERA_PRODUCTION_ORIGIN = 'https://www.outerabd.buzz';
+export const OUTERA_PRODUCTION_ORIGIN = 'https://outerabd.buzz';
 export const OUTERA_DEFAULT_OG_IMAGE = `${OUTERA_PRODUCTION_ORIGIN}/assets/aistudio/Neon_Lime_OUTERA_Tech_Logo_8daa6fb0.png`;
 
 export const OUTERA_DEFAULT_TITLE = 'OUTERA — Find something worth going out for.';
@@ -369,7 +369,9 @@ export function ensureAbsoluteImageUrl(imageUrl?: string | null): string {
     return OUTERA_DEFAULT_OG_IMAGE;
   }
   if (trimmed.startsWith('https://') || trimmed.startsWith('http://')) {
-    return trimmed;
+    return trimmed
+      .replace(/^http:\/\//i, 'https://')
+      .replace(/^https:\/\/www\.outerabd\.buzz/i, OUTERA_PRODUCTION_ORIGIN);
   }
   if (trimmed.startsWith('/')) {
     return `${OUTERA_PRODUCTION_ORIGIN}${trimmed}`;

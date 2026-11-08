@@ -305,14 +305,45 @@ export function resolvePlaceCoverImage(place: PlaceUrlInput): string {
   return OUTERA_DEFAULT_OG_IMAGE;
 }
 
+function resolveSchemaTypeForPlaceCategory(category?: string | null): string[] {
+  const cat = String(category || '').trim().toLowerCase();
+  if (cat === 'cafe' || cat.includes('coffee') || cat.includes('tea')) {
+    return ['Place', 'LocalBusiness', 'FoodEstablishment', 'CafeOrCoffeeShop'];
+  }
+  if (cat === 'food' || cat === 'restaurant' || cat.includes('dining') || cat.includes('street food')) {
+    return ['Place', 'LocalBusiness', 'FoodEstablishment', 'Restaurant'];
+  }
+  if (cat === 'stay' || cat.includes('hotel') || cat.includes('resort')) {
+    return ['Place', 'LocalBusiness', 'LodgingBusiness'];
+  }
+  if (
+    cat === 'nature' ||
+    cat === 'historical' ||
+    cat === 'landmark' ||
+    cat === 'heritage' ||
+    cat === 'religious' ||
+    cat === 'viewpoint'
+  ) {
+    return ['Place', 'TouristAttraction'];
+  }
+  if (cat === 'shopping' || cat.includes('market') || cat.includes('mall')) {
+    return ['Place', 'LocalBusiness', 'Store'];
+  }
+  if (cat === 'recreation' || cat === 'entertainment' || cat === 'sports') {
+    return ['Place', 'LocalBusiness', 'EntertainmentBusiness'];
+  }
+  return ['Place', 'LocalBusiness', 'TouristAttraction'];
+}
+
 /**
- * Builds complete SEO, Open Graph, Twitter Card, Canonical URL, and Schema.org Place JSON-LD metadata.
+ * Builds complete SEO, Open Graph, Twitter Card, Canonical URL, and Schema.org Place/LocalBusiness JSON-LD metadata.
  */
 export function buildPlaceMetadataPayload(place: PlaceUrlInput): PlaceSeoMetadata {
   const placeName = (place.name || 'OUTERA Spot').trim();
   const category = (place.category || 'Chill').trim();
   const areaPart = (place.neighborhood || place.upazila || '').trim();
   const districtPart = (place.district || place.division || 'Bangladesh').trim();
+  const divisionPart = (place.division || districtPart || 'Bangladesh').trim();
   const locationLabel =
     areaPart && areaPart.toLowerCase() !== districtPart.toLowerCase()
       ? `${areaPart}, ${districtPart}`
@@ -332,7 +363,7 @@ export function buildPlaceMetadataPayload(place: PlaceUrlInput): PlaceSeoMetadat
   const ogTitle = `${placeName} · ${category} in ${locationLabel} — OUTERA`;
 
   const description = rawDesc
-    ? `${rawDesc.slice(0, 125).trim()}${rawDesc.length > 125 ? '...' : ''} — Explore ${placeName} (${category}) in ${locationLabel} on OUTERA.`
+    ? `${rawDesc.slice(0, 115).trim()}${rawDesc.length > 115 ? '...' : ''} — Explore ${placeName} (${category}) in ${locationLabel} on OUTERA.`
     : `Discover ${placeName}, a verified ${category} spot in ${locationLabel} on OUTERA. View photos, community reviews, and directions.`;
 
   const ogDescription = rawDesc
@@ -341,10 +372,11 @@ export function buildPlaceMetadataPayload(place: PlaceUrlInput): PlaceSeoMetadat
 
   const ogImage = resolvePlaceCoverImage(place);
   const canonicalUrl = buildCanonicalPlaceUrl(place);
+  const schemaTypes = resolveSchemaTypeForPlaceCategory(category);
 
-  const jsonLd: Record<string, any> = {
-    '@context': 'https://schema.org',
-    '@type': 'Place',
+  const placeNode: Record<string, any> = {
+    '@type': schemaTypes,
+    '@id': `${canonicalUrl}#place`,
     name: placeName,
     description: ogDescription,
     url: canonicalUrl,
@@ -353,7 +385,7 @@ export function buildPlaceMetadataPayload(place: PlaceUrlInput): PlaceSeoMetadat
       '@type': 'PostalAddress',
       streetAddress: place.address || locationLabel,
       addressLocality: districtPart,
-      addressRegion: place.division || districtPart,
+      addressRegion: divisionPart,
       addressCountry: 'BD',
     },
   };
@@ -363,15 +395,16 @@ export function buildPlaceMetadataPayload(place: PlaceUrlInput): PlaceSeoMetadat
     typeof place.coordinates.lat === 'number' &&
     typeof place.coordinates.lng === 'number'
   ) {
-    jsonLd.geo = {
+    placeNode.geo = {
       '@type': 'GeoCoordinates',
       latitude: place.coordinates.lat,
       longitude: place.coordinates.lng,
     };
+    placeNode.hasMap = `https://www.google.com/maps/search/?api=1&query=${place.coordinates.lat},${place.coordinates.lng}`;
   }
 
   if (typeof place.communityRating === 'number' && place.communityRating > 0) {
-    jsonLd.aggregateRating = {
+    placeNode.aggregateRating = {
       '@type': 'AggregateRating',
       ratingValue: place.communityRating,
       bestRating: 5,
@@ -379,6 +412,36 @@ export function buildPlaceMetadataPayload(place: PlaceUrlInput): PlaceSeoMetadat
       ratingCount: Math.max(1, Number(place.totalReports) || 1),
     };
   }
+
+  const breadcrumbNode: Record<string, any> = {
+    '@type': 'BreadcrumbList',
+    '@id': `${canonicalUrl}#breadcrumb`,
+    itemListElement: [
+      {
+        '@type': 'ListItem',
+        position: 1,
+        name: 'OUTERA Bangladesh',
+        item: OUTERA_PLACE_CANONICAL_ORIGIN,
+      },
+      {
+        '@type': 'ListItem',
+        position: 2,
+        name: divisionPart,
+        item: `${OUTERA_PLACE_CANONICAL_ORIGIN}/location/${divisionPart.toLowerCase()}`,
+      },
+      {
+        '@type': 'ListItem',
+        position: 3,
+        name: placeName,
+        item: canonicalUrl,
+      },
+    ],
+  };
+
+  const jsonLd: Record<string, any> = {
+    '@context': 'https://schema.org',
+    '@graph': [placeNode, breadcrumbNode],
+  };
 
   return {
     title: pageTitle,

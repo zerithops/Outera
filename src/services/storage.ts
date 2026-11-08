@@ -155,14 +155,25 @@ export function getSavedPlaceIds(): string[] {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEYS.SAVED_PLACES);
     if (!raw) return [];
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
   }
 }
 
-export function toggleSavePlace(placeId: string): string[] {
-  const current = getSavedPlaceIds();
+export function setSavedPlaceIdsInStorage(placeIds: string[]): void {
+  if (!isStorageAvailable()) return;
+  try {
+    const unique = Array.from(new Set(placeIds.filter(Boolean)));
+    window.localStorage.setItem(STORAGE_KEYS.SAVED_PLACES, JSON.stringify(unique));
+  } catch (err) {
+    console.warn('Failed to sync saved place ids to localStorage', err);
+  }
+}
+
+export function toggleSavePlace(placeId: string, currentIds?: string[]): string[] {
+  const current = Array.isArray(currentIds) ? currentIds : getSavedPlaceIds();
   let updated: string[];
   const isCurrentlySaved = current.includes(placeId);
 
@@ -171,19 +182,13 @@ export function toggleSavePlace(placeId: string): string[] {
     // Sync removal with Supabase
     unsavePlaceFromSupabase(placeId);
   } else {
-    updated = [placeId, ...current];
+    updated = Array.from(new Set([placeId, ...current]));
     // Sync addition with Supabase
     savePlaceToSupabase(placeId);
     logActivity('save', placeId);
   }
 
-  if (isStorageAvailable()) {
-    try {
-      window.localStorage.setItem(STORAGE_KEYS.SAVED_PLACES, JSON.stringify(updated));
-    } catch (err) {
-      console.warn('Failed to save place id to localStorage', err);
-    }
-  }
+  setSavedPlaceIdsInStorage(updated);
   return updated;
 }
 
@@ -251,6 +256,19 @@ export function saveCollection(collection: SavedCollection): SavedCollection[] {
   } else {
     updated = [collection, ...current];
   }
+  if (isStorageAvailable()) {
+    try {
+      window.localStorage.setItem(STORAGE_KEYS.COLLECTIONS, JSON.stringify(updated));
+    } catch (e) {
+      console.warn(e);
+    }
+  }
+  return updated;
+}
+
+export function deleteCollection(collectionId: string): SavedCollection[] {
+  const current = getSavedCollections();
+  const updated = current.filter((c) => c.id !== collectionId);
   if (isStorageAvailable()) {
     try {
       window.localStorage.setItem(STORAGE_KEYS.COLLECTIONS, JSON.stringify(updated));

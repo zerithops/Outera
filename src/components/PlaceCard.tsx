@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Bookmark, Check, Compass, Navigation, Share2, Star } from 'lucide-react';
 import { PlaceWithDistance } from '../services/discoveryEngine';
 import { formatDistance } from '../services/location';
-import { sharePlace } from '../services/placeUrl';
+import { buildPlacePath, sharePlace } from '../services/placeUrl';
 
 interface PlaceCardProps {
   place: PlaceWithDistance;
@@ -166,7 +166,17 @@ export const PlaceCard: React.FC<PlaceCardProps> = ({
       <div className="p-4 sm:p-5 flex-1 flex flex-col justify-between">
         <div>
           <h3 className="text-base font-bold text-white tracking-tight group-hover:text-[#ccff00] transition-colors line-clamp-1">
-            {place.name}
+            <a
+              href={buildPlacePath(place)}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onSelect(place);
+              }}
+              className="focus:outline-none"
+            >
+              {place.name}
+            </a>
           </h3>
 
           {/* Clean unboxed metadata */}

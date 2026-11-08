@@ -46,7 +46,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       <div className="max-w-7xl mx-auto w-full h-full flex items-center justify-between gap-2 sm:gap-6">
         {/* Zone 1: Official Brand Logo */}
         <a
-          href="#discover"
+          href="/"
           onClick={(e) => {
             e.preventDefault();
             if (onChangeTab) onChangeTab('discover');

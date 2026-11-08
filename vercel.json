@@ -3,7 +3,53 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "cleanUrls": true,
+  "redirects": [
+    {
+      "source": "/:path*",
+      "has": [
+        {
+          "type": "host",
+          "value": "www.outerabd.buzz"
+        }
+      ],
+      "destination": "https://outerabd.buzz/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/places/:slug",
+      "destination": "/place/:slug",
+      "permanent": true
+    }
+  ],
+  "headers": [
+    {
+      "source": "/(admin.*|login|signup|forgot-password|reset-password|auth/.*|profile|saved|api/.*)",
+      "headers": [
+        {
+          "key": "X-Robots-Tag",
+          "value": "noindex, nofollow"
+        }
+      ]
+    },
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "Strict-Transport-Security",
+          "value": "max-age=63072000; includeSubDomains; preload"
+        }
+      ]
+    }
+  ],
   "rewrites": [
+    {
+      "source": "/sitemap.xml",
+      "destination": "/api/sitemap"
+    },
+    {
+      "source": "/api/sitemap",
+      "destination": "/api/sitemap"
+    },
     {
       "source": "/api/admin-users",
       "destination": "/api/admin-users"
@@ -30,3 +76,4 @@
     }
   ]
 }
+
