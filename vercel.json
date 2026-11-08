@@ -5,12 +5,24 @@
   "cleanUrls": true,
   "rewrites": [
     {
+      "source": "/api/admin-users",
+      "destination": "/api/admin-users"
+    },
+    {
       "source": "/api/navigation-route",
       "destination": "/api/navigation-route"
     },
     {
       "source": "/p/:slug",
       "destination": "/api/post-share?slug=:slug"
+    },
+    {
+      "source": "/place/:slug",
+      "destination": "/api/place-share?slug=:slug"
+    },
+    {
+      "source": "/places/:slug",
+      "destination": "/api/place-share?slug=:slug"
     },
     {
       "source": "/(.*)",

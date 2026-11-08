@@ -45,6 +45,12 @@ import {
   parsePostRouteFromLocation,
   shareCommunityPost,
 } from './services/postUrl';
+import {
+  applyClientPlaceMetadata,
+  buildPlacePath,
+  doesPlaceMatchRoute,
+  parsePlaceRouteFromLocation,
+} from './services/placeUrl';
 import { Navbar } from './components/Navbar';
 import { BottomNav, NavTab } from './components/BottomNav';
 import { HeroSection } from './components/HeroSection';
@@ -130,6 +136,7 @@ export default function App() {
   const [locationModalOpen, setLocationModalOpen] = useState(false);
   const [suggestionModalOpen, setSuggestionModalOpen] = useState(false);
   const [detailsPlace, setDetailsPlace] = useState<PlaceWithDistance | null>(null);
+  const [selectedPlaceRouteParam, setSelectedPlaceRouteParam] = useState<string | null>(null);
   const [feedbackPlace, setFeedbackPlace] = useState<PlaceWithDistance | null>(null);
 
   // Active division view for Location Hub
@@ -210,9 +217,25 @@ export default function App() {
     };
   }, []);
 
-  // Direct Post Access (/p/{slug}-{uniqueId} and legacy #post/{id}) + #trip/<token> routing
+  // Direct Place Access (/place/{unique-id}), Direct Post Access (/p/{slug}-{uniqueId}), and #trip/<token> routing
   useEffect(() => {
-    const syncPostAndTripRoutes = () => {
+    const syncPlacePostAndTripRoutes = () => {
+      const parsedPlace = parsePlaceRouteFromLocation(
+        window.location.pathname,
+        window.location.hash,
+        window.location.search
+      );
+      if (parsedPlace) {
+        setSelectedPlaceRouteParam(parsedPlace.rawParam);
+        setSelectedPost(null);
+        setSelectedPostId(null);
+        return;
+      } else {
+        setSelectedPlaceRouteParam(null);
+        setDetailsPlace(null);
+        applyClientPlaceMetadata(null);
+      }
+
       const parsedPost = parsePostRouteFromLocation(
         window.location.pathname,
         window.location.hash,
@@ -236,14 +259,43 @@ export default function App() {
       }
     };
 
-    syncPostAndTripRoutes();
-    window.addEventListener('popstate', syncPostAndTripRoutes);
-    window.addEventListener('hashchange', syncPostAndTripRoutes);
+    syncPlacePostAndTripRoutes();
+    window.addEventListener('popstate', syncPlacePostAndTripRoutes);
+    window.addEventListener('hashchange', syncPlacePostAndTripRoutes);
     return () => {
-      window.removeEventListener('popstate', syncPostAndTripRoutes);
-      window.removeEventListener('hashchange', syncPostAndTripRoutes);
+      window.removeEventListener('popstate', syncPlacePostAndTripRoutes);
+      window.removeEventListener('hashchange', syncPlacePostAndTripRoutes);
     };
   }, []);
+
+  const handleOpenPlaceDetails = (place: PlaceWithDistance) => {
+    setDetailsPlace(place);
+    setSelectedPlaceRouteParam(place.slug || place.id);
+    applyClientPlaceMetadata(place);
+    if (typeof window !== 'undefined' && window.history?.pushState) {
+      const placePath = buildPlacePath(place);
+      if (window.location.pathname !== placePath || window.location.hash) {
+        window.history.pushState({ placeId: place.id }, '', placePath);
+      }
+    }
+  };
+
+  const handleClosePlaceDetails = () => {
+    setDetailsPlace(null);
+    setSelectedPlaceRouteParam(null);
+    applyClientPlaceMetadata(null);
+    if (typeof window !== 'undefined' && window.history?.pushState) {
+      if (
+        window.location.pathname.startsWith('/place/') ||
+        window.location.pathname.startsWith('/places/') ||
+        window.location.hash.startsWith('#place') ||
+        window.location.search.includes('place=') ||
+        window.location.search.includes('spot=')
+      ) {
+        window.history.pushState({}, '', '/');
+      }
+    }
+  };
 
   const handleOpenPostDetails = (post: PlacePost) => {
     setSelectedPost(post);
@@ -399,6 +451,23 @@ export default function App() {
     return filterAndRankPlaces(places, currentLocation.coords, filters);
   }, [places, currentLocation.coords, filters]);
 
+  // All approved places with distance (unfiltered by category/search) for direct route lookup
+  const allPlacesWithDistance = useMemo(() => {
+    return filterAndRankPlaces(places, currentLocation.coords, INITIAL_FILTERS);
+  }, [places, currentLocation.coords]);
+
+  // Sync detailsPlace when selectedPlaceRouteParam matches a loaded place
+  useEffect(() => {
+    if (!selectedPlaceRouteParam) return;
+    if (detailsPlace && doesPlaceMatchRoute(detailsPlace, selectedPlaceRouteParam)) return;
+    const match = allPlacesWithDistance.find((p) =>
+      doesPlaceMatchRoute(p, selectedPlaceRouteParam)
+    );
+    if (match) {
+      setDetailsPlace(match);
+    }
+  }, [selectedPlaceRouteParam, allPlacesWithDistance, detailsPlace]);
+
   // Filtered approved public posts list
   const filteredPublicPosts = useMemo(() => {
     return filterApprovedPublicPosts(publicPosts, places, filters);
@@ -480,7 +549,7 @@ export default function App() {
 
   const handleOpenReportFromDetails = (place: PlaceWithDistance) => {
     requireVerifiedScout('share an experience report', () => {
-      setDetailsPlace(null);
+      handleClosePlaceDetails();
       setFeedbackPlace(place);
     });
   };
@@ -721,7 +790,7 @@ export default function App() {
               }}
               savedPlaceIds={savedPlaceIds}
               onToggleSave={(e, id) => handleToggleSave(e, id)}
-              onSelectPlace={(place) => setDetailsPlace(place)}
+              onSelectPlace={(place) => handleOpenPlaceDetails(place)}
               onOpenHierarchyModal={() => setLocationModalOpen(true)}
             />
           </div>
@@ -847,7 +916,7 @@ export default function App() {
                           place={place}
                           isSaved={savedPlaceIds.includes(place.id)}
                           onToggleSave={(e) => handleToggleSave(e, place.id)}
-                          onSelect={(p) => setDetailsPlace(p)}
+                          onSelect={(p) => handleOpenPlaceDetails(p)}
                         />
                       ))}
                     </div>
@@ -1170,7 +1239,7 @@ export default function App() {
                 onChangeFilters={setFilters}
                 savedPlaceIds={savedPlaceIds}
                 onToggleSave={(e, id) => handleToggleSave(e, id)}
-                onSelectPlace={(place) => setDetailsPlace(place)}
+                onSelectPlace={(place) => handleOpenPlaceDetails(place)}
                 onOpenLocationModal={() => setLocationModalOpen(true)}
                 onSuggestPlace={() =>
                   requireVerifiedScout('suggest a new place', () => setSuggestionModalOpen(true))
@@ -1194,8 +1263,10 @@ export default function App() {
                 preselectedPlace={tripPreselectedPlace}
                 onClearPreselectedPlace={() => setTripPreselectedPlace(null)}
                 onSelectPlaceDetails={(p) => {
-                  const found = rankedPlaces.find((rp) => rp.id === p.id);
-                  setDetailsPlace(found || (p as PlaceWithDistance));
+                  const found =
+                    allPlacesWithDistance.find((rp) => rp.id === p.id) ||
+                    rankedPlaces.find((rp) => rp.id === p.id);
+                  handleOpenPlaceDetails(found || (p as PlaceWithDistance));
                 }}
                 onRequireAuth={(action) => {
                   setAuthContextAction(action);
@@ -1211,7 +1282,7 @@ export default function App() {
                 userLocation={currentLocation}
                 isSaved={Boolean(places[0] && savedPlaceIds.includes(places[0].id))}
                 onToggleSave={(id) => handleToggleSave(undefined, id)}
-                onSelectPlace={(place) => setDetailsPlace(place)}
+                onSelectPlace={(place) => handleOpenPlaceDetails(place)}
                 onSuggestPlace={() =>
                   requireVerifiedScout('suggest a new place', () => setSuggestionModalOpen(true))
                 }
@@ -1224,7 +1295,7 @@ export default function App() {
                 savedPlaces={savedPlacesWithDistance}
                 collections={collections}
                 onToggleSave={(e, id) => handleToggleSave(e, id)}
-                onSelectPlace={(place) => setDetailsPlace(place)}
+                onSelectPlace={(place) => handleOpenPlaceDetails(place)}
                 onGoToDiscover={() => setActiveTab('discover')}
                 onRefreshCollections={() => setCollections(getSavedCollections())}
                 isAuthenticated={Boolean(authUser)}
@@ -1439,8 +1510,9 @@ export default function App() {
       {/* Place Details Modal View */}
       <PlaceDetailsModal
         place={detailsPlace}
-        isOpen={Boolean(detailsPlace)}
-        onClose={() => setDetailsPlace(null)}
+        placeIdOrSlug={selectedPlaceRouteParam}
+        isOpen={Boolean(detailsPlace || selectedPlaceRouteParam)}
+        onClose={handleClosePlaceDetails}
         isSaved={Boolean(detailsPlace && savedPlaceIds.includes(detailsPlace.id))}
         onToggleSave={(id) => handleToggleSave(undefined, id)}
         onOpenReportModal={handleOpenReportFromDetails}
@@ -1456,11 +1528,13 @@ export default function App() {
         isAdmin={isAdmin}
         allPlaces={places}
         onSelectAnotherPlace={(p) => {
-          const foundRanked = rankedPlaces.find((rp) => rp.id === p.id);
-          setDetailsPlace(foundRanked || (p as PlaceWithDistance));
+          const foundRanked =
+            allPlacesWithDistance.find((rp) => rp.id === p.id) ||
+            rankedPlaces.find((rp) => rp.id === p.id);
+          handleOpenPlaceDetails(foundRanked || (p as PlaceWithDistance));
         }}
         onPlanTripWithPlace={(p) => {
-          setDetailsPlace(null);
+          handleClosePlaceDetails();
           setTripPreselectedPlace(p);
           setActiveTab('trips');
         }}
@@ -1478,9 +1552,14 @@ export default function App() {
         }}
         onSelectPlace={(placeId) => {
           handleClosePostDetails();
-          const target = rankedPlaces.find((p) => p.id === placeId) || places.find((p) => p.id === placeId);
+          const target =
+            allPlacesWithDistance.find((p) => p.id === placeId) ||
+            rankedPlaces.find((p) => p.id === placeId) ||
+            places.find((p) => p.id === placeId);
           if (target) {
-            setDetailsPlace(target as PlaceWithDistance);
+            handleOpenPlaceDetails(target as PlaceWithDistance);
+          } else {
+            setSelectedPlaceRouteParam(placeId);
           }
         }}
         currentUserId={authUser?.id}
@@ -1545,9 +1624,14 @@ export default function App() {
         }}
         existingPlaces={places}
         onSelectExistingPlace={(placeId) => {
-          const found = rankedPlaces.find((p) => p.id === placeId) || places.find((p) => p.id === placeId);
+          const found =
+            allPlacesWithDistance.find((p) => p.id === placeId) ||
+            rankedPlaces.find((p) => p.id === placeId) ||
+            places.find((p) => p.id === placeId);
           if (found) {
-            setDetailsPlace(found as PlaceWithDistance);
+            handleOpenPlaceDetails(found as PlaceWithDistance);
+          } else {
+            setSelectedPlaceRouteParam(placeId);
           }
         }}
       />

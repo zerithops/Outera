@@ -29,6 +29,15 @@ import {
   Edit3,
   Phone,
   Hotel,
+  Search,
+  Lock,
+  Unlock,
+  UserCheck,
+  UserX,
+  Mail,
+  Eye,
+  History,
+  Shield,
 } from 'lucide-react';
 import { OuteraLogo } from './OuteraLogo';
 import {
@@ -45,6 +54,15 @@ import {
   fetchProfile,
   subscribeToPostChanges,
 } from '../services/supabase';
+import {
+  fetchAdminUsersAndLogs,
+  adminUpdateUserRoleServer,
+  adminSetUserSuspensionServer,
+  AdminManagedUser,
+  AdminAuditLogItem,
+  UserRoleType,
+  isProtectedMainAdmin,
+} from '../services/adminUsers';
 import {
   fetchAdminTransportRoutes,
   saveAdminTransportRoute,
@@ -75,8 +93,9 @@ interface AdminDashboardProps {
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
   const [isAdminAuthorized, setIsAdminAuthorized] = useState<boolean | null>(null);
+  const [currentAdminUserId, setCurrentAdminUserId] = useState<string>('');
   const [adminEmail, setAdminEmail] = useState<string>('');
-  const [adminSection, setAdminSection] = useState<'posts' | 'suggestions' | 'transport'>('posts');
+  const [adminSection, setAdminSection] = useState<'posts' | 'suggestions' | 'transport' | 'users'>('posts');
   const [activeTab, setActiveTab] = useState<'pending' | 'approved' | 'rejected' | 'hidden' | 'all'>('pending');
   const [posts, setPosts] = useState<PlacePost[]>([]);
   const [suggestions, setSuggestions] = useState<PlaceSuggestion[]>([]);
@@ -158,9 +177,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
   const [deletingPost, setDeletingPost] = useState<PlacePost | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  // Admin User Management State
+  const [managedUsers, setManagedUsers] = useState<AdminManagedUser[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AdminAuditLogItem[]>([]);
+  const [usersSubTab, setUsersSubTab] = useState<'directory' | 'audit'>('directory');
+  const [userSearchQuery, setUserSearchQuery] = useState<string>('');
+  const [userRoleFilter, setUserRoleFilter] = useState<'all' | UserRoleType>('all');
+  const [userStatusFilter, setUserStatusFilter] = useState<'all' | 'active' | 'suspended'>('all');
+  const [userSortBy, setUserSortBy] = useState<'newest' | 'oldest' | 'username' | 'contributions'>('newest');
+  const [selectedUserProfile, setSelectedUserProfile] = useState<AdminManagedUser | null>(null);
+  const [confirmUserAction, setConfirmUserAction] = useState<{
+    user: AdminManagedUser;
+    type: 'suspend' | 'reactivate' | 'update_role';
+    newRole?: UserRoleType;
+  } | null>(null);
+  const [userActionReason, setUserActionReason] = useState<string>('');
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3000);
+    setTimeout(() => setToastMessage(null), 3500);
   };
 
   // Verify real database admin role
@@ -170,9 +205,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
       setIsAdminAuthorized(false);
       return false;
     }
+    setCurrentAdminUserId(user.id);
     setAdminEmail(user.email || '');
     const profile = await fetchProfile(user.id);
-    const authorized = profile?.role === 'admin';
+    const authorized =
+      profile?.role === 'admin' &&
+      profile?.account_status !== 'suspended';
     setIsAdminAuthorized(authorized);
     return authorized;
   }, []);
@@ -194,6 +232,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
         fetchedFareReports,
         fetchedContacts,
         fetchedNearby,
+        usersAndLogsRes,
       ] = await Promise.all([
         fetchAdminOverviewStats(),
         fetchAdminPlacePosts(activeTab),
@@ -202,20 +241,128 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
         fetchAllCommunityFareReports(),
         fetchAdminLocalTransportContacts(),
         fetchAdminNearbyServices(),
+        fetchAdminUsersAndLogs(),
       ]);
-      setStats(overviewStats);
+      setStats({
+        ...overviewStats,
+        totalUsers:
+          usersAndLogsRes.users.length > 0
+            ? usersAndLogsRes.users.length
+            : overviewStats.totalUsers,
+      });
       setPosts(fetchedPosts);
       setSuggestions(fetchedSuggestions);
       setTransportRoutes(fetchedRoutes);
       setFareReports(fetchedFareReports);
       setLocalContacts(fetchedContacts);
       setNearbyServices(fetchedNearby);
+      if (usersAndLogsRes.success) {
+        setManagedUsers(usersAndLogsRes.users);
+        setAuditLogs(usersAndLogsRes.auditLogs);
+        setSelectedUserProfile((prev) =>
+          prev ? usersAndLogsRes.users.find((u) => u.id === prev.id) || prev : null
+        );
+      }
     } catch (err) {
       console.warn('Failed to load admin data:', err);
     } finally {
       setLoading(false);
     }
   }, [activeTab, checkAdminStatus]);
+
+  // Execute confirmed user management action (role update or suspend/reactivate)
+  const handleConfirmUserManagementAction = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!confirmUserAction) return;
+
+    const { user, type, newRole } = confirmUserAction;
+    if (isProtectedMainAdmin({ id: user.id, username: user.username, email: user.email })) {
+      if (type === 'suspend' || (type === 'update_role' && newRole !== 'admin')) {
+        showToast('Protected Account: Primary administrator account (Zerith) cannot be suspended or demoted.');
+        setConfirmUserAction(null);
+        return;
+      }
+    }
+
+    setActionLoadingId(user.id);
+    const trimmedReason = userActionReason.trim();
+
+    if (type === 'update_role' && newRole) {
+      const res = await adminUpdateUserRoleServer({
+        targetUserId: user.id,
+        targetUsername: user.username,
+        newRole,
+        reason: trimmedReason || `Role updated from ${user.role} to ${newRole}`,
+      });
+      setActionLoadingId(null);
+      setConfirmUserAction(null);
+      setUserActionReason('');
+
+      if (res.success) {
+        showToast(`Updated @${user.username}'s role to ${newRole.toUpperCase()} (Logged to Audit Trail).`);
+        await loadData();
+      } else {
+        showToast(`Error: ${res.error || 'Failed to update user role'}`);
+      }
+    } else if (type === 'suspend' || type === 'reactivate') {
+      const suspend = type === 'suspend';
+      const res = await adminSetUserSuspensionServer({
+        targetUserId: user.id,
+        targetUsername: user.username,
+        suspend,
+        reason:
+          trimmedReason ||
+          (suspend
+            ? 'Suspended by administrator for policy violation'
+            : 'Account reactivated by administrator'),
+      });
+      setActionLoadingId(null);
+      setConfirmUserAction(null);
+      setUserActionReason('');
+
+      if (res.success) {
+        showToast(
+          suspend
+            ? `Account @${user.username} suspended and logged.`
+            : `Account @${user.username} reactivated and logged.`
+        );
+        await loadData();
+      } else {
+        showToast(`Error: ${res.error || 'Failed to update account status'}`);
+      }
+    }
+  };
+
+  // Filtered & sorted users list
+  const filteredManagedUsers = React.useMemo(() => {
+    const q = userSearchQuery.trim().toLowerCase();
+    return managedUsers
+      .filter((u) => {
+        if (userRoleFilter !== 'all' && u.role !== userRoleFilter) return false;
+        if (userStatusFilter !== 'all' && u.account_status !== userStatusFilter) return false;
+        if (!q) return true;
+        const matchUsername = u.username.toLowerCase().includes(q);
+        const matchDisplay = (u.display_name || '').toLowerCase().includes(q);
+        const matchEmail = (u.email || '').toLowerCase().includes(q);
+        const matchBio = (u.bio || '').toLowerCase().includes(q);
+        const matchId = u.id.toLowerCase().includes(q);
+        return matchUsername || matchDisplay || matchEmail || matchBio || matchId;
+      })
+      .sort((a, b) => {
+        if (userSortBy === 'oldest') {
+          return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+        }
+        if (userSortBy === 'username') {
+          return a.username.localeCompare(b.username);
+        }
+        if (userSortBy === 'contributions') {
+          const totalA = a.posts_count + a.suggestions_count;
+          const totalB = b.posts_count + b.suggestions_count;
+          return totalB - totalA;
+        }
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      });
+  }, [managedUsers, userSearchQuery, userRoleFilter, userStatusFilter, userSortBy]);
 
   useEffect(() => {
     loadData();
@@ -600,15 +747,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
 
       {/* System Overview 6-Metric Strip */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        <div className="p-3.5 rounded-2xl bg-[#111317] border border-white/[0.08] flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => setAdminSection('users')}
+          className={`p-3.5 rounded-2xl border flex items-center gap-3 text-left transition-all cursor-pointer ${
+            adminSection === 'users'
+              ? 'bg-[#ccff00]/10 border-[#ccff00]/40'
+              : 'bg-[#111317] border-white/[0.08] hover:border-white/[0.18]'
+          }`}
+          title="Manage Registered Users"
+        >
           <div className="w-9 h-9 rounded-xl bg-blue-500/10 text-blue-400 flex items-center justify-center shrink-0">
             <Users className="w-4 h-4" />
           </div>
           <div className="min-w-0">
             <p className="text-[10px] text-zinc-400 font-semibold truncate">Total Users</p>
-            <p className="text-lg font-black text-white font-mono tabular-nums">{stats.totalUsers}</p>
+            <p className="text-lg font-black text-white font-mono tabular-nums">
+              {managedUsers.length || stats.totalUsers}
+            </p>
           </div>
-        </div>
+        </button>
 
         <div className="p-3.5 rounded-2xl bg-[#111317] border border-white/[0.08] flex items-center gap-3">
           <div className="w-9 h-9 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center shrink-0">
@@ -681,13 +839,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
         </div>
       </div>
 
-      {/* Main Section Switcher: Community Posts vs Place Suggestions vs Transport & Fares */}
+      {/* Main Section Switcher: Community Posts vs Place Suggestions vs Transport & Fares vs Manage Users */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex p-1 bg-white/[0.04] border border-white/[0.08] rounded-xl w-fit overflow-x-auto no-scrollbar">
           <button
             type="button"
             onClick={() => setAdminSection('posts')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
+            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
               adminSection === 'posts'
                 ? 'bg-[#ccff00] text-black font-extrabold shadow-sm'
                 : 'text-zinc-400 hover:text-white'
@@ -705,7 +863,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
           <button
             type="button"
             onClick={() => setAdminSection('suggestions')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
+            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
               adminSection === 'suggestions'
                 ? 'bg-[#ccff00] text-black font-extrabold shadow-sm'
                 : 'text-zinc-400 hover:text-white'
@@ -723,7 +881,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
           <button
             type="button"
             onClick={() => setAdminSection('transport')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
+            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
               adminSection === 'transport'
                 ? 'bg-[#ccff00] text-black font-extrabold shadow-sm'
                 : 'text-zinc-400 hover:text-white'
@@ -735,15 +893,47 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
               {transportRoutes.length}
             </span>
           </button>
+
+          <button
+            type="button"
+            onClick={() => setAdminSection('users')}
+            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+              adminSection === 'users'
+                ? 'bg-[#ccff00] text-black font-extrabold shadow-sm'
+                : 'text-zinc-400 hover:text-white'
+            }`}
+          >
+            <Users className="w-3.5 h-3.5" />
+            <span>Manage Users</span>
+            <span
+              className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
+                adminSection === 'users'
+                  ? 'bg-black/20 text-black'
+                  : 'bg-white/[0.08] text-zinc-300'
+              }`}
+            >
+              {managedUsers.length || stats.totalUsers}
+            </span>
+          </button>
         </div>
 
         <div className="text-xs text-zinc-400">
-          Showing <span className="text-white font-bold">{adminSection === 'posts' ? 'posts' : adminSection === 'suggestions' ? 'place suggestions' : 'transport routes & fares'}</span> queue
+          Showing{' '}
+          <span className="text-white font-bold">
+            {adminSection === 'posts'
+              ? 'posts'
+              : adminSection === 'suggestions'
+              ? 'place suggestions'
+              : adminSection === 'users'
+              ? 'registered user accounts & roles'
+              : 'transport routes & fares'}
+          </span>{' '}
+          {adminSection === 'users' ? 'directory' : 'queue'}
         </div>
       </div>
 
       {/* Moderation Tabs Navigation (Only for Posts & Suggestions) */}
-      {adminSection !== 'transport' ? (
+      {adminSection === 'posts' || adminSection === 'suggestions' ? (
         <div className="flex rounded-xl bg-white/[0.03] p-1 border border-white/[0.06] overflow-x-auto no-scrollbar">
           {(['pending', 'approved', 'rejected', 'hidden', 'all'] as const).map((tab) => {
             const isActive = activeTab === tab;
@@ -785,7 +975,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
             );
           })}
         </div>
-      ) : (
+      ) : adminSection === 'transport' ? (
         /* Transport Sub-Navigation Bar */
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-1.5 rounded-2xl bg-white/[0.02] border border-white/[0.06]">
           <div className="flex p-1 bg-white/[0.03] rounded-xl border border-white/[0.06] w-fit overflow-x-auto no-scrollbar">
@@ -847,6 +1037,110 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
             <Plus className="w-4 h-4 stroke-[3]" />
             <span>Add Transport Route</span>
           </button>
+        </div>
+      ) : (
+        /* Manage Users Sub-Navigation & Search/Filter Bar */
+        <div className="space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-1.5 rounded-2xl bg-white/[0.02] border border-white/[0.06]">
+            <div className="flex p-1 bg-white/[0.03] rounded-xl border border-white/[0.06] w-fit">
+              <button
+                type="button"
+                onClick={() => setUsersSubTab('directory')}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+                  usersSubTab === 'directory'
+                    ? 'bg-[#ccff00] text-black font-extrabold'
+                    : 'text-zinc-400 hover:text-white'
+                }`}
+              >
+                <Users className="w-3.5 h-3.5" />
+                <span>Registered Users ({managedUsers.length})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setUsersSubTab('audit')}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+                  usersSubTab === 'audit'
+                    ? 'bg-[#ccff00] text-black font-extrabold'
+                    : 'text-zinc-400 hover:text-white'
+                }`}
+              >
+                <History className="w-3.5 h-3.5" />
+                <span>Security Audit Log ({auditLogs.length})</span>
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2 px-2 text-[11px] font-mono text-zinc-400">
+              <ShieldCheck className="w-3.5 h-3.5 text-[#ccff00] shrink-0" />
+              <span>Server-Authorized Role & Account Controls Active</span>
+            </div>
+          </div>
+
+          {usersSubTab === 'directory' && (
+            <div className="p-3.5 rounded-2xl bg-[#111317] border border-white/[0.08] grid grid-cols-1 sm:grid-cols-12 gap-2.5">
+              {/* Search Input */}
+              <div className="sm:col-span-5 relative">
+                <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="text"
+                  value={userSearchQuery}
+                  onChange={(e) => setUserSearchQuery(e.target.value)}
+                  placeholder="Search by @username, name, email, or UUID..."
+                  aria-label="Search registered users"
+                  className="w-full h-9 pl-9 pr-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#ccff00]"
+                />
+              </div>
+
+              {/* Role Filter */}
+              <div className="sm:col-span-2">
+                <select
+                  value={userRoleFilter}
+                  onChange={(e) => setUserRoleFilter(e.target.value as 'all' | UserRoleType)}
+                  aria-label="Filter by role"
+                  className="w-full h-9 px-2.5 rounded-xl bg-white/[0.04] border border-white/[0.08] text-xs text-white focus:outline-none focus:border-[#ccff00]"
+                >
+                  <option value="all" className="bg-zinc-900">All Roles</option>
+                  <option value="admin" className="bg-zinc-900">Admin</option>
+                  <option value="moderator" className="bg-zinc-900">Moderator</option>
+                  <option value="user" className="bg-zinc-900">User (Scout)</option>
+                </select>
+              </div>
+
+              {/* Account Status Filter */}
+              <div className="sm:col-span-2">
+                <select
+                  value={userStatusFilter}
+                  onChange={(e) =>
+                    setUserStatusFilter(e.target.value as 'all' | 'active' | 'suspended')
+                  }
+                  aria-label="Filter by account status"
+                  className="w-full h-9 px-2.5 rounded-xl bg-white/[0.04] border border-white/[0.08] text-xs text-white focus:outline-none focus:border-[#ccff00]"
+                >
+                  <option value="all" className="bg-zinc-900">All Statuses</option>
+                  <option value="active" className="bg-zinc-900">Active</option>
+                  <option value="suspended" className="bg-zinc-900">Suspended</option>
+                </select>
+              </div>
+
+              {/* Sort Order */}
+              <div className="sm:col-span-3">
+                <select
+                  value={userSortBy}
+                  onChange={(e) =>
+                    setUserSortBy(
+                      e.target.value as 'newest' | 'oldest' | 'username' | 'contributions'
+                    )
+                  }
+                  aria-label="Sort users"
+                  className="w-full h-9 px-2.5 rounded-xl bg-white/[0.04] border border-white/[0.08] text-xs text-white focus:outline-none focus:border-[#ccff00]"
+                >
+                  <option value="newest" className="bg-zinc-900">Newest Registered</option>
+                  <option value="oldest" className="bg-zinc-900">Oldest Registered</option>
+                  <option value="username" className="bg-zinc-900">Username (A–Z)</option>
+                  <option value="contributions" className="bg-zinc-900">Most Contributions</option>
+                </select>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1292,7 +1586,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
               );
             })
           )
-        ) : (
+        ) : adminSection === 'transport' ? (
           /* TRANSPORT & FARES SECTION */
           <div className="space-y-4">
             {transportSubTab === 'routes' ? (
@@ -1695,8 +1989,784 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
               )
             )}
           </div>
+        ) : (
+          /* MANAGE USERS SECTION */
+          <div className="space-y-3.5">
+            {usersSubTab === 'directory' ? (
+              filteredManagedUsers.length === 0 ? (
+                <div className="py-16 text-center space-y-3 bg-[#111317] border border-white/[0.08] rounded-2xl p-6">
+                  <Users className="w-8 h-8 text-[#ccff00]/60 mx-auto" />
+                  <div className="space-y-1">
+                    <h3 className="text-sm font-bold text-white">No matching users found</h3>
+                    <p className="text-xs text-zinc-400 max-w-sm mx-auto">
+                      No registered user accounts match your current search or filter criteria.
+                    </p>
+                  </div>
+                  {(userSearchQuery || userRoleFilter !== 'all' || userStatusFilter !== 'all') && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUserSearchQuery('');
+                        setUserRoleFilter('all');
+                        setUserStatusFilter('all');
+                      }}
+                      className="h-8 px-4 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] text-xs font-bold text-white transition-all cursor-pointer"
+                    >
+                      Clear User Filters
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-zinc-400 px-1">
+                    <span>
+                      Showing <strong className="text-white">{filteredManagedUsers.length}</strong> of{' '}
+                      <strong className="text-white">{managedUsers.length}</strong> registered users
+                    </span>
+                    <span className="font-mono text-[11px] text-zinc-500">
+                      Main Admin Protected · RLS & Server Auth Enforced
+                    </span>
+                  </div>
+
+                  {filteredManagedUsers.map((u) => {
+                    const isPrimary = u.is_primary_admin || isProtectedMainAdmin(u);
+                    const isSelf = u.id === currentAdminUserId;
+                    const isActing = actionLoadingId === u.id;
+                    const isSuspended = u.account_status === 'suspended';
+
+                    const roleBadgeClass =
+                      u.role === 'admin'
+                        ? 'bg-[#ccff00]/15 text-[#ccff00] border-[#ccff00]/30'
+                        : u.role === 'moderator'
+                        ? 'bg-purple-500/15 text-purple-300 border-purple-500/30'
+                        : 'bg-white/[0.06] text-zinc-300 border-white/[0.1]';
+
+                    const statusBadgeClass = isSuspended
+                      ? 'bg-rose-500/15 text-rose-300 border-rose-500/30'
+                      : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30';
+
+                    return (
+                      <div
+                        key={u.id}
+                        className={`p-5 rounded-2xl bg-[#111317] border transition-all space-y-4 ${
+                          isSuspended
+                            ? 'border-rose-500/30 bg-rose-950/[0.08]'
+                            : isPrimary
+                            ? 'border-[#ccff00]/25 hover:border-[#ccff00]/40'
+                            : 'border-white/[0.08] hover:border-white/[0.16]'
+                        }`}
+                      >
+                        {/* Top Row: Avatar, Identity, Role & Account Status Badges */}
+                        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                          <div className="flex items-start gap-3.5 min-w-0">
+                            {u.avatar_url ? (
+                              <img
+                                src={u.avatar_url}
+                                alt={u.display_name}
+                                className="w-11 h-11 rounded-2xl object-cover border border-white/10 shrink-0"
+                              />
+                            ) : (
+                              <div className="w-11 h-11 rounded-2xl bg-white/[0.05] border border-white/[0.08] flex items-center justify-center font-black text-sm text-[#ccff00] shrink-0 uppercase">
+                                {(u.display_name || u.username || 'OU').slice(0, 2)}
+                              </div>
+                            )}
+
+                            <div className="min-w-0 space-y-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <h3 className="text-sm sm:text-base font-black text-white truncate">
+                                  {u.display_name}
+                                </h3>
+                                <span className="text-xs font-mono text-zinc-400">
+                                  @{u.username}
+                                </span>
+                                {u.is_verified && (
+                                  <span
+                                    className="text-[10px] font-bold text-[#ccff00] bg-[#ccff00]/10 px-2 py-0.5 rounded-full border border-[#ccff00]/25 flex items-center gap-1"
+                                    title="Verified Scout / Administrator"
+                                  >
+                                    <ShieldCheck className="w-3 h-3" />
+                                    <span>Verified</span>
+                                  </span>
+                                )}
+                                {isPrimary && (
+                                  <span className="text-[10px] font-black text-black bg-[#ccff00] px-2 py-0.5 rounded-md uppercase tracking-wider flex items-center gap-1">
+                                    <Lock className="w-3 h-3" />
+                                    <span>Primary Admin · Protected</span>
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Email & Registration Date Row */}
+                              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-400">
+                                <span className="flex items-center gap-1.5 font-mono">
+                                  <Mail className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+                                  {u.email ? (
+                                    <span className="text-zinc-200">{u.email}</span>
+                                  ) : (
+                                    <span
+                                      className="text-zinc-500 text-[11px]"
+                                      title="Auth email is stored in Supabase auth.users and only exposed when authorized"
+                                    >
+                                      Protected by Auth RLS
+                                    </span>
+                                  )}
+                                </span>
+                                <span className="text-zinc-700">·</span>
+                                <span className="flex items-center gap-1 font-mono text-[11px]">
+                                  <Calendar className="w-3 h-3 text-zinc-500 shrink-0" />
+                                  <span>
+                                    Registered:{' '}
+                                    {new Date(u.created_at).toLocaleDateString([], {
+                                      month: 'short',
+                                      day: 'numeric',
+                                      year: 'numeric',
+                                    })}
+                                  </span>
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Role & Status Badges */}
+                          <div className="flex flex-wrap items-center gap-2 shrink-0">
+                            <span
+                              className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full border flex items-center gap-1 ${statusBadgeClass}`}
+                            >
+                              {isSuspended ? (
+                                <>
+                                  <UserX className="w-3 h-3" />
+                                  <span>Suspended</span>
+                                </>
+                              ) : (
+                                <>
+                                  <UserCheck className="w-3 h-3" />
+                                  <span>Active</span>
+                                </>
+                              )}
+                            </span>
+
+                            <span
+                              className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full border flex items-center gap-1 ${roleBadgeClass}`}
+                            >
+                              <Shield className="w-3 h-3" />
+                              <span>Role: {u.role}</span>
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Bio & Profile Information Summary */}
+                        <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 text-xs">
+                          <div className="sm:col-span-6 p-3 rounded-xl bg-white/[0.02] border border-white/[0.05] space-y-1">
+                            <span className="text-[10px] uppercase font-bold text-zinc-500 block">
+                              Profile Bio & Metadata
+                            </span>
+                            <p className="text-zinc-300 line-clamp-2">
+                              {u.bio || 'No profile bio set by user.'}
+                            </p>
+                            <p className="text-[10px] font-mono text-zinc-500 pt-0.5">
+                              UUID: {u.id}
+                            </p>
+                          </div>
+
+                          <div className="sm:col-span-6 p-3 rounded-xl bg-white/[0.02] border border-white/[0.05] grid grid-cols-4 gap-2 text-center items-center">
+                            <div>
+                              <p className="text-sm font-black text-white font-mono">
+                                {u.posts_count}
+                              </p>
+                              <p className="text-[10px] text-zinc-400">
+                                Posts ({u.approved_posts_count} live)
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-sm font-black text-white font-mono">
+                                {u.suggestions_count}
+                              </p>
+                              <p className="text-[10px] text-zinc-400">Suggestions</p>
+                            </div>
+                            <div>
+                              <p className="text-sm font-black text-white font-mono">
+                                {u.followers_count}
+                              </p>
+                              <p className="text-[10px] text-zinc-400">Followers</p>
+                            </div>
+                            <div>
+                              <p className="text-sm font-black text-white font-mono">
+                                {u.reports_count}
+                              </p>
+                              <p className="text-[10px] text-zinc-400">Reports</p>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Suspension Banner if Suspended */}
+                        {isSuspended && (
+                          <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/25 text-xs text-rose-200 flex items-start gap-2">
+                            <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                            <div>
+                              <span className="font-bold">Account Suspended:</span>{' '}
+                              {u.suspended_reason || 'Suspended by administrator.'}
+                              {u.suspended_at && (
+                                <span className="text-rose-300/70 font-mono text-[11px] ml-2">
+                                  ({new Date(u.suspended_at).toLocaleString()})
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Actions Footer: View Profile, Role Management, Suspend/Reactivate */}
+                        <div className="pt-2.5 border-t border-white/[0.06] flex flex-wrap items-center justify-between gap-3">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedUserProfile(u)}
+                            className="h-8 px-3.5 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.1] text-xs font-bold text-white flex items-center gap-1.5 transition-all cursor-pointer"
+                          >
+                            <Eye className="w-3.5 h-3.5 text-[#ccff00]" />
+                            <span>View Profile & Activity</span>
+                          </button>
+
+                          <div className="flex flex-wrap items-center gap-2">
+                            {isPrimary ? (
+                              <span className="h-8 px-3 rounded-lg bg-[#ccff00]/10 border border-[#ccff00]/25 text-[11px] font-mono text-[#ccff00] flex items-center gap-1.5">
+                                <Lock className="w-3.5 h-3.5" />
+                                <span>Main Admin Protected from Demotion / Suspension</span>
+                              </span>
+                            ) : (
+                              <>
+                                {/* Server-Side Role Update Control */}
+                                <div className="flex items-center gap-1.5 bg-white/[0.03] border border-white/[0.08] rounded-lg px-2 h-8">
+                                  <span className="text-[10px] font-bold text-zinc-400 uppercase">
+                                    Role:
+                                  </span>
+                                  <select
+                                    value={u.role}
+                                    disabled={isActing || isSelf}
+                                    onChange={(e) => {
+                                      const nextRole = e.target.value as UserRoleType;
+                                      if (nextRole === u.role) return;
+                                      setConfirmUserAction({
+                                        user: u,
+                                        type: 'update_role',
+                                        newRole: nextRole,
+                                      });
+                                      setUserActionReason('');
+                                    }}
+                                    aria-label={`Change role for ${u.username}`}
+                                    className="bg-transparent text-xs font-bold text-white focus:outline-none cursor-pointer disabled:opacity-50"
+                                  >
+                                    <option value="user" className="bg-zinc-900 text-white">
+                                      User (Scout)
+                                    </option>
+                                    <option value="moderator" className="bg-zinc-900 text-white">
+                                      Moderator
+                                    </option>
+                                    <option value="admin" className="bg-zinc-900 text-white">
+                                      Admin
+                                    </option>
+                                  </select>
+                                </div>
+
+                                {/* Suspend / Reactivate Account Button */}
+                                {isSuspended ? (
+                                  <button
+                                    type="button"
+                                    disabled={isActing}
+                                    onClick={() => {
+                                      setConfirmUserAction({
+                                        user: u,
+                                        type: 'reactivate',
+                                      });
+                                      setUserActionReason('');
+                                    }}
+                                    className="h-8 px-3.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-extrabold text-xs flex items-center gap-1.5 transition-all disabled:opacity-50 cursor-pointer"
+                                  >
+                                    <Unlock className="w-3.5 h-3.5" />
+                                    <span>Reactivate Account</span>
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    disabled={isActing || isSelf}
+                                    onClick={() => {
+                                      setConfirmUserAction({
+                                        user: u,
+                                        type: 'suspend',
+                                      });
+                                      setUserActionReason('');
+                                    }}
+                                    className="h-8 px-3.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 font-bold text-xs flex items-center gap-1.5 transition-all disabled:opacity-50 cursor-pointer"
+                                  >
+                                    <UserX className="w-3.5 h-3.5" />
+                                    <span>Suspend Account</span>
+                                  </button>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )
+            ) : (
+              /* SECURITY AUDIT LOG SUB-TAB */
+              <div className="space-y-3">
+                <div className="p-4 rounded-2xl bg-[#111317] border border-white/[0.08] flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-sm font-black text-white flex items-center gap-2">
+                      <History className="w-4 h-4 text-[#ccff00]" />
+                      <span>Administrator Security Audit Trail</span>
+                    </h3>
+                    <p className="text-xs text-zinc-400 mt-0.5">
+                      Every role change, account suspension, and reactivation is permanently recorded with actor and reason.
+                    </p>
+                  </div>
+                  <span className="text-[11px] font-mono text-[#ccff00] bg-[#ccff00]/10 px-2.5 py-1 rounded-lg border border-[#ccff00]/25 shrink-0">
+                    {auditLogs.length} Logged Events
+                  </span>
+                </div>
+
+                {auditLogs.length === 0 ? (
+                  <div className="py-16 text-center space-y-2 bg-[#111317] border border-white/[0.08] rounded-2xl p-6">
+                    <ShieldCheck className="w-8 h-8 text-[#ccff00]/60 mx-auto mb-1" />
+                    <h4 className="text-sm font-bold text-white">No Sensitive Actions Logged Yet</h4>
+                    <p className="text-xs text-zinc-400 max-w-sm mx-auto">
+                      When an administrator updates a user's role or suspends/reactivates an account, the audit record appears here.
+                    </p>
+                  </div>
+                ) : (
+                  auditLogs.map((log) => (
+                    <div
+                      key={log.id}
+                      className="p-4 rounded-2xl bg-[#111317] border border-white/[0.08] space-y-2 text-xs"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border ${
+                              log.action_type === 'suspend_account'
+                                ? 'bg-rose-500/15 text-rose-300 border-rose-500/30'
+                                : log.action_type === 'reactivate_account'
+                                ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                                : 'bg-[#ccff00]/15 text-[#ccff00] border-[#ccff00]/30'
+                            }`}
+                          >
+                            {log.action_type.replace('_', ' ')}
+                          </span>
+                          <span className="font-bold text-white">
+                            Target: {log.target_display_name} (@{log.target_username})
+                          </span>
+                        </div>
+                        <span className="text-[11px] font-mono text-zinc-500">
+                          {new Date(log.created_at).toLocaleString()}
+                        </span>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[11px] text-zinc-300">
+                        <span>
+                          Actor: <strong className="text-white">@{log.actor_username}</strong>
+                        </span>
+                        <span>
+                          Change:{' '}
+                          <span className="text-zinc-400">{log.previous_value || 'none'}</span> →{' '}
+                          <strong className="text-[#ccff00]">{log.new_value}</strong>
+                        </span>
+                      </div>
+
+                      {log.reason && (
+                        <p className="text-xs text-zinc-300 bg-white/[0.02] p-2.5 rounded-xl border border-white/[0.05]">
+                          <span className="text-zinc-500 font-semibold">Reason:</span> {log.reason}
+                        </p>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
         )}
       </div>
+
+      {/* Individual User Profile Inspection Modal */}
+      {selectedUserProfile && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md"
+          role="dialog"
+          aria-modal="true"
+          aria-label="User Profile Details"
+        >
+          <div className="w-full max-w-2xl bg-[#111317] border border-white/[0.12] rounded-3xl p-6 shadow-2xl space-y-5 max-h-[90vh] overflow-y-auto no-scrollbar animate-in fade-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="flex items-start justify-between gap-4 border-b border-white/[0.08] pb-4">
+              <div className="flex items-center gap-3.5 min-w-0">
+                {selectedUserProfile.avatar_url ? (
+                  <img
+                    src={selectedUserProfile.avatar_url}
+                    alt={selectedUserProfile.display_name}
+                    className="w-14 h-14 rounded-2xl object-cover border border-white/10 shrink-0"
+                  />
+                ) : (
+                  <div className="w-14 h-14 rounded-2xl bg-[#ccff00]/10 border border-[#ccff00]/30 flex items-center justify-center font-black text-lg text-[#ccff00] shrink-0 uppercase">
+                    {(selectedUserProfile.display_name || selectedUserProfile.username || 'OU').slice(0, 2)}
+                  </div>
+                )}
+                <div className="min-w-0 space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-lg font-black text-white truncate">
+                      {selectedUserProfile.display_name}
+                    </h3>
+                    <span className="text-xs font-mono text-zinc-400">
+                      @{selectedUserProfile.username}
+                    </span>
+                    {selectedUserProfile.is_primary_admin && (
+                      <span className="text-[10px] font-black text-black bg-[#ccff00] px-2 py-0.5 rounded uppercase">
+                        Primary Admin
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs font-mono text-zinc-400 truncate">
+                    UUID: {selectedUserProfile.id}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setSelectedUserProfile(null)}
+                className="w-8 h-8 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] text-zinc-400 hover:text-white flex items-center justify-center text-xs font-mono cursor-pointer shrink-0"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Profile Attributes Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/[0.06] space-y-1.5">
+                <span className="text-[10px] font-bold uppercase text-zinc-500 block">
+                  Account & Authorization Details
+                </span>
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-400">Email:</span>
+                  <span className="font-mono text-white">
+                    {selectedUserProfile.email || 'Protected by Auth RLS'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-400">Role:</span>
+                  <span className="font-mono font-bold uppercase text-[#ccff00]">
+                    {selectedUserProfile.role}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-400">Account Status:</span>
+                  <span
+                    className={`font-mono font-bold uppercase ${
+                      selectedUserProfile.account_status === 'suspended'
+                        ? 'text-rose-400'
+                        : 'text-emerald-400'
+                    }`}
+                  >
+                    {selectedUserProfile.account_status}
+                  </span>
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/[0.06] space-y-1.5">
+                <span className="text-[10px] font-bold uppercase text-zinc-500 block">
+                  Timestamps & Social Graph
+                </span>
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-400">Registered:</span>
+                  <span className="font-mono text-zinc-200">
+                    {new Date(selectedUserProfile.created_at).toLocaleString()}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-400">Last Updated:</span>
+                  <span className="font-mono text-zinc-200">
+                    {new Date(selectedUserProfile.updated_at).toLocaleString()}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-400">Followers / Following:</span>
+                  <span className="font-mono text-white">
+                    {selectedUserProfile.followers_count} / {selectedUserProfile.following_count}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Bio */}
+            <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/[0.06] text-xs space-y-1">
+              <span className="text-[10px] font-bold uppercase text-zinc-500 block">
+                User Bio
+              </span>
+              <p className="text-zinc-200 whitespace-pre-wrap">
+                {selectedUserProfile.bio || 'No biography provided.'}
+              </p>
+            </div>
+
+            {/* Recent Posts by this User */}
+            <div className="space-y-2">
+              <h4 className="text-xs font-extrabold uppercase tracking-wider text-zinc-400">
+                Recent Community Posts ({selectedUserProfile.posts_count})
+              </h4>
+              {selectedUserProfile.recent_posts.length === 0 ? (
+                <p className="text-xs text-zinc-500 italic p-3 rounded-xl bg-white/[0.015] border border-white/[0.04]">
+                  This user has not submitted any community posts yet.
+                </p>
+              ) : (
+                <div className="space-y-2 max-h-44 overflow-y-auto pr-1">
+                  {selectedUserProfile.recent_posts.map((pt) => (
+                    <div
+                      key={pt.id}
+                      className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.06] flex items-center justify-between gap-3 text-xs"
+                    >
+                      <div className="min-w-0">
+                        <p className="font-bold text-white truncate">{pt.title}</p>
+                        <p className="text-[11px] text-zinc-400 truncate">{pt.content}</p>
+                      </div>
+                      <div className="shrink-0 text-right font-mono">
+                        <span className="text-[10px] uppercase px-2 py-0.5 rounded bg-white/[0.06] text-zinc-300">
+                          {pt.status}
+                        </span>
+                        <p className="text-[10px] text-zinc-500 mt-0.5">
+                          {new Date(pt.created_at).toLocaleDateString()}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Recent Place Suggestions by this User */}
+            <div className="space-y-2">
+              <h4 className="text-xs font-extrabold uppercase tracking-wider text-zinc-400">
+                Recent Place Suggestions ({selectedUserProfile.suggestions_count})
+              </h4>
+              {selectedUserProfile.recent_suggestions.length === 0 ? (
+                <p className="text-xs text-zinc-500 italic p-3 rounded-xl bg-white/[0.015] border border-white/[0.04]">
+                  This user has not submitted any place suggestions yet.
+                </p>
+              ) : (
+                <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                  {selectedUserProfile.recent_suggestions.map((sg) => (
+                    <div
+                      key={sg.id}
+                      className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.06] flex items-center justify-between gap-3 text-xs"
+                    >
+                      <div className="min-w-0">
+                        <p className="font-bold text-white truncate">{sg.name}</p>
+                        <p className="text-[11px] text-zinc-400">
+                          {sg.category} · {sg.district}
+                        </p>
+                      </div>
+                      <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-white/[0.06] text-zinc-300 shrink-0">
+                        {sg.status}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Per-User Audit Trail */}
+            {selectedUserProfile.audit_history && selectedUserProfile.audit_history.length > 0 && (
+              <div className="space-y-2">
+                <h4 className="text-xs font-extrabold uppercase tracking-wider text-zinc-400">
+                  Account Audit History ({selectedUserProfile.audit_history.length})
+                </h4>
+                <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                  {selectedUserProfile.audit_history.map((aud) => (
+                    <div
+                      key={aud.id}
+                      className="p-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05] text-[11px] font-mono flex items-center justify-between gap-2"
+                    >
+                      <span className="text-zinc-300">
+                        <strong className="text-[#ccff00]">{aud.action_type}</strong>:{' '}
+                        {aud.previous_value} → {aud.new_value}
+                        {aud.reason ? ` (${aud.reason})` : ''}
+                      </span>
+                      <span className="text-zinc-500 shrink-0">
+                        {new Date(aud.created_at).toLocaleDateString()}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Modal Footer */}
+            <div className="pt-3 border-t border-white/[0.08] flex flex-wrap items-center justify-between gap-2">
+              {selectedUserProfile.is_primary_admin ||
+              isProtectedMainAdmin(selectedUserProfile) ? (
+                <span className="text-xs font-mono text-[#ccff00] flex items-center gap-1.5">
+                  <Lock className="w-3.5 h-3.5" />
+                  <span>Primary Administrator Account — Protected from Modification</span>
+                </span>
+              ) : (
+                <div className="flex flex-wrap items-center gap-2">
+                  {selectedUserProfile.account_status === 'suspended' ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setConfirmUserAction({
+                          user: selectedUserProfile,
+                          type: 'reactivate',
+                        });
+                        setUserActionReason('');
+                      }}
+                      className="h-9 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-extrabold text-xs flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Unlock className="w-3.5 h-3.5" />
+                      <span>Reactivate Account</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setConfirmUserAction({
+                          user: selectedUserProfile,
+                          type: 'suspend',
+                        });
+                        setUserActionReason('');
+                      }}
+                      className="h-9 px-4 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 font-bold text-xs flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <UserX className="w-3.5 h-3.5" />
+                      <span>Suspend Account</span>
+                    </button>
+                  )}
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setSelectedUserProfile(null)}
+                className="h-9 px-5 rounded-xl bg-white/[0.08] hover:bg-white/[0.14] text-xs font-bold text-white cursor-pointer"
+              >
+                Close Profile
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Dialog Modal Before Role Update / Account Suspension / Reactivation */}
+      {confirmUserAction && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Confirm User Account Action"
+        >
+          <div className="w-full max-w-md bg-[#111317] border border-white/[0.12] rounded-2xl p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-3">
+              <div
+                className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 ${
+                  confirmUserAction.type === 'suspend'
+                    ? 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
+                    : confirmUserAction.type === 'reactivate'
+                    ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                    : 'bg-[#ccff00]/15 text-[#ccff00] border border-[#ccff00]/30'
+                }`}
+              >
+                {confirmUserAction.type === 'suspend' ? (
+                  <AlertTriangle className="w-5 h-5" />
+                ) : confirmUserAction.type === 'reactivate' ? (
+                  <Unlock className="w-5 h-5" />
+                ) : (
+                  <Shield className="w-5 h-5" />
+                )}
+              </div>
+              <div>
+                <h3 className="text-base font-black text-white">
+                  {confirmUserAction.type === 'suspend'
+                    ? 'Confirm Account Suspension'
+                    : confirmUserAction.type === 'reactivate'
+                    ? 'Confirm Account Reactivation'
+                    : 'Confirm Server-Side Role Update'}
+                </h3>
+                <p className="text-xs text-zinc-400 font-mono">
+                  Target: {confirmUserAction.user.display_name} (@{confirmUserAction.user.username})
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-white/[0.02] border border-white/[0.06] text-xs text-zinc-300 leading-relaxed">
+              {confirmUserAction.type === 'suspend' ? (
+                <p>
+                  Suspending <strong className="text-white">@{confirmUserAction.user.username}</strong>{' '}
+                  will immediately restrict their account from submitting new posts or place suggestions. This action will be recorded in the administrator security audit log.
+                </p>
+              ) : confirmUserAction.type === 'reactivate' ? (
+                <p>
+                  Reactivating <strong className="text-white">@{confirmUserAction.user.username}</strong>{' '}
+                  will restore their active scout permissions. This action will be recorded in the administrator security audit log.
+                </p>
+              ) : (
+                <p>
+                  You are changing <strong className="text-white">@{confirmUserAction.user.username}</strong>'s role from{' '}
+                  <span className="font-mono uppercase text-zinc-400">{confirmUserAction.user.role}</span> to{' '}
+                  <strong className="font-mono uppercase text-[#ccff00]">{confirmUserAction.newRole}</strong>{' '}
+                  via server-side authorization. This change will be logged in the security audit trail.
+                </p>
+              )}
+            </div>
+
+            <form onSubmit={handleConfirmUserManagementAction} className="space-y-4">
+              <div>
+                <label className="block text-[11px] font-semibold text-zinc-400 mb-1.5">
+                  Audit Log Reason / Note {confirmUserAction.type === 'suspend' ? '(Recommended)' : '(Optional)'}
+                </label>
+                <textarea
+                  rows={2}
+                  value={userActionReason}
+                  onChange={(e) => setUserActionReason(e.target.value)}
+                  placeholder={
+                    confirmUserAction.type === 'suspend'
+                      ? 'Specify reason for suspending this account (e.g., spam or community guidelines violation)...'
+                      : 'Add an administrative note for the security audit log...'
+                  }
+                  className="w-full p-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#ccff00] resize-none"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConfirmUserAction(null);
+                    setUserActionReason('');
+                  }}
+                  className="h-9 px-4 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] text-xs font-bold text-zinc-300 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={actionLoadingId === confirmUserAction.user.id}
+                  className={`h-9 px-4 rounded-xl text-xs font-extrabold uppercase tracking-wider transition-all cursor-pointer ${
+                    confirmUserAction.type === 'suspend'
+                      ? 'bg-rose-500 hover:bg-rose-400 text-white'
+                      : confirmUserAction.type === 'reactivate'
+                      ? 'bg-emerald-500 hover:bg-emerald-400 text-black'
+                      : 'bg-[#ccff00] hover:bg-[#d8ff33] text-black'
+                  }`}
+                >
+                  {confirmUserAction.type === 'suspend'
+                    ? 'Confirm Suspend'
+                    : confirmUserAction.type === 'reactivate'
+                    ? 'Confirm Reactivate'
+                    : `Update Role to ${confirmUserAction.newRole}`}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Edit / Moderate Place Suggestion Modal */}
       {editingSuggestion && (

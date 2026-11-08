@@ -8,6 +8,11 @@ import {
   fetchApprovedPostForServerSeo,
   injectPostMetadataIntoHtml,
 } from './src/services/postServerSeo';
+import {
+  fetchApprovedPlaceForServerSeo,
+  injectPlaceMetadataIntoHtml,
+} from './src/services/placeServerSeo';
+import { handleAdminUsersServerRequest } from './src/services/adminServerAuth';
 import { handleNavigationRouteRequest } from './supabase/functions/navigation-route/index';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -20,6 +25,54 @@ function outeraPostSeoPlugin(): Plugin {
       server.middlewares.use(async (req, res, next) => {
         if (!req.url) return next();
         const urlPath = req.url.split('?')[0];
+
+        // Mount /api/admin-users server-side authorization & user management handler
+        if (urlPath === '/api/admin-users') {
+          try {
+            const chunks: Buffer[] = [];
+            for await (const chunk of req) {
+              chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+            }
+            const rawBody = Buffer.concat(chunks).toString('utf-8');
+            const parsedBody = rawBody ? JSON.parse(rawBody) : {};
+            const urlObj = new URL(`http://localhost:3000${req.url}`);
+            const query: Record<string, string | undefined> = {};
+            urlObj.searchParams.forEach((v, k) => {
+              query[k] = v;
+            });
+
+            const authHeader =
+              (typeof req.headers.authorization === 'string'
+                ? req.headers.authorization
+                : undefined) ||
+              (typeof req.headers.Authorization === 'string'
+                ? req.headers.Authorization
+                : undefined);
+
+            const result = await handleAdminUsersServerRequest({
+              method: req.method || 'GET',
+              authHeader,
+              body: parsedBody,
+              query,
+            });
+
+            res.statusCode = result.status;
+            res.setHeader('Content-Type', 'application/json; charset=utf-8');
+            res.setHeader('Cache-Control', 'no-store, must-revalidate');
+            res.end(JSON.stringify(result.body));
+            return;
+          } catch (err: any) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json; charset=utf-8');
+            res.end(
+              JSON.stringify({
+                success: false,
+                error: err?.message || 'Internal server error in admin-users middleware.',
+              })
+            );
+            return;
+          }
+        }
 
         // Mount /api/navigation-route server-side handler
         if (urlPath === '/api/navigation-route') {
@@ -62,6 +115,28 @@ function outeraPostSeoPlugin(): Plugin {
         }
 
         if (req.method !== 'GET') return next();
+
+        // Handle /place/:slug and /places/:slug server-side SEO & Open Graph injection
+        const placeMatch = urlPath.match(/^\/places?\/([^/?#]+)\/?$/i);
+        if (placeMatch && placeMatch[1]) {
+          try {
+            const slugParam = decodeURIComponent(placeMatch[1]);
+            const indexHtmlPath = path.resolve(__dirname, 'index.html');
+            const rawHtml = fs.readFileSync(indexHtmlPath, 'utf-8');
+            const transformedHtml = await server.transformIndexHtml(req.url, rawHtml);
+            const place = await fetchApprovedPlaceForServerSeo(slugParam);
+            const finalHtml = injectPlaceMetadataIntoHtml(transformedHtml, place, slugParam);
+
+            res.statusCode = place ? 200 : 404;
+            res.setHeader('Content-Type', 'text/html; charset=utf-8');
+            res.end(finalHtml);
+            return;
+          } catch (err) {
+            console.warn('outera-place-seo-plugin middleware notice:', err);
+            return next();
+          }
+        }
+
         const postMatch = urlPath.match(/^\/p\/([^/?#]+)\/?$/i);
         if (!postMatch || !postMatch[1]) return next();
 

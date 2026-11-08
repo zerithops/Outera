@@ -22,15 +22,20 @@ import {
   Sun,
   ShieldCheck,
   Trash2,
+  Copy,
+  Link2,
+  AlertTriangle,
+  Loader2,
 } from 'lucide-react';
 import { PlaceWithDistance } from '../services/discoveryEngine';
-import { formatDistance } from '../services/location';
+import { calculateDistanceKm, DEFAULT_LOCATION, formatDistance } from '../services/location';
 import { isPlaceVisitedByUser, toggleVisitedPlace } from '../services/storage';
 import { ExperienceVerificationItem } from './ExperienceVerificationItem';
 import {
   toggleWantToTryInSupabase,
   submitBusinessClaim,
   fetchPublicPlacePosts,
+  fetchPublicPlaceByIdOrSlug,
   togglePostHelpful,
   deleteUserPost,
   subscribeToPostChanges,
@@ -40,10 +45,19 @@ import { CreatePostModal } from './CreatePostModal';
 import { HowToGetThereSection } from './HowToGetThereSection';
 import { NavigationPreviewModal } from './NavigationPreviewModal';
 import { Place, UserLocation } from '../types/outera';
-import { shareCommunityPost, OUTERA_PRODUCTION_ORIGIN, slugifyText } from '../services/postUrl';
+import { shareCommunityPost } from '../services/postUrl';
+import {
+  applyClientPlaceMetadata,
+  buildCanonicalPlaceUrl,
+  buildPlacePath,
+  copyPlaceLink,
+  doesPlaceMatchRoute,
+  sharePlace,
+} from '../services/placeUrl';
 
 interface PlaceDetailsModalProps {
   place: PlaceWithDistance | null;
+  placeIdOrSlug?: string | null;
   isOpen: boolean;
   onClose: () => void;
   isSaved: boolean;
@@ -64,6 +78,7 @@ interface PlaceDetailsModalProps {
 
 export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
   place,
+  placeIdOrSlug,
   isOpen,
   onClose,
   isSaved,
@@ -98,23 +113,139 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
   const [copiedPostId, setCopiedPostId] = useState<string | null>(null);
   const [showNavigationPreview, setShowNavigationPreview] = useState<boolean>(false);
 
+  // Direct URL / Slug resolution state
+  const [fetchedPlace, setFetchedPlace] = useState<PlaceWithDistance | null>(null);
+  const [loadingPlace, setLoadingPlace] = useState<boolean>(false);
+  const [placeNotFound, setPlaceNotFound] = useState<boolean>(false);
+
+  const effectivePlace: PlaceWithDistance | null = React.useMemo(() => {
+    if (place && (!placeIdOrSlug || doesPlaceMatchRoute(place, placeIdOrSlug))) {
+      return place;
+    }
+    if (fetchedPlace && (!placeIdOrSlug || doesPlaceMatchRoute(fetchedPlace, placeIdOrSlug))) {
+      return fetchedPlace;
+    }
+    return place;
+  }, [place, fetchedPlace, placeIdOrSlug]);
+
+  // Resolve place by ID or slug when opened directly from shared URL or refresh
+  React.useEffect(() => {
+    let active = true;
+
+    if (!isOpen) {
+      setLoadingPlace(false);
+      setPlaceNotFound(false);
+      return;
+    }
+
+    if (place && (!placeIdOrSlug || doesPlaceMatchRoute(place, placeIdOrSlug))) {
+      setFetchedPlace(place);
+      setLoadingPlace(false);
+      setPlaceNotFound(false);
+      applyClientPlaceMetadata(place);
+      if (typeof window !== 'undefined' && window.history?.replaceState) {
+        const canonicalPath = buildPlacePath(place);
+        if (window.location.pathname !== canonicalPath) {
+          window.history.replaceState({ placeId: place.id }, '', canonicalPath);
+        }
+      }
+      return;
+    }
+
+    if (placeIdOrSlug) {
+      const fallbackCoords = { lat: 23.794, lng: 90.4043 };
+      const originCoords = userLocation?.coords || DEFAULT_LOCATION.coords || fallbackCoords;
+      const localMatch = allPlaces.find((p) => doesPlaceMatchRoute(p, placeIdOrSlug));
+      if (localMatch) {
+        const withDistance: PlaceWithDistance = {
+          ...localMatch,
+          distanceKm: calculateDistanceKm(
+            originCoords,
+            localMatch.coordinates || fallbackCoords
+          ),
+          rankScore: localMatch.communityScore || 100,
+        };
+        setFetchedPlace(withDistance);
+        setLoadingPlace(false);
+        setPlaceNotFound(false);
+        applyClientPlaceMetadata(withDistance);
+        if (typeof window !== 'undefined' && window.history?.replaceState) {
+          const canonicalPath = buildPlacePath(withDistance);
+          if (window.location.pathname !== canonicalPath) {
+            window.history.replaceState({ placeId: withDistance.id }, '', canonicalPath);
+          }
+        }
+        return;
+      }
+
+      setLoadingPlace(true);
+      setPlaceNotFound(false);
+      fetchPublicPlaceByIdOrSlug(placeIdOrSlug)
+        .then((remotePlace) => {
+          if (!active) return;
+          if (remotePlace) {
+            const withDistance: PlaceWithDistance = {
+              ...remotePlace,
+              distanceKm: calculateDistanceKm(
+                originCoords,
+                remotePlace.coordinates || fallbackCoords
+              ),
+              rankScore: remotePlace.communityScore || 100,
+            };
+            setFetchedPlace(withDistance);
+            setPlaceNotFound(false);
+            setLoadingPlace(false);
+            applyClientPlaceMetadata(withDistance);
+            if (typeof window !== 'undefined' && window.history?.replaceState) {
+              const canonicalPath = buildPlacePath(withDistance);
+              if (window.location.pathname !== canonicalPath) {
+                window.history.replaceState({ placeId: withDistance.id }, '', canonicalPath);
+              }
+            }
+          } else {
+            setFetchedPlace(null);
+            setPlaceNotFound(true);
+            setLoadingPlace(false);
+            applyClientPlaceMetadata(null, {
+              isNotFound: true,
+              requestedSlug: placeIdOrSlug,
+            });
+          }
+        })
+        .catch(() => {
+          if (!active) return;
+          setFetchedPlace(null);
+          setPlaceNotFound(true);
+          setLoadingPlace(false);
+          applyClientPlaceMetadata(null, {
+            isNotFound: true,
+            requestedSlug: placeIdOrSlug,
+          });
+        });
+    }
+
+    return () => {
+      active = false;
+    };
+  }, [isOpen, place, placeIdOrSlug, allPlaces, userLocation]);
+
   const loadPlacePosts = React.useCallback(async () => {
-    if (!place) return;
-    const posts = await fetchPublicPlacePosts(place.id);
+    if (!effectivePlace) return;
+    const posts = await fetchPublicPlacePosts(effectivePlace.id);
     setPublicPosts(posts || []);
-  }, [place]);
+  }, [effectivePlace]);
 
   React.useEffect(() => {
-    if (isOpen && place) {
+    if (isOpen && effectivePlace) {
       setMobileHeroIdx(0);
       setShowNavigationPreview(false);
       loadPlacePosts();
     }
-  }, [isOpen, place, loadPlacePosts]);
+  }, [isOpen, effectivePlace, loadPlacePosts]);
 
   // Subscribe to real-time and in-app post modifications/deletions so removed/rejected posts vanish immediately
   React.useEffect(() => {
-    if (!isOpen || !place) return;
+    if (!isOpen || !effectivePlace) return;
 
     const unsubscribe = subscribeToPostChanges((event) => {
       if (event.type === 'deleted') {
@@ -126,7 +257,11 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
           loadPlacePosts();
         }
       } else if (event.type === 'inserted') {
-        if (event.newPost && event.newPost.place_id === place.id && event.newPost.status === 'approved') {
+        if (
+          event.newPost &&
+          event.newPost.place_id === effectivePlace.id &&
+          event.newPost.status === 'approved'
+        ) {
           loadPlacePosts();
         }
       }
@@ -135,12 +270,89 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
     return () => {
       unsubscribe();
     };
-  }, [isOpen, place, loadPlacePosts]);
+  }, [isOpen, effectivePlace, loadPlacePosts]);
 
-  if (!isOpen || !place) return null;
+  if (!isOpen) return null;
 
-  const userHasVisited = isPlaceVisitedByUser(place.id);
-  const reports = place.experienceReports || [];
+  // Loading state when resolving a shared /place/{unique-id} URL directly
+  if (loadingPlace && !effectivePlace) {
+    return (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Loading place details"
+      >
+        <div className="w-full max-w-md bg-[#101216] border border-white/[0.1] rounded-2xl p-8 text-center space-y-4 shadow-2xl">
+          <Loader2 className="w-8 h-8 text-[#ccff00] animate-spin mx-auto" />
+          <div className="space-y-1">
+            <h2 className="text-base font-extrabold text-white">Loading Place Details...</h2>
+            <p className="text-xs text-zinc-400">
+              Retrieving verified place data from OUTERA.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Dedicated 404 Page for Deleted, Unapproved, or Unavailable Places
+  if (placeNotFound || !effectivePlace) {
+    return (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="place-404-title"
+      >
+        <div className="w-full max-w-lg bg-[#101216] border border-white/[0.12] rounded-3xl p-6 sm:p-8 text-center space-y-5 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+          <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-center mx-auto text-amber-400">
+            <AlertTriangle className="w-7 h-7" />
+          </div>
+
+          <div className="space-y-2">
+            <span className="inline-block px-3 py-1 rounded-full bg-white/[0.06] border border-white/[0.1] text-[11px] font-mono font-bold uppercase tracking-wider text-[#ccff00]">
+              404 · Place Not Found
+            </span>
+            <h1 id="place-404-title" className="text-xl sm:text-2xl font-black text-white tracking-tight">
+              Place Unavailable or Removed
+            </h1>
+            <p className="text-xs sm:text-sm text-zinc-400 leading-relaxed max-w-md mx-auto">
+              This place may have been deleted, is currently unavailable, or the shared URL does not match an approved public place on OUTERA.
+            </p>
+            {placeIdOrSlug && (
+              <p className="text-[11px] font-mono text-zinc-500 bg-white/[0.03] border border-white/[0.06] rounded-xl px-3 py-1.5 inline-block max-w-full truncate">
+                /place/{placeIdOrSlug}
+              </p>
+            )}
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-2.5 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="w-full sm:w-auto h-11 px-6 rounded-xl bg-[#ccff00] hover:bg-[#d8ff33] text-black font-extrabold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all cursor-pointer"
+            >
+              <Compass className="w-4 h-4" />
+              <span>Explore Verified Places</span>
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="w-full sm:w-auto h-11 px-5 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.1] text-white font-bold text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+            >
+              <span>Back to OUTERA Home</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const placeToRender = effectivePlace;
+  const canonicalPlaceUrl = buildCanonicalPlaceUrl(placeToRender);
+  const userHasVisited = isPlaceVisitedByUser(placeToRender.id);
+  const reports = placeToRender.experienceReports || [];
 
   // Calculate real community rating & counts from approved posts + experience reports
   const ratedPosts = publicPosts.filter((p) => typeof p.rating === 'number' && p.rating >= 1);
@@ -151,8 +363,8 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
             ratedPosts.reduce((acc, p) => acc + Number(p.rating || 0), 0) / ratedPosts.length
           ).toFixed(1)
         )
-      : place.communityRating && place.communityRating > 0
-      ? place.communityRating
+      : placeToRender.communityRating && placeToRender.communityRating > 0
+      ? placeToRender.communityRating
       : null;
 
   const totalCommunityEntries = reports.length + publicPosts.length;
@@ -163,9 +375,13 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
       ? 'Medium'
       : totalCommunityEntries >= 1
       ? 'Limited'
-      : place.communityConfidence || 'Insufficient Data';
+      : placeToRender.communityConfidence || 'Insufficient Data';
 
-  const heroImages = (place.images && place.images.length > 0 ? place.images : [place.image])
+  const heroImages = (
+    placeToRender.images && placeToRender.images.length > 0
+      ? placeToRender.images
+      : [placeToRender.image]
+  )
     .filter(Boolean)
     .slice(0, 2);
 
@@ -174,7 +390,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
       onRequireAuth('mark places you have visited');
       return;
     }
-    toggleVisitedPlace(place.id);
+    toggleVisitedPlace(placeToRender.id);
     if (onPlaceUpdated) onPlaceUpdated();
   };
 
@@ -185,7 +401,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
     }
     const next = !wantToTry;
     setWantToTry(next);
-    toggleWantToTryInSupabase(place.id);
+    toggleWantToTryInSupabase(placeToRender.id);
   };
 
   const handleQuickHelpful = async (e: React.MouseEvent, post: PlacePost) => {
@@ -227,8 +443,8 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
     e.preventDefault();
     if (!claimPhone) return;
     await submitBusinessClaim({
-      placeId: place.id,
-      businessName: place.name,
+      placeId: placeToRender.id,
+      businessName: placeToRender.name,
       contactPhone: claimPhone,
       contactEmail: claimEmail,
       role: claimRole,
@@ -244,59 +460,25 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
     e.stopPropagation();
     await shareCommunityPost({
       ...post,
-      place_name: post.place_name || place.name,
+      place_name: post.place_name || placeToRender.name,
     });
     setCopiedPostId(post.id);
     setTimeout(() => setCopiedPostId((prev) => (prev === post.id ? null : prev)), 2500);
   };
 
+  const handleCopyLink = async () => {
+    const res = await copyPlaceLink(placeToRender);
+    if (res.copied) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    }
+  };
+
   const handleShare = async () => {
-    if (publicPosts.length > 0 && activeTab === 'experiences') {
-      await shareCommunityPost({
-        ...publicPosts[0],
-        place_name: publicPosts[0].place_name || place.name,
-      });
+    const res = await sharePlace(placeToRender);
+    if (res.method === 'clipboard') {
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-      return;
-    }
-
-    const placeUrl =
-      publicPosts.length > 0
-        ? (
-            await shareCommunityPost(
-              {
-                ...publicPosts[0],
-                place_name: publicPosts[0].place_name || place.name,
-              },
-              { preferCopyOnly: true }
-            )
-          ).url
-        : `${OUTERA_PRODUCTION_ORIGIN}/?spot=${encodeURIComponent(
-            slugifyText(place.name) + '-' + place.id.slice(0, 6)
-          )}`;
-
-    const shareData = {
-      title: `${place.name} on OUTERA`,
-      text: `Check out ${place.name} on OUTERA — ${place.shortDescription}`,
-      url: placeUrl,
-    };
-
-    if (typeof navigator !== 'undefined' && navigator.share) {
-      try {
-        await navigator.share(shareData);
-        return;
-      } catch {
-        // Fallback to clipboard
-      }
-    }
-
-    try {
-      await navigator.clipboard.writeText(placeUrl);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      console.warn(err);
+      setTimeout(() => setCopied(false), 2500);
     }
   };
 
@@ -316,30 +498,55 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
         <div className="sticky top-0 z-20 bg-[#101216]/95 backdrop-blur-md px-3.5 sm:px-4 py-3 border-b border-white/[0.08] flex items-center justify-between gap-2">
           <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 overflow-hidden">
             <span className="text-[11px] sm:text-xs font-semibold uppercase tracking-wider text-[#ccff00] shrink-0">
-              {place.category}
+              {placeToRender.category}
             </span>
             <span className="text-zinc-600 shrink-0">·</span>
-            <span className="text-[11px] sm:text-xs text-zinc-400 font-mono shrink-0">{formatDistance(place.distanceKm)}</span>
+            <span className="text-[11px] sm:text-xs text-zinc-400 font-mono shrink-0">
+              {formatDistance(placeToRender.distanceKm)}
+            </span>
             <span className="text-zinc-600 hidden xs:inline shrink-0">·</span>
             <span className="text-[11px] sm:text-xs text-zinc-400 font-medium truncate hidden xs:inline">
-              {place.upazila ? `${place.upazila}, ` : ''}
-              {place.district}
+              {placeToRender.upazila ? `${placeToRender.upazila}, ` : ''}
+              {placeToRender.district}
             </span>
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
             <button
               type="button"
+              onClick={handleCopyLink}
+              className={`h-8 sm:h-9 px-2.5 sm:px-3 rounded-full flex items-center gap-1.5 text-[11px] font-bold transition-all cursor-pointer border ${
+                copied
+                  ? 'bg-[#ccff00] text-black border-[#ccff00]'
+                  : 'bg-white/[0.05] hover:bg-white/[0.1] text-zinc-200 hover:text-white border-white/[0.08]'
+              }`}
+              aria-label="Copy permanent place link"
+              title="Copy Place Link"
+            >
+              {copied ? (
+                <>
+                  <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                  <span>Copied!</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5 text-[#ccff00]" />
+                  <span>Copy Link</span>
+                </>
+              )}
+            </button>
+            <button
+              type="button"
               onClick={handleShare}
               className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-white/[0.05] hover:bg-white/[0.1] flex items-center justify-center text-zinc-300 hover:text-white transition-all cursor-pointer"
-              aria-label="Share spot"
-              title="Share"
+              aria-label="Share place"
+              title="Share Place"
             >
               <Share2 className="w-4 h-4" />
             </button>
             <button
               type="button"
-              onClick={() => onToggleSave(place.id)}
+              onClick={() => onToggleSave(placeToRender.id)}
               className={`w-8 h-8 sm:w-9 sm:h-9 rounded-full flex items-center justify-center transition-all cursor-pointer ${
                 isSaved ? 'bg-[#ccff00] text-black' : 'bg-white/[0.05] text-zinc-300 hover:text-white'
               }`}
@@ -364,7 +571,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
             <div className="relative aspect-[16/9] w-full">
               <img
                 src={heroImages[0]}
-                alt={place.name}
+                alt={placeToRender.name}
                 className="w-full h-full object-cover"
                 referrerPolicy="no-referrer"
               />
@@ -377,7 +584,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
                 <div className="col-span-2 relative overflow-hidden">
                   <img
                     src={heroImages[0]}
-                    alt={`${place.name} primary`}
+                    alt={`${placeToRender.name} primary`}
                     className="w-full h-full object-cover"
                     referrerPolicy="no-referrer"
                   />
@@ -385,7 +592,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
                 <div className="col-span-1 relative overflow-hidden">
                   <img
                     src={heroImages[1]}
-                    alt={`${place.name} secondary`}
+                    alt={`${placeToRender.name} secondary`}
                     className="w-full h-full object-cover"
                     referrerPolicy="no-referrer"
                   />
@@ -407,7 +614,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
                     <div key={idx} className="w-full h-full shrink-0 snap-center relative">
                       <img
                         src={imgUrl}
-                        alt={`${place.name} ${idx + 1}`}
+                        alt={`${placeToRender.name} ${idx + 1}`}
                         className="w-full h-full object-cover"
                         referrerPolicy="no-referrer"
                       />
@@ -425,14 +632,17 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
           <div className="absolute bottom-3 left-3 max-w-[calc(100%-4.5rem)] flex items-center gap-1.5 text-[11px] sm:text-xs font-semibold px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-full bg-black/80 backdrop-blur-md border border-white/10 text-white">
             <span
               className={`w-2 h-2 rounded-full shrink-0 ${
-                place.openingHours?.openNow ? 'bg-[#ccff00]' : 'bg-red-400'
+                placeToRender.openingHours?.openNow ? 'bg-[#ccff00]' : 'bg-red-400'
               }`}
             />
-            <span className="shrink-0">{place.openingHours?.openNow ? 'Open Now' : 'Closed'}</span>
+            <span className="shrink-0">
+              {placeToRender.openingHours?.openNow ? 'Open Now' : 'Closed'}
+            </span>
             <span className="text-zinc-500 shrink-0">·</span>
             <span className="text-zinc-300 font-normal truncate">
-              {typeof place.openingHours?.hoursText === 'string' && place.openingHours.hoursText
-                ? place.openingHours.hoursText
+              {typeof placeToRender.openingHours?.hoursText === 'string' &&
+              placeToRender.openingHours.hoursText
+                ? placeToRender.openingHours.hoursText
                 : 'Hours vary'}
             </span>
           </div>
@@ -447,9 +657,11 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
                 </span>
                 <span className="text-zinc-500 shrink-0">·</span>
               </>
-            ) : place.communityScore > 0 ? (
+            ) : placeToRender.communityScore > 0 ? (
               <>
-                <span className="text-[#ccff00] font-mono shrink-0">{place.communityScore}% Worth It</span>
+                <span className="text-[#ccff00] font-mono shrink-0">
+                  {placeToRender.communityScore}% Worth It
+                </span>
                 <span className="text-zinc-500 shrink-0">·</span>
               </>
             ) : null}
@@ -502,7 +714,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
         <div className="p-5 sm:p-6 space-y-6">
           {copied && (
             <div className="p-2.5 rounded-xl bg-[#ccff00]/15 border border-[#ccff00]/30 text-center text-xs font-semibold text-[#ccff00]">
-              Link copied to clipboard!
+              Permanent place link copied to clipboard: {canonicalPlaceUrl}
             </div>
           )}
 
@@ -510,30 +722,39 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
           <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
             <div>
               <div className="flex items-center gap-2 flex-wrap">
-                <h1 id="place-details-title" className="text-xl sm:text-2xl font-black text-white tracking-tight">
-                  {place.name}
+                <h1
+                  id="place-details-title"
+                  className="text-xl sm:text-2xl font-black text-white tracking-tight"
+                >
+                  {placeToRender.name}
                 </h1>
-                {place.suggestedByScoutName && (
+                {placeToRender.suggestedByScoutName && (
                   <span className="px-2.5 py-0.5 rounded-full bg-[#ccff00]/15 border border-[#ccff00]/30 text-[#ccff00] text-[10px] font-bold">
-                    Scout Suggested by {place.suggestedByScoutName}
+                    Scout Suggested by {placeToRender.suggestedByScoutName}
                   </span>
                 )}
               </div>
               <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-400 mt-1.5 font-medium">
-                <span className="text-zinc-200 font-semibold">{place.neighborhood}</span>
-                {place.upazila && (
+                <span className="text-zinc-200 font-semibold">{placeToRender.neighborhood}</span>
+                {placeToRender.upazila && (
                   <>
-                    <span aria-hidden="true" className="text-zinc-600">·</span>
-                    <span>{place.upazila}</span>
+                    <span aria-hidden="true" className="text-zinc-600">
+                      ·
+                    </span>
+                    <span>{placeToRender.upazila}</span>
                   </>
                 )}
-                <span aria-hidden="true" className="text-zinc-600">·</span>
-                <span className="text-zinc-300">
-                  {place.district}, {place.division}
+                <span aria-hidden="true" className="text-zinc-600">
+                  ·
                 </span>
-                <span aria-hidden="true" className="text-zinc-600">·</span>
+                <span className="text-zinc-300">
+                  {placeToRender.district}, {placeToRender.division}
+                </span>
+                <span aria-hidden="true" className="text-zinc-600">
+                  ·
+                </span>
                 <span className="text-[#ccff00] font-semibold">
-                  {place.priceLabel || place.priceLevel.label}
+                  {placeToRender.priceLabel || placeToRender.priceLevel.label}
                 </span>
               </div>
             </div>
@@ -543,7 +764,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
               {onPlanTripWithPlace && (
                 <button
                   type="button"
-                  onClick={() => onPlanTripWithPlace(place)}
+                  onClick={() => onPlanTripWithPlace(placeToRender)}
                   className="h-9 px-3.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] border border-[#ccff00]/30 text-[#ccff00] font-extrabold text-xs uppercase tracking-wider flex items-center gap-1.5 cursor-pointer transition-all"
                 >
                   <Calendar className="w-3.5 h-3.5" />
@@ -567,6 +788,55 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
             </div>
           </div>
 
+          {/* Permanent Shareable URL & Copy Link Bar */}
+          <div className="p-3 sm:p-3.5 rounded-2xl bg-white/[0.03] border border-white/[0.08] flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-7 h-7 rounded-lg bg-[#ccff00]/10 border border-[#ccff00]/25 flex items-center justify-center shrink-0 text-[#ccff00]">
+                <Link2 className="w-3.5 h-3.5" />
+              </div>
+              <div className="min-w-0">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block">
+                  Permanent Share Link
+                </span>
+                <span className="text-xs font-mono text-zinc-200 truncate block">
+                  {canonicalPlaceUrl}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={handleCopyLink}
+                className={`h-8 px-3 rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all cursor-pointer border ${
+                  copied
+                    ? 'bg-[#ccff00] text-black border-[#ccff00]'
+                    : 'bg-white/[0.06] hover:bg-white/[0.12] text-white border-white/[0.1]'
+                }`}
+              >
+                {copied ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                    <span>Copied!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5 text-[#ccff00]" />
+                    <span>Copy Link</span>
+                  </>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={handleShare}
+                className="h-8 px-3 rounded-xl bg-[#ccff00]/15 hover:bg-[#ccff00]/25 border border-[#ccff00]/30 text-[#ccff00] text-xs font-extrabold flex items-center gap-1.5 transition-all cursor-pointer"
+              >
+                <Share2 className="w-3.5 h-3.5" />
+                <span>Share Place</span>
+              </button>
+            </div>
+          </div>
+
           {/* Core Structured Info Grid: Budget, Best Time, Distance, Suitable For, Indoor/Outdoor, Crowd Level, Visitors */}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
             <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
@@ -575,7 +845,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
                 <span>Budget</span>
               </span>
               <p className="text-xs font-bold text-white mt-1">
-                {place.priceLabel || place.priceLevel.label}
+                {placeToRender.priceLabel || placeToRender.priceLevel.label}
               </p>
             </div>
 
@@ -585,9 +855,10 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
                 <span>Best Time</span>
               </span>
               <p className="text-xs font-bold text-white mt-1">
-                {place.bestTimeToVisit ||
-                  (place.timeOfDaySuitability && place.timeOfDaySuitability.length > 0
-                    ? place.timeOfDaySuitability.join(', ')
+                {placeToRender.bestTimeToVisit ||
+                  (placeToRender.timeOfDaySuitability &&
+                  placeToRender.timeOfDaySuitability.length > 0
+                    ? placeToRender.timeOfDaySuitability.join(', ')
                     : 'Late Afternoon / Evening')}
               </p>
             </div>
@@ -598,7 +869,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
                 <span>Distance</span>
               </span>
               <p className="text-xs font-bold text-white mt-1 font-mono">
-                {formatDistance(place.distanceKm)}
+                {formatDistance(placeToRender.distanceKm)}
               </p>
             </div>
 
@@ -608,8 +879,8 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
                 <span>Suitable For</span>
               </span>
               <p className="text-xs font-bold text-white mt-1 capitalize">
-                {place.suitableFor && place.suitableFor.length > 0
-                  ? place.suitableFor.join(', ')
+                {placeToRender.suitableFor && placeToRender.suitableFor.length > 0
+                  ? placeToRender.suitableFor.join(', ')
                   : 'Solo, Friends, Groups'}
               </p>
             </div>
@@ -619,7 +890,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
                 <Sun className="w-3 h-3 text-[#ccff00]" />
                 <span>Indoor / Outdoor</span>
               </span>
-              <p className="text-xs font-bold text-white mt-1">{place.environment}</p>
+              <p className="text-xs font-bold text-white mt-1">{placeToRender.environment}</p>
             </div>
 
             <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
@@ -628,7 +899,10 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
                 <span>Crowd & Activity</span>
               </span>
               <p className="text-xs font-bold text-white mt-1">
-                {place.crowdLevel} Crowd · {place.verifiedVisitorsCount + publicPosts.filter((p) => p.is_visited).length} Visited
+                {placeToRender.crowdLevel} Crowd ·{' '}
+                {placeToRender.verifiedVisitorsCount +
+                  publicPosts.filter((p) => p.is_visited).length}{' '}
+                Visited
               </p>
             </div>
           </div>
@@ -637,13 +911,19 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
           <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/[0.08] flex items-center justify-between gap-4">
             <div>
               <div className="flex items-center gap-1.5">
-                <CheckCircle2 className={`w-4 h-4 ${userHasVisited ? 'text-[#ccff00]' : 'text-zinc-400'}`} />
+                <CheckCircle2
+                  className={`w-4 h-4 ${userHasVisited ? 'text-[#ccff00]' : 'text-zinc-400'}`}
+                />
                 <span className="text-xs font-bold text-white">
-                  {userHasVisited ? "You've marked this place as visited" : 'Have you visited this place?'}
+                  {userHasVisited
+                    ? "You've marked this place as visited"
+                    : 'Have you visited this place?'}
                 </span>
               </div>
               <p className="text-[11px] text-zinc-400 mt-0.5">
-                {place.verifiedVisitorsCount + publicPosts.filter((p) => p.is_visited).length} verified visitors · {totalCommunityEntries} community posts/reports.
+                {placeToRender.verifiedVisitorsCount +
+                  publicPosts.filter((p) => p.is_visited).length}{' '}
+                verified visitors · {totalCommunityEntries} community posts/reports.
               </p>
             </div>
 
@@ -677,7 +957,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
                       WORTH GOING? · COMMUNITY SUMMARY
                     </h2>
                     <p className="text-sm font-extrabold text-white mt-0.5">
-                      {place.whyPick || place.shortDescription}
+                      {placeToRender.whyPick || placeToRender.shortDescription}
                     </p>
                   </div>
                   <div className="text-right">
@@ -694,7 +974,9 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
                         Community Rating
                       </span>
                       <span className="text-xs font-bold text-[#ccff00] font-mono">
-                        {computedAvgRating ? `★ ${computedAvgRating} / 5` : `${place.communityScore}% Positive`}
+                        {computedAvgRating
+                          ? `★ ${computedAvgRating} / 5`
+                          : `${placeToRender.communityScore}% Positive`}
                       </span>
                     </div>
 
@@ -702,14 +984,18 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
                       <span className="text-[10px] uppercase font-bold text-zinc-400 block mb-0.5">
                         Typical Crowd
                       </span>
-                      <span className="text-xs font-bold text-white">{place.crowdLevel}</span>
+                      <span className="text-xs font-bold text-white">
+                        {placeToRender.crowdLevel}
+                      </span>
                     </div>
 
                     <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.05]">
                       <span className="text-[10px] uppercase font-bold text-zinc-400 block mb-0.5">
                         Primary Vibe
                       </span>
-                      <span className="text-xs font-bold text-white">{place.primaryVibe}</span>
+                      <span className="text-xs font-bold text-white">
+                        {placeToRender.primaryVibe}
+                      </span>
                     </div>
 
                     <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.05]">
@@ -749,12 +1035,12 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
                   What To Expect
                 </h2>
                 <p className="text-xs sm:text-sm text-zinc-300 leading-relaxed">
-                  {place.fullDescription || place.shortDescription}
+                  {placeToRender.fullDescription || placeToRender.shortDescription}
                 </p>
 
-                {place.highlights && place.highlights.length > 0 && (
+                {placeToRender.highlights && placeToRender.highlights.length > 0 && (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-                    {place.highlights.map((item) => (
+                    {placeToRender.highlights.map((item) => (
                       <div
                         key={item}
                         className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.06] flex items-center gap-2.5 text-xs text-zinc-200"
@@ -788,7 +1074,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
                 {publicPosts.length === 0 ? (
                   <div className="p-5 rounded-2xl bg-white/[0.02] border border-white/[0.06] text-center space-y-2">
                     <p className="text-xs text-zinc-400">
-                      No approved community posts for {place.name} yet. Visited recently? Share your honest review and up to 2 photos!
+                      No approved community posts for {placeToRender.name} yet. Visited recently? Share your honest review and up to 2 photos!
                     </p>
                     <button
                       type="button"
@@ -933,7 +1219,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
               {/* TOURIST INFORMATION & GETTING THERE */}
               <div className="pt-2">
                 <HowToGetThereSection
-                  place={place}
+                  place={placeToRender}
                   userLocation={userLocation}
                   allPlaces={allPlaces}
                   onSelectPlace={onSelectAnotherPlace}
@@ -943,7 +1229,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
           ) : activeTab === 'transit' ? (
             <div className="space-y-4">
               <HowToGetThereSection
-                place={place}
+                place={placeToRender}
                 userLocation={userLocation}
                 allPlaces={allPlaces}
                 onSelectPlace={onSelectAnotherPlace}
@@ -985,7 +1271,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
                         onRequireAuth('share your experience');
                         return;
                       }
-                      onOpenReportModal(place);
+                      onOpenReportModal(placeToRender);
                     }}
                     className="h-9 px-3 rounded-xl bg-white/[0.06] hover:bg-white/[0.1] text-white font-bold text-xs flex items-center gap-1.5 border border-white/[0.08] cursor-pointer"
                   >
@@ -1134,7 +1420,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
                     <ExperienceVerificationItem
                       key={report.id}
                       report={report}
-                      placeId={place.id}
+                      placeId={placeToRender.id}
                       isUserVerifiedVisitor={userHasVisited}
                       isAuthenticated={isAuthenticated}
                       onRequireAuth={onRequireAuth}
@@ -1160,14 +1446,14 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
               <div>
                 <p className="text-xs font-bold text-white flex items-center gap-1.5">
                   <Navigation className="w-4 h-4 text-[#ccff00]" />
-                  <span>{place.address}</span>
+                  <span>{placeToRender.address}</span>
                 </p>
                 <p className="text-xs text-zinc-400 mt-0.5">
-                  {place.neighborhood}, {place.district}
+                  {placeToRender.neighborhood}, {placeToRender.district}
                 </p>
               </div>
               <span className="text-xs font-mono text-[#ccff00] font-semibold">
-                {formatDistance(place.distanceKm)}
+                {formatDistance(placeToRender.distanceKm)}
               </span>
             </div>
 
@@ -1203,7 +1489,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
                 onRequireAuth('save places to your vault');
                 return;
               }
-              onToggleSave(place.id);
+              onToggleSave(placeToRender.id);
             }}
             className={`h-11 sm:h-12 px-2.5 sm:px-3.5 rounded-xl border flex items-center justify-center text-[11px] sm:text-xs font-bold transition-all cursor-pointer shrink-0 ${
               isSaved
@@ -1240,7 +1526,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
 
         {/* Dedicated Navigation Preview Screen */}
         <NavigationPreviewModal
-          place={place}
+          place={placeToRender}
           isOpen={showNavigationPreview}
           onBackToPlace={() => setShowNavigationPreview(false)}
         />
@@ -1256,7 +1542,7 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Building2 className="w-4 h-4 text-[#ccff00]" />
-                  <h3 className="text-sm font-bold text-white">Claim {place.name}</h3>
+                  <h3 className="text-sm font-bold text-white">Claim {placeToRender.name}</h3>
                 </div>
                 <button
                   type="button"
@@ -1320,8 +1606,8 @@ export const PlaceDetailsModal: React.FC<PlaceDetailsModalProps> = ({
         <CreatePostModal
           isOpen={showCreateModal}
           onClose={() => setShowCreateModal(false)}
-          defaultPlaceId={place.id}
-          defaultPlaceName={place.name}
+          defaultPlaceId={placeToRender.id}
+          defaultPlaceName={placeToRender.name}
           onRequireAuth={onRequireAuth}
           onPostSubmitted={() => {
             loadPlacePosts();

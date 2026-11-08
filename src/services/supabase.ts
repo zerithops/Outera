@@ -16,6 +16,7 @@ import {
   getPostUniqueId,
   parsePostRouteParam,
 } from './postUrl';
+import { buildPlaceUniqueSlug, doesPlaceMatchRoute } from './placeUrl';
 
 // Resolve Supabase configuration safely across Vite / Next.js / Node
 const getEnvVar = (key: string, fallback: string): string => {
@@ -168,6 +169,10 @@ export interface SupabaseProfile {
   bio?: string | null;
   avatar_url?: string | null;
   role?: string | null;
+  account_status?: 'active' | 'suspended' | string | null;
+  suspended_at?: string | null;
+  suspended_reason?: string | null;
+  is_verified?: boolean | null;
   created_at?: string;
   updated_at?: string;
   // UI compatibility aliases
@@ -209,7 +214,7 @@ export async function fetchProfile(userId?: string): Promise<SupabaseProfile | n
 
     const { data, error } = await supabase
       .from('profiles')
-      .select('id, display_name, username, bio, avatar_url, role, created_at, updated_at')
+      .select('*')
       .eq('id', user.id)
       .maybeSingle();
 
@@ -1454,11 +1459,18 @@ export async function fetchPlacesFromSupabase(): Promise<Place[]> {
       const bestTimeStr = safeStr(row.best_time) || safeStr(parsedMeta.bestTime);
 
       const canonicalCategory = normalizeCategoryName(safeStr(row.category, 'Chill') || 'Chill');
+      const placeIdStr = String(row.id);
+      const placeNameStr = safeStr(row.name, 'Unnamed Place');
+      const canonicalSlug = buildPlaceUniqueSlug({
+        id: placeIdStr,
+        name: placeNameStr,
+        slug: safeStr(row.slug),
+      });
 
       return {
-        id: String(row.id),
-        slug: safeStr(row.slug, String(row.id)),
-        name: safeStr(row.name, 'Unnamed Place'),
+        id: placeIdStr,
+        slug: canonicalSlug,
+        name: placeNameStr,
         category: canonicalCategory,
         subcategory: safeStr(row.subcategory) || undefined,
         shortDescription: safeStr(row.short_description) || safeStr(parsedMeta.cleanDescription),
@@ -1547,6 +1559,23 @@ export async function fetchPlacesFromSupabase(): Promise<Place[]> {
   } catch (err) {
     console.warn('fetchPlacesFromSupabase error:', err);
     return [];
+  }
+}
+
+/**
+ * Fetches a single public approved place from Supabase by its unique slug or ID.
+ * Returns null if the place does not exist, was deleted, or is not publicly approved.
+ */
+export async function fetchPublicPlaceByIdOrSlug(placeIdOrSlug: string): Promise<Place | null> {
+  if (!placeIdOrSlug || typeof placeIdOrSlug !== 'string') return null;
+  try {
+    const allApprovedPlaces = await fetchPlacesFromSupabase();
+    if (!allApprovedPlaces || allApprovedPlaces.length === 0) return null;
+    const matched = allApprovedPlaces.find((p) => doesPlaceMatchRoute(p, placeIdOrSlug));
+    return matched || null;
+  } catch (err) {
+    console.warn('fetchPublicPlaceByIdOrSlug error:', err);
+    return null;
   }
 }
 
@@ -2368,6 +2397,14 @@ export async function submitPlaceSuggestion(
       return {
         success: false,
         error: 'Please sign in to suggest a place.',
+      };
+    }
+
+    const callerProfile = await fetchProfile(user.id);
+    if (callerProfile?.account_status === 'suspended' || callerProfile?.role === 'suspended') {
+      return {
+        success: false,
+        error: 'Your account is currently suspended and cannot submit new place suggestions.',
       };
     }
 
@@ -3251,8 +3288,14 @@ export async function isCurrentUserAdmin(): Promise<boolean> {
   try {
     const user = await getCurrentUser();
     if (!user) return false;
-    const profile = await fetchProfile(user.id);
-    return profile?.role === 'admin';
+    const [profile, rpcRes] = await Promise.all([
+      fetchProfile(user.id),
+      supabase.rpc('is_admin'),
+    ]);
+    if (profile?.account_status === 'suspended' || profile?.role === 'suspended') {
+      return false;
+    }
+    return rpcRes.data === true || profile?.role === 'admin';
   } catch {
     return false;
   }
@@ -3661,6 +3704,14 @@ export async function createPlacePost(input: {
     const user = await getCurrentUser();
     if (!user) {
       return { success: false, error: 'You must be signed in to post.' };
+    }
+
+    const callerProfile = await fetchProfile(user.id);
+    if (callerProfile?.account_status === 'suspended' || callerProfile?.role === 'suspended') {
+      return {
+        success: false,
+        error: 'Your account is currently suspended and cannot submit new community posts.',
+      };
     }
 
     if (!input.title.trim()) {

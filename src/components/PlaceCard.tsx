@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { Bookmark, Compass, Navigation, Star } from 'lucide-react';
+import { Bookmark, Check, Compass, Navigation, Share2, Star } from 'lucide-react';
 import { PlaceWithDistance } from '../services/discoveryEngine';
 import { formatDistance } from '../services/location';
+import { sharePlace } from '../services/placeUrl';
 
 interface PlaceCardProps {
   place: PlaceWithDistance;
@@ -18,6 +19,16 @@ export const PlaceCard: React.FC<PlaceCardProps> = ({
 }) => {
   const [imageError, setImageError] = useState(false);
   const [isPressing, setIsPressing] = useState(false);
+  const [copiedShare, setCopiedShare] = useState(false);
+
+  const handleCardShare = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const res = await sharePlace(place);
+    if (res.method === 'clipboard') {
+      setCopiedShare(true);
+      setTimeout(() => setCopiedShare(false), 2000);
+    }
+  };
 
   const hasCommunityData =
     place.communityConfidence !== 'Insufficient Data' &&
@@ -84,8 +95,25 @@ export const PlaceCard: React.FC<PlaceCardProps> = ({
           </div>
         )}
 
-        {/* Top-Right Save Action (40x40 hitbox) */}
-        <div className="absolute top-2.5 right-2.5 z-10">
+        {/* Top-Right Share & Save Actions */}
+        <div className="absolute top-2.5 right-2.5 z-10 flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={handleCardShare}
+            className={`w-9 h-9 rounded-full flex items-center justify-center backdrop-blur-md transition-all active:scale-90 cursor-pointer ${
+              copiedShare
+                ? 'bg-[#ccff00] text-black shadow-md'
+                : 'bg-black/60 text-white hover:bg-black/80 border border-white/15'
+            }`}
+            aria-label={`Share ${place.name}`}
+            title={copiedShare ? 'Link copied!' : `Share ${place.name}`}
+          >
+            {copiedShare ? (
+              <Check className="w-4 h-4 stroke-[2.5]" />
+            ) : (
+              <Share2 className="w-3.5 h-3.5" />
+            )}
+          </button>
           <button
             type="button"
             onClick={(e) => onToggleSave(e, place.id)}
