@@ -9,9 +9,9 @@ import {
   Upload,
   Trash2,
   AlertTriangle,
-  ShieldCheck,
   Lock,
   Image as ImageIcon,
+  RefreshCw,
 } from 'lucide-react';
 import { BANGLADESH_DIVISIONS } from '../data/bangladeshLocations';
 import {
@@ -20,6 +20,11 @@ import {
   DuplicatePlaceCandidate,
   getCurrentUser,
 } from '../services/supabase';
+import {
+  MAX_POST_IMAGES,
+  R2UploadProgress,
+  validateImageFile,
+} from '../services/r2Storage';
 import { LocationPickerMap } from './LocationPickerMap';
 import { Coordinates, Place } from '../types/outera';
 import { PLACE_CATEGORY_OPTIONS } from '../services/discoveryEngine';
@@ -35,9 +40,7 @@ interface PlaceSuggestionModalProps {
   onSelectExistingPlace?: (placeId: string) => void;
 }
 
-const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
-const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
-const MAX_PHOTOS = 2;
+const MAX_PHOTOS = MAX_POST_IMAGES;
 
 export const PlaceSuggestionModal: React.FC<PlaceSuggestionModalProps> = ({
   isOpen,
@@ -77,6 +80,8 @@ export const PlaceSuggestionModal: React.FC<PlaceSuggestionModalProps> = ({
   const [duplicateAcknowledged, setDuplicateAcknowledged] = useState(false);
 
   const [loading, setLoading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<R2UploadProgress | null>(null);
+  const [canRetryUpload, setCanRetryUpload] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -189,6 +194,7 @@ export const PlaceSuggestionModal: React.FC<PlaceSuggestionModalProps> = ({
     if (files.length === 0) return;
 
     setErrorMessage(null);
+    setCanRetryUpload(false);
 
     if (selectedFiles.length >= MAX_PHOTOS) {
       setErrorMessage('Maximum 2 photos allowed per place suggestion. Remove a photo to select another.');
@@ -203,12 +209,9 @@ export const PlaceSuggestionModal: React.FC<PlaceSuggestionModalProps> = ({
 
     const validNewFiles: File[] = [];
     for (const file of files.slice(0, remainingSlots)) {
-      if (!ALLOWED_MIME_TYPES.includes(file.type.toLowerCase())) {
-        setErrorMessage(`Invalid file format (${file.name}). Allowed: JPG, JPEG, PNG, WEBP.`);
-        continue;
-      }
-      if (file.size > MAX_FILE_SIZE_BYTES) {
-        setErrorMessage(`File "${file.name}" exceeds the 5MB limit.`);
+      const check = validateImageFile(file);
+      if (!check.valid) {
+        setErrorMessage(check.error || 'Invalid image file.');
         continue;
       }
       validNewFiles.push(file);
@@ -232,11 +235,10 @@ export const PlaceSuggestionModal: React.FC<PlaceSuggestionModalProps> = ({
     setSelectedFiles(nextFiles);
     previewUrls.forEach((u) => URL.revokeObjectURL(u));
     setPreviewUrls(nextFiles.map((f) => URL.createObjectURL(f)));
+    setCanRetryUpload(false);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
+  const executeSuggestionSubmit = async () => {
     if (!isAuthenticated) {
       if (onOpenAuthModal) {
         onClose();
@@ -271,6 +273,8 @@ export const PlaceSuggestionModal: React.FC<PlaceSuggestionModalProps> = ({
     // Duplicate check gate: if likely duplicates exist and user hasn't acknowledged warning
     setLoading(true);
     setErrorMessage(null);
+    setCanRetryUpload(false);
+    setUploadProgress(null);
 
     if (!duplicateAcknowledged) {
       const foundDuplicates = await checkDuplicatePlacesAndSuggestions(
@@ -294,26 +298,33 @@ export const PlaceSuggestionModal: React.FC<PlaceSuggestionModalProps> = ({
         ? `৳${minB}`
         : `৳${minB} – ৳${maxB}`;
 
-    const res = await submitPlaceSuggestion({
-      name: name.trim(),
-      category,
-      division,
-      district,
-      upazila: upazila.trim() || undefined,
-      area: area.trim() || undefined,
-      address: address.trim() || area.trim() || undefined,
-      shortDescription: shortDescription.trim(),
-      whyWorthVisiting: whyWorthVisiting.trim(),
-      estimatedBudgetMin: minB,
-      estimatedBudgetMax: maxB,
-      approxBudget: formattedBudget,
-      bestTimeToVisit,
-      latitude: coords.lat,
-      longitude: coords.lng,
-      photos: selectedFiles,
-    });
+    const res = await submitPlaceSuggestion(
+      {
+        name: name.trim(),
+        category,
+        division,
+        district,
+        upazila: upazila.trim() || undefined,
+        area: area.trim() || undefined,
+        address: address.trim() || area.trim() || undefined,
+        shortDescription: shortDescription.trim(),
+        whyWorthVisiting: whyWorthVisiting.trim(),
+        estimatedBudgetMin: minB,
+        estimatedBudgetMax: maxB,
+        approxBudget: formattedBudget,
+        bestTimeToVisit,
+        latitude: coords.lat,
+        longitude: coords.lng,
+        photos: selectedFiles,
+      },
+      selectedFiles,
+      {
+        onUploadProgress: (prog) => setUploadProgress(prog),
+      }
+    );
 
     setLoading(false);
+    setUploadProgress(null);
 
     if (res.success) {
       setSubmitted(true);
@@ -333,8 +344,16 @@ export const PlaceSuggestionModal: React.FC<PlaceSuggestionModalProps> = ({
         onClose();
       }, 1800);
     } else {
+      if (selectedFiles.length > 0) {
+        setCanRetryUpload(true);
+      }
       setErrorMessage(res.error || 'Failed to submit suggestion. Please try again.');
     }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await executeSuggestionSubmit();
   };
 
   const categories = PLACE_CATEGORY_OPTIONS;
@@ -448,9 +467,21 @@ export const PlaceSuggestionModal: React.FC<PlaceSuggestionModalProps> = ({
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             {errorMessage && (
-              <div className="p-3.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-300 text-xs flex items-center gap-2.5">
-                <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
-                <p className="leading-snug">{errorMessage}</p>
+              <div className="p-3.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-300 text-xs space-y-2">
+                <div className="flex items-center gap-2.5">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
+                  <p className="leading-snug">{errorMessage}</p>
+                </div>
+                {canRetryUpload && !loading && (
+                  <button
+                    type="button"
+                    onClick={() => executeSuggestionSubmit()}
+                    className="w-full h-8 rounded-lg bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 text-white font-bold text-[11px] flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Retry Photo Upload & Submit</span>
+                  </button>
+                )}
               </div>
             )}
 
@@ -850,6 +881,24 @@ export const PlaceSuggestionModal: React.FC<PlaceSuggestionModalProps> = ({
                   </button>
                 </div>
               )}
+              {loading && uploadProgress && (
+                <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.08] space-y-1.5">
+                  <div className="flex items-center justify-between text-[11px] text-zinc-300">
+                    <span className="truncate font-medium">
+                      Uploading {uploadProgress.fileName} ({uploadProgress.fileIndex + 1}/{uploadProgress.totalFiles}) to Cloudflare R2
+                    </span>
+                    <span className="font-mono font-bold text-[#ccff00] shrink-0">
+                      {uploadProgress.overallPercent}%
+                    </span>
+                  </div>
+                  <div className="w-full h-1.5 rounded-full bg-white/[0.08] overflow-hidden">
+                    <div
+                      className="h-full bg-[#ccff00] transition-all duration-200"
+                      style={{ width: `${Math.max(4, Math.min(100, uploadProgress.overallPercent))}%` }}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Submit */}
@@ -861,7 +910,9 @@ export const PlaceSuggestionModal: React.FC<PlaceSuggestionModalProps> = ({
               >
                 <span>
                   {loading
-                    ? 'Submitting Place Suggestion...'
+                    ? uploadProgress
+                      ? `Uploading Photos (${uploadProgress.overallPercent}%)...`
+                      : 'Submitting Place Suggestion...'
                     : checkingDuplicates
                     ? 'Checking for duplicates...'
                     : 'Submit Place Suggestion'}

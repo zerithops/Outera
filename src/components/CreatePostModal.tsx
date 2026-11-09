@@ -5,10 +5,10 @@ import {
   Check,
   AlertCircle,
   Send,
-  Sparkles,
   Camera,
   Loader2,
   Edit3,
+  RefreshCw,
 } from 'lucide-react';
 import {
   createPlacePost,
@@ -16,9 +16,17 @@ import {
   fetchPlacesFromSupabase,
   uploadPlacePostImages,
   checkUserExistingPostForPlace,
+  deleteUserPost,
   getCurrentUser,
   PlacePost,
 } from '../services/supabase';
+import {
+  MAX_POST_IMAGES,
+  R2UploadProgress,
+  R2UploadedMediaResult,
+  uploadMultipleImagesToR2,
+  validateImageFile,
+} from '../services/r2Storage';
 import { Place } from '../types/outera';
 import { OuteraLogo } from './OuteraLogo';
 
@@ -37,7 +45,7 @@ interface PhotoPreview {
   previewUrl: string;
 }
 
-const MAX_POST_PHOTOS = 2;
+const MAX_POST_PHOTOS = MAX_POST_IMAGES;
 
 export const CreatePostModal: React.FC<CreatePostModalProps> = ({
   isOpen,
@@ -64,11 +72,14 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
   const [existingImageUrls, setExistingImageUrls] = useState<string[]>([]);
   const [photosModified, setPhotosModified] = useState(false);
   const [selectedPhotos, setSelectedPhotos] = useState<PhotoPreview[]>([]);
+  const [preUploadedMedia, setPreUploadedMedia] = useState<R2UploadedMediaResult[]>([]);
   const [photoError, setPhotoError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<R2UploadProgress | null>(null);
+  const [canRetryUpload, setCanRetryUpload] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
 
@@ -93,10 +104,13 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
       }
       setPhotosModified(false);
       setSelectedPhotos([]);
+      setPreUploadedMedia([]);
       setPhotoError(null);
       setErrorMessage(null);
       setSuccessNotice(null);
       setUploadStatus(null);
+      setUploadProgress(null);
+      setCanRetryUpload(false);
 
       fetchPlacesFromSupabase().then((p) => {
         setPlaces(p || []);
@@ -151,12 +165,16 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
     setIsVisited(postToEdit.is_visited);
     setExistingImageUrls((postToEdit.images || []).slice(0, MAX_POST_PHOTOS));
     setPhotosModified(false);
+    setPreUploadedMedia([]);
     setExistingPlacePost(null);
     setErrorMessage(null);
+    setCanRetryUpload(false);
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setPhotoError(null);
+    setErrorMessage(null);
+    setCanRetryUpload(false);
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
 
@@ -175,14 +193,9 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
 
     const validNewPreviews: PhotoPreview[] = [];
     for (const file of files.slice(0, remainingSlots)) {
-      if (file.size > 5 * 1024 * 1024) {
-        setPhotoError(`"${file.name}" exceeds the 5MB file size limit.`);
-        continue;
-      }
-      const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
-      const ext = file.name.split('.').pop()?.toLowerCase() || '';
-      if (!validTypes.includes(file.type.toLowerCase()) && !['jpg', 'jpeg', 'png', 'webp'].includes(ext)) {
-        setPhotoError('Only JPG, JPEG, PNG, and WEBP formats are supported.');
+      const check = validateImageFile(file);
+      if (!check.valid) {
+        setPhotoError(check.error || 'Invalid image file.');
         continue;
       }
 
@@ -194,6 +207,7 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
 
     if (validNewPreviews.length > 0) {
       setPhotosModified(true);
+      setPreUploadedMedia([]);
       setSelectedPhotos((prev) =>
         [...prev, ...validNewPreviews].slice(0, MAX_POST_PHOTOS - existingImageUrls.length)
       );
@@ -215,13 +229,15 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
       if (removed) URL.revokeObjectURL(removed.previewUrl);
       return prev.filter((_, i) => i !== index);
     });
+    setPreUploadedMedia([]);
     setPhotosModified(true);
     setPhotoError(null);
+    setCanRetryUpload(false);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const executeSubmit = async () => {
     setErrorMessage(null);
+    setCanRetryUpload(false);
 
     const currentUser = await getCurrentUser();
     if (!currentUser) {
@@ -247,6 +263,44 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
     }
 
     setLoading(true);
+    setUploadProgress(null);
+
+    // Upload any newly selected photos to Cloudflare R2 FIRST so failed uploads never create incomplete posts
+    const filesToUpload = selectedPhotos.slice(0, MAX_POST_PHOTOS - existingImageUrls.length).map((p) => p.file);
+    let r2UploadedResults: R2UploadedMediaResult[] = preUploadedMedia;
+
+    if (filesToUpload.length > 0 && r2UploadedResults.length !== filesToUpload.length) {
+      setUploadStatus(`Uploading ${filesToUpload.length} photo${filesToUpload.length > 1 ? 's' : ''} to Cloudflare R2...`);
+      try {
+        r2UploadedResults = await uploadMultipleImagesToR2(filesToUpload, {
+          scope: 'posts',
+          entityId: activeEditingPost?.id || undefined,
+          maxCount: MAX_POST_PHOTOS - existingImageUrls.length,
+          onProgress: (prog) => {
+            setUploadProgress(prog);
+            if (prog.status === 'retrying') {
+              setUploadStatus(
+                `Retrying upload for photo ${prog.fileIndex + 1}/${prog.totalFiles} (attempt ${prog.attempt})...`
+              );
+            } else {
+              setUploadStatus(
+                `Uploading photo ${prog.fileIndex + 1}/${prog.totalFiles} (${prog.overallPercent}%)...`
+              );
+            }
+          },
+        });
+        setPreUploadedMedia(r2UploadedResults);
+      } catch (uploadErr: any) {
+        setLoading(false);
+        setUploadStatus(null);
+        setCanRetryUpload(true);
+        setErrorMessage(
+          uploadErr?.message ||
+            'Photo upload to Cloudflare R2 failed. Your post was not created—click Retry Upload to try again.'
+        );
+        return;
+      }
+    }
 
     if (activeEditingPost) {
       setUploadStatus('Updating post...');
@@ -259,30 +313,35 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
 
       if (!res.success) {
         setLoading(false);
+        setUploadStatus(null);
         setErrorMessage(res.error || 'Failed to update post.');
         return;
       }
 
-      if (photosModified || selectedPhotos.length > 0) {
-        const filesToUpload = selectedPhotos.map((p) => p.file);
-        setUploadStatus('Updating post photos...');
+      if (photosModified || r2UploadedResults.length > 0) {
+        setUploadStatus('Saving post photos...');
         const uploadRes = await uploadPlacePostImages(
           currentUser.id,
           activeEditingPost.id,
-          filesToUpload,
+          [],
           {
             replaceExisting: true,
             retainedUrls: existingImageUrls,
+            preUploadedMedia: r2UploadedResults,
           }
         );
-        if (!uploadRes.success && uploadRes.error) {
+        if (!uploadRes.success) {
           setLoading(false);
-          setErrorMessage(uploadRes.error);
+          setUploadStatus(null);
+          setCanRetryUpload(true);
+          setErrorMessage(uploadRes.error || 'Failed to save updated post photos.');
           return;
         }
       }
 
       setLoading(false);
+      setUploadStatus(null);
+      setUploadProgress(null);
       setSuccessNotice('Your community post has been updated and queued for moderation.');
       setTimeout(() => {
         if (onPostSubmitted) onPostSubmitted();
@@ -292,12 +351,14 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
       const placeIdToUse = selectedPlaceId || defaultPlaceId;
       if (!placeIdToUse) {
         setLoading(false);
+        setUploadStatus(null);
         setErrorMessage('Please select an existing place for your community post.');
         return;
       }
 
       if (existingPlacePost) {
         setLoading(false);
+        setUploadStatus(null);
         setErrorMessage('You can only create 1 post/review per place. Click "Edit My Existing Post" above to update it.');
         return;
       }
@@ -313,6 +374,7 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
 
       if (!res.success || !res.data) {
         setLoading(false);
+        setUploadStatus(null);
         if (res.existingPost) {
           setExistingPlacePost(res.existingPost);
         }
@@ -320,28 +382,39 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
         return;
       }
 
-      if (selectedPhotos.length > 0) {
-        const filesToUpload = selectedPhotos.slice(0, MAX_POST_PHOTOS).map((p) => p.file);
-        setUploadStatus(`Uploading ${filesToUpload.length} photo(s)...`);
-        try {
-          const uploadRes = await uploadPlacePostImages(currentUser.id, res.data.id, filesToUpload);
-          if (!uploadRes.success && uploadRes.error) {
-            setLoading(false);
-            setErrorMessage(uploadRes.error);
-            return;
-          }
-        } catch (uploadErr) {
-          console.warn('Photo upload warning:', uploadErr);
+      if (r2UploadedResults.length > 0) {
+        setUploadStatus('Attaching uploaded photos to post...');
+        const uploadRes = await uploadPlacePostImages(currentUser.id, res.data.id, [], {
+          preUploadedMedia: r2UploadedResults,
+        });
+        if (!uploadRes.success) {
+          // Roll back the incomplete post row so no broken/incomplete post remains
+          await deleteUserPost(res.data.id).catch(() => {});
+          setLoading(false);
+          setUploadStatus(null);
+          setCanRetryUpload(true);
+          setErrorMessage(
+            uploadRes.error ||
+              'Failed to link uploaded photos to your post. Post creation was rolled back—please retry.'
+          );
+          return;
         }
       }
 
       setLoading(false);
+      setUploadStatus(null);
+      setUploadProgress(null);
       setSuccessNotice('Experience shared! Your post starts as Pending and becomes publicly visible once approved.');
       setTimeout(() => {
         if (onPostSubmitted) onPostSubmitted();
         onClose();
       }, 1200);
     }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await executeSubmit();
   };
 
   return (
@@ -415,9 +488,21 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
         )}
 
         {errorMessage && (
-          <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-300 flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
-            <span>{errorMessage}</span>
+          <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-300 space-y-2">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
+              <span className="leading-snug">{errorMessage}</span>
+            </div>
+            {canRetryUpload && !loading && (
+              <button
+                type="button"
+                onClick={() => executeSubmit()}
+                className="w-full h-8 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/30 text-white font-bold text-[11px] flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Retry Photo Upload & Submit</span>
+              </button>
+            )}
           </div>
         )}
 
@@ -604,6 +689,25 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
             )}
 
             {photoError && <p className="text-[11px] text-rose-400">{photoError}</p>}
+
+            {loading && uploadProgress && (
+              <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.08] space-y-1.5">
+                <div className="flex items-center justify-between text-[11px] text-zinc-300">
+                  <span className="truncate font-medium">
+                    Uploading {uploadProgress.fileName} ({uploadProgress.fileIndex + 1}/{uploadProgress.totalFiles})
+                  </span>
+                  <span className="font-mono font-bold text-[#ccff00] shrink-0">
+                    {uploadProgress.overallPercent}%
+                  </span>
+                </div>
+                <div className="w-full h-1.5 rounded-full bg-white/[0.08] overflow-hidden">
+                  <div
+                    className="h-full bg-[#ccff00] transition-all duration-200"
+                    style={{ width: `${Math.max(4, Math.min(100, uploadProgress.overallPercent))}%` }}
+                  />
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Rating 1-5 */}

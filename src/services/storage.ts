@@ -55,6 +55,7 @@ export interface UserProfile {
   vibePreference: string;
   budgetPreference: string;
   avatarSeed: string;
+  avatarUrl?: string | null;
   bio?: string;
 }
 
@@ -65,6 +66,7 @@ export const EMPTY_GUEST_PROFILE: UserProfile = {
   vibePreference: 'Chill & Social',
   budgetPreference: 'Under ৳500',
   avatarSeed: 'scout-1',
+  avatarUrl: null,
   bio: '',
 };
 

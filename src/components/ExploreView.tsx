@@ -485,6 +485,17 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
                     <div className="space-y-2.5">
                       <div className="flex items-center justify-between gap-2 text-xs">
                         <div className="flex items-center gap-2 min-w-0">
+                          <div className="w-6 h-6 rounded-full bg-white/[0.06] border border-white/[0.1] flex items-center justify-center text-[10px] font-extrabold text-[#ccff00] shrink-0 overflow-hidden uppercase">
+                            {post.author_avatar ? (
+                              <img
+                                src={post.author_avatar}
+                                alt={post.author_name || 'Scout'}
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              (post.author_name || 'S')[0]
+                            )}
+                          </div>
                           <span className="font-bold text-white truncate">
                             {post.author_name || 'OUTERA Scout'}
                           </span>

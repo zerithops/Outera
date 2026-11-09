@@ -291,6 +291,9 @@ export default defineConfig(() => {
         process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
           'sb_publishable_1lRtsi9_-0131cjmSg76BQ_w8wzpFF3'
       ),
+      'process.env.VITE_R2_PUBLIC_URL': JSON.stringify(
+        process.env.VITE_R2_PUBLIC_URL || process.env.NEXT_PUBLIC_R2_PUBLIC_URL || ''
+      ),
     },
     plugins: [outeraPostSeoPlugin(), react(), tailwindcss()],
     resolve: {

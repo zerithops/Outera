@@ -15,6 +15,9 @@ import {
   Sparkles,
   ThumbsUp,
   Share2,
+  Camera,
+  Loader2,
+  RefreshCw,
 } from 'lucide-react';
 import { shareCommunityPost } from '../services/postUrl';
 import { UserLocation } from '../types/outera';
@@ -31,6 +34,7 @@ import {
   signOut,
   ensureUserProfile,
   upsertProfile,
+  uploadUserProfileAvatar,
   fetchUserRealStats,
   fetchRecentActivities,
   subscribeToAuthChanges,
@@ -42,6 +46,7 @@ import {
   PlacePost,
   PlaceSuggestion,
 } from '../services/supabase';
+import { R2UploadProgress, validateImageFile } from '../services/r2Storage';
 import { AdminDashboard } from './AdminDashboard';
 import { CreatePostModal } from './CreatePostModal';
 import { AccountSecuritySection } from './AccountSecuritySection';
@@ -98,6 +103,11 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [editHandle, setEditHandle] = useState('');
   const [editBio, setEditBio] = useState('');
   const [editAvatarSeed, setEditAvatarSeed] = useState('scout-1');
+  const [editAvatarFile, setEditAvatarFile] = useState<File | null>(null);
+  const [editAvatarPreview, setEditAvatarPreview] = useState<string | null>(null);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [avatarUploadProgress, setAvatarUploadProgress] = useState<R2UploadProgress | null>(null);
+  const [canRetryAvatarUpload, setCanRetryAvatarUpload] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [savedSuccess, setSavedSuccess] = useState(false);
 
@@ -159,6 +169,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             vibePreference: cached?.vibePreference || 'Chill & Social',
             budgetPreference: cached?.budgetPreference || 'Under ৳500',
             avatarSeed: cached?.avatarSeed || 'scout-1',
+            avatarUrl: dbProfile.avatar_url || cached?.avatarUrl || null,
             bio: dbProfile.bio || '',
           };
           setProfile(loadedProfile);
@@ -249,14 +260,39 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     setEditHandle(profile.handle.replace(/^@/, ''));
     setEditBio(profile.bio || '');
     setEditAvatarSeed(profile.avatarSeed || 'scout-1');
+    setEditAvatarFile(null);
+    setEditAvatarPreview(profile.avatarUrl || null);
+    setAvatarUploadProgress(null);
+    setCanRetryAvatarUpload(false);
     setEditError(null);
     setShowEditModal(true);
   };
 
-  const handleSaveProfile = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleAvatarFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setEditError(null);
+    setCanRetryAvatarUpload(false);
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const check = validateImageFile(file);
+    if (!check.valid) {
+      setEditError(check.error || 'Invalid profile image.');
+      e.target.value = '';
+      return;
+    }
+
+    if (editAvatarPreview && editAvatarPreview.startsWith('blob:')) {
+      URL.revokeObjectURL(editAvatarPreview);
+    }
+    setEditAvatarFile(file);
+    setEditAvatarPreview(URL.createObjectURL(file));
+    e.target.value = '';
+  };
+
+  const executeSaveProfile = async () => {
     if (!authUser) return;
     setEditError(null);
+    setCanRetryAvatarUpload(false);
 
     const cleanName = editName.trim();
     const cleanUsername = editHandle.replace(/^@/, '').trim().toLowerCase();
@@ -283,11 +319,35 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       }
     }
 
+    let finalAvatarUrl = profile.avatarUrl || null;
+    if (editAvatarFile) {
+      setUploadingAvatar(true);
+      setAvatarUploadProgress(null);
+      const uploadRes = await uploadUserProfileAvatar(editAvatarFile, (prog) => {
+        setAvatarUploadProgress(prog);
+      });
+      setUploadingAvatar(false);
+      setAvatarUploadProgress(null);
+
+      if (!uploadRes.success || !uploadRes.avatarUrl) {
+        setCanRetryAvatarUpload(true);
+        setEditError(
+          uploadRes.error ||
+            'Failed to upload profile photo to Cloudflare R2. Click Retry to try again.'
+        );
+        return;
+      }
+      finalAvatarUrl = uploadRes.avatarUrl;
+      setEditAvatarFile(null);
+      setEditAvatarPreview(finalAvatarUrl);
+    }
+
     const updatedProfile: UserProfile = {
       ...profile,
       name: cleanName,
       handle: `@${cleanUsername}`,
       avatarSeed: editAvatarSeed,
+      avatarUrl: finalAvatarUrl,
       bio: editBio.trim(),
     };
 
@@ -298,13 +358,22 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       display_name: cleanName,
       username: cleanUsername,
       bio: editBio.trim() || undefined,
+      avatar_url: finalAvatarUrl || undefined,
     });
+
+    if (onPostsChanged) onPostsChanged();
+    loadUserPosts(authUser.id);
 
     setSavedSuccess(true);
     setTimeout(() => {
       setSavedSuccess(false);
       setShowEditModal(false);
     }, 800);
+  };
+
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await executeSaveProfile();
   };
 
   const handleDeletePost = async (postId: string) => {
@@ -369,8 +438,18 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       {/* Header Profile Lockup */}
       <div className="p-4 sm:p-5 rounded-2xl bg-[#111317] border border-white/[0.08] flex flex-col xs:flex-row sm:flex-row xs:items-center justify-between gap-4">
         <div className="flex items-center gap-3.5 sm:gap-4 min-w-0">
-          <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-gradient-to-br from-[#ccff00]/15 to-zinc-900 border border-[#ccff00]/30 flex items-center justify-center text-[#ccff00] font-extrabold text-lg sm:text-xl shrink-0 uppercase">
-            {profile.name ? profile.name.slice(0, 2) : 'OUT'}
+          <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-gradient-to-br from-[#ccff00]/15 to-zinc-900 border border-[#ccff00]/30 flex items-center justify-center text-[#ccff00] font-extrabold text-lg sm:text-xl shrink-0 uppercase overflow-hidden">
+            {profile.avatarUrl ? (
+              <img
+                src={profile.avatarUrl}
+                alt={profile.name || 'Scout Avatar'}
+                className="w-full h-full object-cover"
+              />
+            ) : profile.name ? (
+              profile.name.slice(0, 2)
+            ) : (
+              'OUT'
+            )}
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
@@ -1080,12 +1159,73 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             </div>
 
             {editError && (
-              <div className="p-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-300 text-xs">
-                {editError}
+              <div className="p-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-300 text-xs space-y-2">
+                <p>{editError}</p>
+                {canRetryAvatarUpload && !uploadingAvatar && (
+                  <button
+                    type="button"
+                    onClick={() => executeSaveProfile()}
+                    className="w-full h-8 rounded-lg bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 text-white font-bold text-[11px] flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Retry Photo Upload & Save</span>
+                  </button>
+                )}
               </div>
             )}
 
             <form onSubmit={handleSaveProfile} className="space-y-3.5">
+              {/* Profile Photo Upload (Cloudflare R2) */}
+              <div className="flex items-center gap-3.5 p-3 rounded-xl bg-white/[0.03] border border-white/[0.08]">
+                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-[#ccff00]/15 to-zinc-900 border border-[#ccff00]/30 flex items-center justify-center text-[#ccff00] font-extrabold text-base shrink-0 uppercase overflow-hidden">
+                  {editAvatarPreview ? (
+                    <img
+                      src={editAvatarPreview}
+                      alt="Profile avatar preview"
+                      className="w-full h-full object-cover"
+                    />
+                  ) : editName ? (
+                    editName.slice(0, 2)
+                  ) : (
+                    'OUT'
+                  )}
+                </div>
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.1] text-xs font-bold text-white cursor-pointer transition-all">
+                    <Camera className="w-3.5 h-3.5 text-[#ccff00]" />
+                    <span>{editAvatarPreview ? 'Change Photo' : 'Upload Photo'}</span>
+                    <input
+                      type="file"
+                      accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
+                      onChange={handleAvatarFileSelect}
+                      className="hidden"
+                    />
+                  </label>
+                  <p className="text-[10px] text-zinc-400">
+                    JPG, JPEG, PNG, WEBP · Max 5MB
+                  </p>
+                </div>
+              </div>
+
+              {uploadingAvatar && avatarUploadProgress && (
+                <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.08] space-y-1.5">
+                  <div className="flex items-center justify-between text-[11px] text-zinc-300">
+                    <span className="truncate">Uploading profile photo to R2...</span>
+                    <span className="font-mono font-bold text-[#ccff00]">
+                      {avatarUploadProgress.overallPercent}%
+                    </span>
+                  </div>
+                  <div className="w-full h-1.5 rounded-full bg-white/[0.08] overflow-hidden">
+                    <div
+                      className="h-full bg-[#ccff00] transition-all duration-200"
+                      style={{
+                        width: `${Math.max(4, Math.min(100, avatarUploadProgress.overallPercent))}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
               <div>
                 <label className="block text-[11px] font-semibold text-zinc-400 mb-1">
                   Display Name
@@ -1138,9 +1278,17 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
               <button
                 type="submit"
-                className="w-full h-10 rounded-xl bg-[#ccff00] text-black font-extrabold text-xs uppercase tracking-wider hover:bg-[#d8ff33] transition-all"
+                disabled={uploadingAvatar}
+                className="w-full h-10 rounded-xl bg-[#ccff00] text-black font-extrabold text-xs uppercase tracking-wider hover:bg-[#d8ff33] transition-all disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
               >
-                Save Changes
+                {uploadingAvatar ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Uploading Photo...</span>
+                  </>
+                ) : (
+                  <span>Save Changes</span>
+                )}
               </button>
             </form>
           </div>

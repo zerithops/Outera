@@ -17,6 +17,17 @@ import {
   parsePostRouteParam,
 } from './postUrl';
 import { buildPlaceUniqueSlug, doesPlaceMatchRoute } from './placeUrl';
+import {
+  R2UploadProgress,
+  R2UploadedMediaResult,
+  buildR2PublicUrl,
+  getR2PublicBaseUrl,
+  isR2ObjectKeyOrUrl,
+  uploadImageToR2,
+  uploadMultipleImagesToR2,
+  validateImageBatch,
+  validateImageFile,
+} from './r2Storage';
 
 // Resolve Supabase configuration safely across Vite / Next.js / Node
 const getEnvVar = (key: string, fallback: string): string => {
@@ -224,8 +235,13 @@ export async function fetchProfile(userId?: string): Promise<SupabaseProfile | n
     }
     if (!data) return null;
 
+    const resolvedAvatar = data.avatar_url
+      ? getPublicStorageUrl(data.avatar_url) || data.avatar_url
+      : null;
+
     return {
       ...data,
+      avatar_url: resolvedAvatar,
       name: data.display_name,
       handle: `@${data.username}`,
     };
@@ -330,14 +346,65 @@ export async function upsertProfile(profile: {
     }
     if (!data) return null;
 
+    const resolvedAvatar = data.avatar_url
+      ? getPublicStorageUrl(data.avatar_url) || data.avatar_url
+      : null;
+
     return {
       ...data,
+      avatar_url: resolvedAvatar,
       name: data.display_name,
       handle: `@${data.username}`,
     };
   } catch (err) {
     console.warn('upsertProfile error:', err);
     return null;
+  }
+}
+
+export async function uploadUserProfileAvatar(
+  file: File,
+  onProgress?: (progress: R2UploadProgress) => void
+): Promise<{
+  success: boolean;
+  avatarUrl?: string;
+  objectKey?: string;
+  profile?: SupabaseProfile | null;
+  error?: string;
+}> {
+  try {
+    const validation = validateImageFile(file);
+    if (!validation.valid) {
+      return { success: false, error: validation.error || 'Invalid profile image.' };
+    }
+
+    const user = await getCurrentUser();
+    if (!user) {
+      return { success: false, error: 'Please sign in to upload a profile photo.' };
+    }
+
+    const uploaded = await uploadImageToR2(file, {
+      scope: 'avatars',
+      entityId: user.id,
+      onProgress,
+    });
+
+    const avatarValueToSave = uploaded.publicUrl || uploaded.objectKey;
+    const updatedProfile = await upsertProfile({
+      avatar_url: avatarValueToSave,
+    });
+
+    return {
+      success: true,
+      avatarUrl: uploaded.publicUrl,
+      objectKey: uploaded.objectKey,
+      profile: updatedProfile,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err?.message || 'Failed to upload profile photo to Cloudflare R2.',
+    };
   }
 }
 
@@ -2215,163 +2282,93 @@ function removeCachedSuggestionImages(suggestionId: string) {
   } catch {}
 }
 
-// Compress image file to a safe Data URL fallback when Supabase Storage bucket is not yet provisioned
-async function fileToCompressedDataUrl(file: File): Promise<string> {
-  if (typeof window === 'undefined' || typeof document === 'undefined') return '';
-  return new Promise((resolve) => {
-    try {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const rawResult = typeof reader.result === 'string' ? reader.result : '';
-        if (!rawResult) {
-          resolve('');
-          return;
-        }
-        const img = new Image();
-        img.onload = () => {
-          try {
-            const maxDim = 1200;
-            let width = img.width || 800;
-            let height = img.height || 600;
-            if (width > maxDim || height > maxDim) {
-              if (width > height) {
-                height = Math.round((height * maxDim) / width);
-                width = maxDim;
-              } else {
-                width = Math.round((width * maxDim) / height);
-                height = maxDim;
-              }
-            }
-            const canvas = document.createElement('canvas');
-            canvas.width = width;
-            canvas.height = height;
-            const ctx = canvas.getContext('2d');
-            if (!ctx) {
-              resolve(rawResult);
-              return;
-            }
-            ctx.drawImage(img, 0, 0, width, height);
-            const compressed = canvas.toDataURL('image/jpeg', 0.82);
-            resolve(compressed || rawResult);
-          } catch {
-            resolve(rawResult);
-          }
-        };
-        img.onerror = () => resolve(rawResult);
-        img.src = rawResult;
-      };
-      reader.onerror = () => resolve('');
-      reader.readAsDataURL(file);
-    } catch {
-      resolve('');
-    }
-  });
-}
-
 export async function uploadPlaceSuggestionImages(
   userId: string,
   suggestionId: string,
-  files: File[]
+  files: File[],
+  options?: {
+    onProgress?: (progress: R2UploadProgress) => void;
+    preUploadedMedia?: R2UploadedMediaResult[];
+  }
 ): Promise<{ success: boolean; imageUrls: string[]; error?: string }> {
-  if (!files || files.length === 0) {
+  const preUploaded = options?.preUploadedMedia;
+
+  if ((!files || files.length === 0) && (!preUploaded || preUploaded.length === 0)) {
     return { success: true, imageUrls: [] };
   }
 
-  if (files.length > 2) {
-    return {
-      success: false,
-      imageUrls: [],
-      error: 'Maximum 2 photos are allowed per place suggestion.',
-    };
-  }
-
-  const maxFiles = Math.min(files.length, 2);
-  const uploadedUrls: string[] = [];
-  const storedRefs: string[] = [];
-  const allowedMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
-
-  for (let i = 0; i < maxFiles; i++) {
-    const file = files[i];
-    if (file.size > 5 * 1024 * 1024) {
+  let uploadedMedia: R2UploadedMediaResult[] = [];
+  if (preUploaded && preUploaded.length > 0) {
+    uploadedMedia = preUploaded.slice(0, 2);
+  } else {
+    const batchCheck = validateImageBatch(files, 2);
+    if (!batchCheck.valid) {
       return {
         success: false,
-        imageUrls: uploadedUrls,
-        error: `Photo "${file.name}" exceeds the 5MB maximum size limit.`,
+        imageUrls: [],
+        error: batchCheck.error || 'Invalid suggestion photo selection.',
       };
     }
-
-    const rawExt = file.name.split('.').pop()?.toLowerCase() || 'jpg';
-    const validExts = ['jpg', 'jpeg', 'png', 'webp'];
-    const mimeOk = !file.type || allowedMimes.includes(file.type.toLowerCase());
-    if (!validExts.includes(rawExt) || !mimeOk) {
-      return {
-        success: false,
-        imageUrls: uploadedUrls,
-        error: 'Only JPG, JPEG, PNG, and WEBP images are allowed.',
-      };
-    }
-
-    const safeFileName = `sugg_${Date.now()}_${i + 1}_${Math.random().toString(36).slice(2, 6)}.${rawExt}`;
-    const storagePath = `${userId}/${suggestionId}/${safeFileName}`;
-
-    let finalPathOrDataUrl = '';
-    let resolvedUrl = '';
 
     try {
-      const { error: uploadError } = await supabase.storage
-        .from('community-review-media')
-        .upload(storagePath, file, {
-          cacheControl: '3600',
-          contentType: file.type || `image/${rawExt === 'jpg' ? 'jpeg' : rawExt}`,
-          upsert: true,
-        });
+      uploadedMedia = await uploadMultipleImagesToR2(files.slice(0, 2), {
+        scope: 'suggestions',
+        entityId: suggestionId,
+        maxCount: 2,
+        onProgress: options?.onProgress,
+      });
+    } catch (uploadErr: any) {
+      return {
+        success: false,
+        imageUrls: [],
+        error: uploadErr?.message || 'Failed to upload suggestion photos to Cloudflare R2.',
+      };
+    }
+  }
 
-      if (!uploadError) {
-        finalPathOrDataUrl = storagePath;
-        resolvedUrl = await resolveStorageUrl(storagePath);
-      } else {
-        // Fallback to compressed Data URL if bucket is not yet created or RLS blocks upload
-        const dataUrl = await fileToCompressedDataUrl(file);
-        if (dataUrl) {
-          finalPathOrDataUrl = dataUrl;
-          resolvedUrl = dataUrl;
-        }
-      }
+  const uploadedUrls: string[] = [];
+  const storedRefs: string[] = [];
 
-      if (resolvedUrl) {
-        uploadedUrls.push(resolvedUrl);
-      }
-      if (finalPathOrDataUrl) {
-        storedRefs.push(finalPathOrDataUrl);
-      }
+  for (let i = 0; i < uploadedMedia.length; i++) {
+    const item = uploadedMedia[i];
+    const storageValue = item.storagePath || item.publicUrl || item.objectKey;
+    const publicUrl = item.publicUrl || buildR2PublicUrl(item.objectKey);
 
-      // Insert into place_suggestion_images table (trying extended columns first, then base columns)
-      if (finalPathOrDataUrl) {
-        const extIns = await supabase.from('place_suggestion_images').insert({
-          suggestion_id: suggestionId,
-          user_id: userId,
-          storage_path: finalPathOrDataUrl,
-          display_order: i + 1,
-          is_primary: i === 0,
-          created_at: new Date().toISOString(),
-        });
-        if (extIns.error) {
-          await supabase.from('place_suggestion_images').insert({
-            suggestion_id: suggestionId,
-            user_id: userId,
-            storage_path: finalPathOrDataUrl,
-            created_at: new Date().toISOString(),
-          });
-        }
-      }
-    } catch (e) {
-      console.warn('uploadPlaceSuggestionImages fallback notice:', e);
-      const dataUrl = await fileToCompressedDataUrl(file);
-      if (dataUrl) {
-        uploadedUrls.push(dataUrl);
-        storedRefs.push(dataUrl);
+    if (!storageValue) {
+      return {
+        success: false,
+        imageUrls: [],
+        error: 'Upload did not return a valid R2 image URL or object key.',
+      };
+    }
+
+    const extIns = await supabase.from('place_suggestion_images').insert({
+      suggestion_id: suggestionId,
+      user_id: userId,
+      storage_path: storageValue,
+      display_order: i + 1,
+      is_primary: i === 0,
+      created_at: new Date().toISOString(),
+    });
+
+    if (extIns.error) {
+      const baseIns = await supabase.from('place_suggestion_images').insert({
+        suggestion_id: suggestionId,
+        user_id: userId,
+        storage_path: storageValue,
+        created_at: new Date().toISOString(),
+      });
+      if (baseIns.error) {
+        return {
+          success: false,
+          imageUrls: [],
+          error: baseIns.error.message || 'Failed to save suggestion photo record in database.',
+        };
       }
     }
+
+    uploadedUrls.push(publicUrl);
+    storedRefs.push(storageValue);
   }
 
   if (storedRefs.length > 0) {
@@ -2381,14 +2378,15 @@ export async function uploadPlaceSuggestionImages(
   }
 
   return {
-    success: uploadedUrls.length > 0 || files.length === 0,
+    success: true,
     imageUrls: uploadedUrls,
   };
 }
 
 export async function submitPlaceSuggestion(
   suggestion: PlaceSuggestionInput,
-  photoFiles?: File[]
+  photoFiles?: File[],
+  options?: { onUploadProgress?: (progress: R2UploadProgress) => void }
 ): Promise<{ success: boolean; error?: string; data?: any }> {
   try {
     const { data: { user }, error: authError } = await supabase.auth.getUser();
@@ -2435,11 +2433,33 @@ export async function submitPlaceSuggestion(
     }
 
     const effectivePhotos = photoFiles || suggestion.photos;
-    if (effectivePhotos && effectivePhotos.length > 2) {
-      return {
-        success: false,
-        error: 'Maximum 2 photos are allowed per suggestion.',
-      };
+    if (effectivePhotos && effectivePhotos.length > 0) {
+      const batchValidation = validateImageBatch(effectivePhotos, 2);
+      if (!batchValidation.valid) {
+        return {
+          success: false,
+          error: batchValidation.error || 'Maximum 2 photos (JPG, JPEG, PNG, WEBP up to 5MB) are allowed.',
+        };
+      }
+    }
+
+    // Upload photos to Cloudflare R2 FIRST so failed uploads never create incomplete suggestions
+    let preUploadedMedia: R2UploadedMediaResult[] = [];
+    if (effectivePhotos && effectivePhotos.length > 0) {
+      try {
+        preUploadedMedia = await uploadMultipleImagesToR2(effectivePhotos.slice(0, 2), {
+          scope: 'suggestions',
+          maxCount: 2,
+          onProgress: options?.onUploadProgress,
+        });
+      } catch (uploadErr: any) {
+        return {
+          success: false,
+          error:
+            uploadErr?.message ||
+            'Photo upload to Cloudflare R2 failed. Your suggestion was not submitted—please retry.',
+        };
+      }
     }
 
     const addressParts = [
@@ -2531,8 +2551,18 @@ export async function submitPlaceSuggestion(
       insertedRow = baseData?.[0];
     }
 
-    if (insertedRow && effectivePhotos && effectivePhotos.length > 0) {
-      await uploadPlaceSuggestionImages(user.id, insertedRow.id, effectivePhotos.slice(0, 2));
+    if (insertedRow && preUploadedMedia.length > 0) {
+      const saveImgRes = await uploadPlaceSuggestionImages(user.id, insertedRow.id, [], {
+        preUploadedMedia,
+      });
+      if (!saveImgRes.success) {
+        // Roll back suggestion row so an incomplete suggestion without its photos is not left behind
+        await supabase.from('place_suggestions').delete().eq('id', insertedRow.id);
+        return {
+          success: false,
+          error: saveImgRes.error || 'Failed to attach uploaded photos to place suggestion.',
+        };
+      }
     }
 
     return { success: true, data: insertedRow };
@@ -3301,11 +3331,16 @@ export async function isCurrentUserAdmin(): Promise<boolean> {
   }
 }
 
-// Extracts the clean object path inside `community-review-media` even if given a signed or public Supabase URL
+// Extracts the clean object path inside legacy `community-review-media` ONLY for legacy Supabase Storage paths
 export function extractCleanStoragePath(pathOrUrl: string): string | null {
   if (!pathOrUrl || typeof pathOrUrl !== 'string') return null;
   const trimmed = pathOrUrl.trim();
   if (!trimmed || trimmed.startsWith('data:') || trimmed.startsWith('blob:')) return null;
+
+  // Never treat Cloudflare R2 URLs or R2 object keys as legacy Supabase Storage paths
+  if (isR2ObjectKeyOrUrl(trimmed)) {
+    return null;
+  }
 
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
     const marker = '/community-review-media/';
@@ -3317,50 +3352,100 @@ export function extractCleanStoragePath(pathOrUrl: string): string | null {
     return null;
   }
 
-  const clean = trimmed.replace(/^\/+/, '').replace(/^community-review-media\//, '');
+  if (trimmed.startsWith('community-review-media/')) {
+    return trimmed.replace(/^community-review-media\//, '') || null;
+  }
+
+  const clean = trimmed.replace(/^\/+/, '');
+  // Legacy Supabase storage paths follow `{userUuid}/{entityUuid}/{fileName}`
+  if (/^[0-9a-f]{8}-[0-9a-f-]{27}\/[0-9a-f]{8}-[0-9a-f-]{27}\//i.test(clean)) {
+    return clean;
+  }
+
+  // If VITE_R2_PUBLIC_URL is configured and this is a relative key (not a legacy UUID/UUID path), it belongs to R2
+  if (getR2PublicBaseUrl()) {
+    return null;
+  }
+
   return clean || null;
 }
 
 export function getPublicStorageUrl(storagePath: string): string {
-  if (!storagePath) return '';
-  if (storagePath.startsWith('data:') || storagePath.startsWith('blob:')) {
-    return storagePath;
+  if (!storagePath || typeof storagePath !== 'string') return '';
+  const trimmed = storagePath.trim();
+  if (!trimmed) return '';
+  if (trimmed.startsWith('data:') || trimmed.startsWith('blob:')) {
+    return trimmed;
   }
-  const extracted = extractCleanStoragePath(storagePath);
-  if (!extracted) {
-    if (storagePath.startsWith('http://') || storagePath.startsWith('https://')) {
-      return storagePath;
+
+  // 1. Cloudflare R2 object key or R2 public URL
+  if (isR2ObjectKeyOrUrl(trimmed)) {
+    return buildR2PublicUrl(trimmed);
+  }
+
+  // 2. Full HTTP/HTTPS URL (e.g. R2 custom domain, CDN, or Unsplash) unless it's a legacy Supabase URL
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    const extractedLegacy = extractCleanStoragePath(trimmed);
+    if (!extractedLegacy) {
+      return trimmed;
     }
-    return '';
+    const { data } = supabase.storage.from('community-review-media').getPublicUrl(extractedLegacy);
+    return data?.publicUrl || trimmed;
   }
-  const { data } = supabase.storage.from('community-review-media').getPublicUrl(extracted);
-  return data?.publicUrl || '';
+
+  // 3. Legacy Supabase `community-review-media` path
+  const extracted = extractCleanStoragePath(trimmed);
+  if (extracted) {
+    const { data } = supabase.storage.from('community-review-media').getPublicUrl(extracted);
+    return data?.publicUrl || '';
+  }
+
+  // 4. Relative R2 object key when VITE_R2_PUBLIC_URL is configured
+  const r2Base = getR2PublicBaseUrl();
+  if (r2Base) {
+    return `${r2Base}/${trimmed.replace(/^\/+/, '')}`;
+  }
+
+  return trimmed;
 }
 
 export async function resolveStorageUrl(storagePath: string): Promise<string> {
-  if (!storagePath) return '';
-  if (storagePath.startsWith('data:') || storagePath.startsWith('blob:')) {
-    return storagePath;
+  if (!storagePath || typeof storagePath !== 'string') return '';
+  const trimmed = storagePath.trim();
+  if (!trimmed) return '';
+  if (trimmed.startsWith('data:') || trimmed.startsWith('blob:')) {
+    return trimmed;
   }
 
-  const cleanPath = extractCleanStoragePath(storagePath);
-  if (!cleanPath) {
-    // External non-Supabase URL (e.g. Unsplash, local asset)
-    return storagePath;
+  // 1. Resolve Cloudflare R2 URLs and R2 object keys directly via VITE_R2_PUBLIC_URL
+  if (isR2ObjectKeyOrUrl(trimmed)) {
+    return buildR2PublicUrl(trimmed);
   }
 
-  // First try a long-lived signed URL (works for both private and public buckets when authenticated/permitted)
+  // 2. Non-Supabase full HTTP/HTTPS URLs (including R2 custom domains)
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    const legacyKey = extractCleanStoragePath(trimmed);
+    if (!legacyKey) {
+      return trimmed;
+    }
+  }
+
+  // 3. Legacy Supabase `community-review-media` path backward compatibility
+  const cleanLegacyPath = extractCleanStoragePath(trimmed);
+  if (!cleanLegacyPath) {
+    return getPublicStorageUrl(trimmed);
+  }
+
   try {
     const { data: signedData, error } = await supabase.storage
       .from('community-review-media')
-      .createSignedUrl(cleanPath, 60 * 60 * 24 * 7);
+      .createSignedUrl(cleanLegacyPath, 60 * 60 * 24 * 7);
     if (!error && signedData?.signedUrl) {
       return signedData.signedUrl;
     }
   } catch {}
 
-  // Fallback to public bucket URL
-  return getPublicStorageUrl(cleanPath);
+  return getPublicStorageUrl(cleanLegacyPath);
 }
 
 async function hydratePlacePosts(rawPosts: any[]): Promise<PlacePost[]> {
@@ -3526,7 +3611,9 @@ async function hydratePlacePosts(rawPosts: any[]): Promise<PlacePost[]> {
         updated_at: p.updated_at,
         author_name: author?.display_name || 'OUTERA Scout',
         author_username: author?.username ? `@${author.username}` : '@scout',
-        author_avatar: author?.avatar_url || null,
+        author_avatar: author?.avatar_url
+          ? getPublicStorageUrl(author.avatar_url) || author.avatar_url
+          : null,
         place_name: place.name || p.place_name || 'Selected Place',
         place_category: resolvedCategory,
         place_address: place.address || p.place_address || '',
@@ -3940,21 +4027,28 @@ export async function fetchPostImages(postId: string): Promise<string[]> {
   }
 }
 
-// Upload direct photos from user's device to community-review-media bucket
+// Upload direct photos from user's device to Cloudflare R2 ("outera-media") via "r2-upload-url" Edge Function
 // STRICTLY MAXIMUM 2 PHOTOS per community post (JPG/JPEG/PNG/WEBP, max 5MB each)
 export async function uploadPlacePostImages(
   userId: string,
   postId: string,
   files: File[],
-  options?: { replaceExisting?: boolean; retainedUrls?: string[] }
+  options?: {
+    replaceExisting?: boolean;
+    retainedUrls?: string[];
+    onProgress?: (progress: R2UploadProgress) => void;
+    preUploadedMedia?: R2UploadedMediaResult[];
+  }
 ): Promise<{ success: boolean; imagePaths: string[]; imageUrls: string[]; error?: string }> {
   const retainedUrls = (options?.retainedUrls || []).slice(0, 2);
+  const preUploaded = options?.preUploadedMedia;
+  const newCount = preUploaded ? preUploaded.length : files?.length || 0;
 
-  if ((!files || files.length === 0) && !options?.replaceExisting) {
+  if (newCount === 0 && !options?.replaceExisting) {
     return { success: true, imagePaths: [], imageUrls: retainedUrls };
   }
 
-  if (retainedUrls.length + (files?.length || 0) > 2) {
+  if (retainedUrls.length + newCount > 2) {
     return {
       success: false,
       imagePaths: [],
@@ -3963,7 +4057,43 @@ export async function uploadPlacePostImages(
     };
   }
 
-  // If replacing existing photos on post edit, clean up removed images first
+  // Validate and upload new files to Cloudflare R2 FIRST before modifying existing DB records
+  let uploadedMedia: R2UploadedMediaResult[] = [];
+  if (preUploaded && preUploaded.length > 0) {
+    uploadedMedia = preUploaded.slice(0, 2 - retainedUrls.length);
+  } else if (files && files.length > 0) {
+    const maxNewFiles = Math.min(files.length, 2 - retainedUrls.length);
+    const filesToUpload = files.slice(0, maxNewFiles);
+    const batchValidation = validateImageBatch(filesToUpload, 2 - retainedUrls.length);
+    if (!batchValidation.valid) {
+      return {
+        success: false,
+        imagePaths: [],
+        imageUrls: retainedUrls,
+        error: batchValidation.error || 'Invalid photo selection.',
+      };
+    }
+
+    try {
+      uploadedMedia = await uploadMultipleImagesToR2(filesToUpload, {
+        scope: 'posts',
+        entityId: postId,
+        maxCount: 2 - retainedUrls.length,
+        onProgress: options?.onProgress,
+      });
+    } catch (uploadErr: any) {
+      return {
+        success: false,
+        imagePaths: [],
+        imageUrls: retainedUrls,
+        error:
+          uploadErr?.message ||
+          'Failed to upload photos to Cloudflare R2. Please check your connection and try again.',
+      };
+    }
+  }
+
+  // If replacing existing photos on post edit, clean up removed images only after new R2 uploads succeeded
   if (options?.replaceExisting) {
     try {
       const { data: oldImgs } = await supabase
@@ -3971,25 +4101,35 @@ export async function uploadPlacePostImages(
         .select('id, storage_path')
         .eq('post_id', postId);
 
-      const retainedCleanPaths = new Set(
-        retainedUrls.map((u) => extractCleanStoragePath(u) || u)
+      const retainedNormalized = new Set(
+        retainedUrls.flatMap((u) => {
+          const legacy = extractCleanStoragePath(u);
+          return legacy ? [u, legacy] : [u];
+        })
       );
 
       if (oldImgs && oldImgs.length > 0) {
         const toDeleteIds: string[] = [];
-        const toRemoveStoragePaths: string[] = [];
+        const toRemoveLegacyStoragePaths: string[] = [];
 
         for (const oldImg of oldImgs) {
-          const cleanOld = extractCleanStoragePath(oldImg.storage_path) || oldImg.storage_path;
-          if (!retainedCleanPaths.has(cleanOld) && !retainedUrls.includes(oldImg.storage_path)) {
+          const resolvedOld = await resolveStorageUrl(oldImg.storage_path);
+          const legacyOld = extractCleanStoragePath(oldImg.storage_path);
+          const isRetained =
+            retainedNormalized.has(oldImg.storage_path) ||
+            (resolvedOld && retainedNormalized.has(resolvedOld)) ||
+            (legacyOld && retainedNormalized.has(legacyOld));
+
+          if (!isRetained) {
             toDeleteIds.push(oldImg.id);
-            const storageKey = extractCleanStoragePath(oldImg.storage_path);
-            if (storageKey) toRemoveStoragePaths.push(storageKey);
+            if (legacyOld) {
+              toRemoveLegacyStoragePaths.push(legacyOld);
+            }
           }
         }
 
-        if (toRemoveStoragePaths.length > 0) {
-          await supabase.storage.from('community-review-media').remove(toRemoveStoragePaths);
+        if (toRemoveLegacyStoragePaths.length > 0) {
+          await supabase.storage.from('community-review-media').remove(toRemoveLegacyStoragePaths);
         }
         if (toDeleteIds.length > 0) {
           await supabase.from('place_post_images').delete().in('id', toDeleteIds);
@@ -4000,106 +4140,58 @@ export async function uploadPlacePostImages(
     }
   }
 
-  const uploadedPaths: string[] = [
-    ...retainedUrls.map((u) => extractCleanStoragePath(u) || u),
-  ];
+  const uploadedPaths: string[] = [...retainedUrls];
   const uploadedUrls: string[] = [...retainedUrls];
-  const maxNewFiles = Math.min(files?.length || 0, 2 - retainedUrls.length);
-  const allowedMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
 
-  for (let i = 0; i < maxNewFiles; i++) {
-    const file = files[i];
+  for (let i = 0; i < uploadedMedia.length; i++) {
+    const item = uploadedMedia[i];
     const orderIndex = retainedUrls.length + i;
+    const storageValue = item.storagePath || item.publicUrl || item.objectKey;
+    const resolvedPublicUrl = item.publicUrl || buildR2PublicUrl(item.objectKey);
 
-    if (file.size > 5 * 1024 * 1024) {
+    if (!storageValue) {
       return {
         success: false,
         imagePaths: uploadedPaths,
         imageUrls: uploadedUrls,
-        error: `Photo "${file.name}" exceeds the 5MB limit.`,
+        error: 'Cloudflare R2 upload did not return a valid image URL or object key.',
       };
     }
 
-    const rawExt = file.name.split('.').pop()?.toLowerCase() || 'jpg';
-    const validExts = ['jpg', 'jpeg', 'png', 'webp'];
-    const mimeOk = !file.type || allowedMimes.includes(file.type.toLowerCase());
-    if (!validExts.includes(rawExt) || !mimeOk) {
-      return {
-        success: false,
-        imagePaths: uploadedPaths,
-        imageUrls: uploadedUrls,
-        error: 'Only JPG, JPEG, PNG, and WEBP image formats are supported.',
-      };
-    }
+    const extInsert = await supabase.from('place_post_images').insert({
+      post_id: postId,
+      user_id: userId,
+      storage_path: storageValue,
+      display_order: orderIndex + 1,
+      is_primary: orderIndex === 0,
+      created_at: new Date().toISOString(),
+    });
 
-    const safeFileName = `${Date.now()}_${orderIndex + 1}_${Math.random().toString(36).slice(2, 6)}.${rawExt}`;
-    const storagePath = `${userId}/${postId}/${safeFileName}`;
-
-    let finalPathOrDataUrl = '';
-    let resolvedUrl = '';
-
-    try {
-      const { error: uploadError } = await supabase.storage
-        .from('community-review-media')
-        .upload(storagePath, file, {
-          cacheControl: '3600',
-          contentType: file.type || `image/${rawExt === 'jpg' ? 'jpeg' : rawExt}`,
-          upsert: true,
-        });
-
-      if (!uploadError) {
-        finalPathOrDataUrl = storagePath;
-        resolvedUrl = await resolveStorageUrl(storagePath);
-      } else {
-        console.warn('OUTERA Storage upload fallback to compressed Data URL:', uploadError.message);
-        const dataUrl = await fileToCompressedDataUrl(file);
-        if (dataUrl) {
-          finalPathOrDataUrl = dataUrl;
-          resolvedUrl = dataUrl;
-        }
-      }
-
-      if (finalPathOrDataUrl) {
-        uploadedPaths.push(finalPathOrDataUrl);
-      }
-      if (resolvedUrl) {
-        uploadedUrls.push(resolvedUrl);
-      }
-
-      if (finalPathOrDataUrl) {
-        // Try inserting with display_order and is_primary first, fallback to base columns
-        const extInsert = await supabase.from('place_post_images').insert({
-          post_id: postId,
-          user_id: userId,
-          storage_path: finalPathOrDataUrl,
-          display_order: orderIndex + 1,
-          is_primary: orderIndex === 0,
-          created_at: new Date().toISOString(),
-        });
-
-        if (extInsert.error) {
-          await supabase.from('place_post_images').insert({
-            post_id: postId,
-            user_id: userId,
-            storage_path: finalPathOrDataUrl,
-            created_at: new Date().toISOString(),
-          });
-        }
-      }
-    } catch (e) {
-      console.warn('Failed to upload file, using compressed fallback:', file.name, e);
-      const dataUrl = await fileToCompressedDataUrl(file);
-      if (dataUrl) {
-        uploadedPaths.push(dataUrl);
-        uploadedUrls.push(dataUrl);
+    if (extInsert.error) {
+      const baseInsert = await supabase.from('place_post_images').insert({
+        post_id: postId,
+        user_id: userId,
+        storage_path: storageValue,
+        created_at: new Date().toISOString(),
+      });
+      if (baseInsert.error) {
+        return {
+          success: false,
+          imagePaths: uploadedPaths,
+          imageUrls: uploadedUrls,
+          error: baseInsert.error.message || 'Failed to save uploaded photo URL in database.',
+        };
       }
     }
+
+    uploadedPaths.push(storageValue);
+    uploadedUrls.push(resolvedPublicUrl);
   }
 
   storeCachedPostImages(postId, uploadedPaths);
 
   return {
-    success: uploadedPaths.length > 0 || (files?.length || 0) === 0,
+    success: true,
     imagePaths: uploadedPaths,
     imageUrls: uploadedUrls,
   };
@@ -4141,7 +4233,9 @@ export async function fetchPostComments(postId: string): Promise<PlacePostCommen
         updated_at: c.updated_at,
         author_name: profile?.display_name || 'OUTERA Scout',
         author_username: profile?.username ? `@${profile.username}` : '@scout',
-        author_avatar: profile?.avatar_url || null,
+        author_avatar: profile?.avatar_url
+          ? getPublicStorageUrl(profile.avatar_url) || profile.avatar_url
+          : null,
       };
     });
   } catch (err) {
@@ -4187,7 +4281,9 @@ export async function addPostComment(
       created_at: payload.created_at,
       author_name: profile?.display_name || 'OUTERA Scout',
       author_username: profile?.username ? `@${profile.username}` : '@scout',
-      author_avatar: profile?.avatar_url || null,
+      author_avatar: profile?.avatar_url
+        ? getPublicStorageUrl(profile.avatar_url) || profile.avatar_url
+        : null,
     };
 
     return { success: true, comment: newComment };
