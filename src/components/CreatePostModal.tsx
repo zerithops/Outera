@@ -22,6 +22,7 @@ import {
   PlacePost,
   StorageUploadProgress,
   validateImageFile,
+  ingestSelectedFileSafely,
 } from '../services/supabase';
 import { Place } from '../types/outera';
 import { OuteraLogo } from './OuteraLogo';
@@ -69,6 +70,7 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
   const [photosModified, setPhotosModified] = useState(false);
   const [selectedPhotos, setSelectedPhotos] = useState<PhotoPreview[]>([]);
   const [photoError, setPhotoError] = useState<string | null>(null);
+  const [processingPhotos, setProcessingPhotos] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [loading, setLoading] = useState(false);
@@ -164,7 +166,7 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
     setCanRetryUpload(false);
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     setPhotoError(null);
     setErrorMessage(null);
     setCanRetryUpload(false);
@@ -184,28 +186,44 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
       );
     }
 
+    const filesToProcess = files.slice(0, remainingSlots);
+    setProcessingPhotos(true);
     const validNewPreviews: PhotoPreview[] = [];
-    for (const file of files.slice(0, remainingSlots)) {
-      const check = validateImageFile(file);
-      if (!check.valid) {
-        setPhotoError(check.error || 'Invalid image file.');
-        continue;
+
+    try {
+      for (const file of filesToProcess) {
+        const check = validateImageFile(file);
+        if (!check.valid) {
+          setPhotoError(check.error || 'Invalid image file.');
+          continue;
+        }
+
+        try {
+          // Immediately read into memory buffer so mobile OS permissions cannot expire
+          const safeFile = await ingestSelectedFileSafely(file);
+          validNewPreviews.push({
+            file: safeFile,
+            previewUrl: URL.createObjectURL(safeFile),
+          });
+        } catch (readErr: any) {
+          setPhotoError(
+            readErr?.message ||
+              'Unable to read the selected photo from your device. Please pick the photo directly from your gallery.'
+          );
+        }
       }
 
-      validNewPreviews.push({
-        file,
-        previewUrl: URL.createObjectURL(file),
-      });
-    }
-
-    if (validNewPreviews.length > 0) {
-      setPhotosModified(true);
-      setSelectedPhotos((prev) =>
-        [...prev, ...validNewPreviews].slice(0, MAX_POST_PHOTOS - existingImageUrls.length)
-      );
-    }
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
+      if (validNewPreviews.length > 0) {
+        setPhotosModified(true);
+        setSelectedPhotos((prev) =>
+          [...prev, ...validNewPreviews].slice(0, MAX_POST_PHOTOS - existingImageUrls.length)
+        );
+      }
+    } finally {
+      setProcessingPhotos(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
     }
   };
 
@@ -647,18 +665,28 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
             {totalPhotoCount < MAX_POST_PHOTOS ? (
               <button
                 type="button"
+                disabled={processingPhotos}
                 onClick={() => fileInputRef.current?.click()}
-                className="w-full py-3 px-4 rounded-xl border border-dashed border-white/[0.12] hover:border-[#ccff00]/40 bg-white/[0.02] hover:bg-white/[0.04] flex flex-wrap items-center justify-center gap-2 text-xs text-zinc-300 hover:text-white transition-all group cursor-pointer"
+                className="w-full py-3 px-4 rounded-xl border border-dashed border-white/[0.12] hover:border-[#ccff00]/40 bg-white/[0.02] hover:bg-white/[0.04] flex flex-wrap items-center justify-center gap-2 text-xs text-zinc-300 hover:text-white transition-all group cursor-pointer disabled:opacity-60"
               >
-                <Camera className="w-4 h-4 text-[#ccff00] group-hover:scale-110 transition-transform shrink-0" />
-                <span className="font-semibold">
-                  {totalPhotoCount === 0
-                    ? 'Upload Photo 1 (Primary Cover)'
-                    : 'Add Photo 2 (Secondary Image)'}
-                </span>
-                <span className="text-[10px] text-zinc-500 font-mono">
-                  (JPG, PNG, WEBP · max 5MB)
-                </span>
+                {processingPhotos ? (
+                  <span className="flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 text-[#ccff00] animate-spin" />
+                    <span className="font-semibold text-zinc-300">Reading and preparing photo...</span>
+                  </span>
+                ) : (
+                  <>
+                    <Camera className="w-4 h-4 text-[#ccff00] group-hover:scale-110 transition-transform shrink-0" />
+                    <span className="font-semibold">
+                      {totalPhotoCount === 0
+                        ? 'Upload Photo 1 (Primary Cover)'
+                        : 'Add Photo 2 (Secondary Image)'}
+                    </span>
+                    <span className="text-[10px] text-zinc-500 font-mono">
+                      (JPG, PNG, WEBP · up to 10MB)
+                    </span>
+                  </>
+                )}
               </button>
             ) : (
               <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.08] text-[11px] text-zinc-400 flex items-center justify-between gap-2">

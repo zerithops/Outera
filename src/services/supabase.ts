@@ -494,6 +494,14 @@ export function formatUploadErrorMessage(rawError?: any): string {
   const msg = typeof rawError === 'string' ? rawError : rawError.message || String(rawError);
   const lower = msg.toLowerCase();
   if (
+    lower.includes('notreadableerror') ||
+    lower.includes('permission problems') ||
+    lower.includes('could not be read') ||
+    lower.includes('after a reference to a file was acquired')
+  ) {
+    return 'The selected photo could not be read because its temporary file permission expired on your device. Please re-select the photo from your gallery.';
+  }
+  if (
     lower.includes('failed to fetch') ||
     lower.includes('network') ||
     lower.includes('load failed') ||
@@ -509,6 +517,58 @@ export function formatUploadErrorMessage(rawError?: any): string {
     return 'Your session may have expired. Please refresh the page or sign in again to upload photos.';
   }
   return msg;
+}
+
+/**
+ * Safely ingests a file from an <input type="file"> immediately upon selection,
+ * reading its bytes into browser memory (ArrayBuffer -> in-memory File)
+ * before mobile OS (Android/iOS) content URI grants or temp file handles expire.
+ * This completely prevents:
+ * "NotReadableError: The requested file could not be read, typically due to permission problems that have occurred after a reference to a file was acquired."
+ */
+export async function ingestSelectedFileSafely(file: File): Promise<File> {
+  if (typeof window === 'undefined') return file;
+
+  try {
+    // 1. Immediately read bytes into memory while Android/iOS content URI is fresh
+    const buffer = await new Promise<ArrayBuffer>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (reader.result instanceof ArrayBuffer) {
+          resolve(reader.result);
+        } else {
+          reject(new Error('Failed to read file buffer'));
+        }
+      };
+      reader.onerror = () => {
+        reject(reader.error || new Error('The selected photo could not be read from your device.'));
+      };
+      reader.readAsArrayBuffer(file);
+    });
+
+    // 2. Create detached in-memory File backed by ArrayBuffer
+    const inMemoryFile = new File([buffer], file.name, {
+      type: file.type || 'image/jpeg',
+      lastModified: file.lastModified || Date.now(),
+    });
+
+    // 3. Compress / downscale immediately (shrink 5-10MB to ~300KB-600KB)
+    const optimized = await compressImageForUpload(inMemoryFile);
+    return optimized;
+  } catch (err: any) {
+    console.warn('ingestSelectedFileSafely error:', err);
+    const msg = err?.message || String(err || '');
+    if (
+      msg.includes('permission') ||
+      msg.includes('NotReadableError') ||
+      msg.includes('could not be read')
+    ) {
+      throw new Error(
+        'The selected photo could not be read because its temporary permission expired on your device. Please choose the photo directly from your gallery.'
+      );
+    }
+    throw err;
+  }
 }
 
 /**

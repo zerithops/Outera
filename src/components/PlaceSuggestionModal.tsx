@@ -22,6 +22,7 @@ import {
   MAX_POST_IMAGES,
   StorageUploadProgress,
   validateImageFile,
+  ingestSelectedFileSafely,
 } from '../services/supabase';
 import { LocationPickerMap } from './LocationPickerMap';
 import { Coordinates, Place } from '../types/outera';
@@ -78,6 +79,7 @@ export const PlaceSuggestionModal: React.FC<PlaceSuggestionModalProps> = ({
   const [duplicateAcknowledged, setDuplicateAcknowledged] = useState(false);
 
   const [loading, setLoading] = useState(false);
+  const [processingPhotos, setProcessingPhotos] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<StorageUploadProgress | null>(null);
   const [canRetryUpload, setCanRetryUpload] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -187,7 +189,7 @@ export const PlaceSuggestionModal: React.FC<PlaceSuggestionModalProps> = ({
     }
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
 
@@ -205,26 +207,40 @@ export const PlaceSuggestionModal: React.FC<PlaceSuggestionModalProps> = ({
       setErrorMessage(`You can only upload up to 2 photos total (${remainingSlots} slot remaining).`);
     }
 
+    const filesToProcess = files.slice(0, remainingSlots);
+    setProcessingPhotos(true);
     const validNewFiles: File[] = [];
-    for (const file of files.slice(0, remainingSlots)) {
-      const check = validateImageFile(file);
-      if (!check.valid) {
-        setErrorMessage(check.error || 'Invalid image file.');
-        continue;
+
+    try {
+      for (const file of filesToProcess) {
+        const check = validateImageFile(file);
+        if (!check.valid) {
+          setErrorMessage(check.error || 'Invalid image file.');
+          continue;
+        }
+        try {
+          // Immediately read into memory buffer so device permissions cannot expire
+          const safeFile = await ingestSelectedFileSafely(file);
+          validNewFiles.push(safeFile);
+        } catch (readErr: any) {
+          setErrorMessage(
+            readErr?.message || 'Could not read photo from device. Please pick directly from gallery.'
+          );
+        }
       }
-      validNewFiles.push(file);
-    }
 
-    if (validNewFiles.length > 0) {
-      const nextFiles = [...selectedFiles, ...validNewFiles].slice(0, MAX_PHOTOS);
-      setSelectedFiles(nextFiles);
-      const nextPreviews = nextFiles.map((f) => URL.createObjectURL(f));
-      previewUrls.forEach((u) => URL.revokeObjectURL(u));
-      setPreviewUrls(nextPreviews);
-    }
-
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
+      if (validNewFiles.length > 0) {
+        const nextFiles = [...selectedFiles, ...validNewFiles].slice(0, MAX_PHOTOS);
+        setSelectedFiles(nextFiles);
+        const nextPreviews = nextFiles.map((f) => URL.createObjectURL(f));
+        previewUrls.forEach((u) => URL.revokeObjectURL(u));
+        setPreviewUrls(nextPreviews);
+      }
+    } finally {
+      setProcessingPhotos(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
     }
   };
 

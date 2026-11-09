@@ -47,6 +47,7 @@ import {
   PlaceSuggestion,
   StorageUploadProgress,
   validateImageFile,
+  ingestSelectedFileSafely,
 } from '../services/supabase';
 import { AdminDashboard } from './AdminDashboard';
 import { CreatePostModal } from './CreatePostModal';
@@ -269,7 +270,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     setShowEditModal(true);
   };
 
-  const handleAvatarFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleAvatarFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     setEditError(null);
     setCanRetryAvatarUpload(false);
     const file = e.target.files?.[0];
@@ -282,12 +283,20 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       return;
     }
 
-    if (editAvatarPreview && editAvatarPreview.startsWith('blob:')) {
-      URL.revokeObjectURL(editAvatarPreview);
+    try {
+      const safeFile = await ingestSelectedFileSafely(file);
+      if (editAvatarPreview && editAvatarPreview.startsWith('blob:')) {
+        URL.revokeObjectURL(editAvatarPreview);
+      }
+      setEditAvatarFile(safeFile);
+      setEditAvatarPreview(URL.createObjectURL(safeFile));
+    } catch (readErr: any) {
+      setEditError(
+        readErr?.message || 'Unable to read avatar photo from your device. Please pick directly from gallery.'
+      );
+    } finally {
+      e.target.value = '';
     }
-    setEditAvatarFile(file);
-    setEditAvatarPreview(URL.createObjectURL(file));
-    e.target.value = '';
   };
 
   const executeSaveProfile = async () => {
