@@ -45,8 +45,9 @@ import {
   isEmailVerified,
   PlacePost,
   PlaceSuggestion,
+  StorageUploadProgress,
+  validateImageFile,
 } from '../services/supabase';
-import { R2UploadProgress, validateImageFile } from '../services/r2Storage';
 import { AdminDashboard } from './AdminDashboard';
 import { CreatePostModal } from './CreatePostModal';
 import { AccountSecuritySection } from './AccountSecuritySection';
@@ -106,7 +107,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [editAvatarFile, setEditAvatarFile] = useState<File | null>(null);
   const [editAvatarPreview, setEditAvatarPreview] = useState<string | null>(null);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
-  const [avatarUploadProgress, setAvatarUploadProgress] = useState<R2UploadProgress | null>(null);
+  const [avatarUploadProgress, setAvatarUploadProgress] = useState<StorageUploadProgress | null>(null);
   const [canRetryAvatarUpload, setCanRetryAvatarUpload] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [savedSuccess, setSavedSuccess] = useState(false);
@@ -333,7 +334,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         setCanRetryAvatarUpload(true);
         setEditError(
           uploadRes.error ||
-            'Failed to upload profile photo to Cloudflare R2. Click Retry to try again.'
+            'Failed to upload profile photo to Supabase Storage. Click Retry to try again.'
         );
         return;
       }
@@ -1175,7 +1176,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             )}
 
             <form onSubmit={handleSaveProfile} className="space-y-3.5">
-              {/* Profile Photo Upload (Cloudflare R2) */}
+              {/* Profile Photo Upload (Supabase Storage) */}
               <div className="flex items-center gap-3.5 p-3 rounded-xl bg-white/[0.03] border border-white/[0.08]">
                 <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-[#ccff00]/15 to-zinc-900 border border-[#ccff00]/30 flex items-center justify-center text-[#ccff00] font-extrabold text-base shrink-0 uppercase overflow-hidden">
                   {editAvatarPreview ? (
@@ -1210,7 +1211,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               {uploadingAvatar && avatarUploadProgress && (
                 <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.08] space-y-1.5">
                   <div className="flex items-center justify-between text-[11px] text-zinc-300">
-                    <span className="truncate">Uploading profile photo to R2...</span>
+                    <span className="truncate">Uploading profile photo...</span>
                     <span className="font-mono font-bold text-[#ccff00]">
                       {avatarUploadProgress.overallPercent}%
                     </span>

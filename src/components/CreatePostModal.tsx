@@ -18,15 +18,11 @@ import {
   checkUserExistingPostForPlace,
   deleteUserPost,
   getCurrentUser,
-  PlacePost,
-} from '../services/supabase';
-import {
   MAX_POST_IMAGES,
-  R2UploadProgress,
-  R2UploadedMediaResult,
-  uploadMultipleImagesToR2,
+  PlacePost,
+  StorageUploadProgress,
   validateImageFile,
-} from '../services/r2Storage';
+} from '../services/supabase';
 import { Place } from '../types/outera';
 import { OuteraLogo } from './OuteraLogo';
 
@@ -72,13 +68,12 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
   const [existingImageUrls, setExistingImageUrls] = useState<string[]>([]);
   const [photosModified, setPhotosModified] = useState(false);
   const [selectedPhotos, setSelectedPhotos] = useState<PhotoPreview[]>([]);
-  const [preUploadedMedia, setPreUploadedMedia] = useState<R2UploadedMediaResult[]>([]);
   const [photoError, setPhotoError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
-  const [uploadProgress, setUploadProgress] = useState<R2UploadProgress | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<StorageUploadProgress | null>(null);
   const [canRetryUpload, setCanRetryUpload] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
@@ -104,7 +99,6 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
       }
       setPhotosModified(false);
       setSelectedPhotos([]);
-      setPreUploadedMedia([]);
       setPhotoError(null);
       setErrorMessage(null);
       setSuccessNotice(null);
@@ -165,7 +159,6 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
     setIsVisited(postToEdit.is_visited);
     setExistingImageUrls((postToEdit.images || []).slice(0, MAX_POST_PHOTOS));
     setPhotosModified(false);
-    setPreUploadedMedia([]);
     setExistingPlacePost(null);
     setErrorMessage(null);
     setCanRetryUpload(false);
@@ -207,7 +200,6 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
 
     if (validNewPreviews.length > 0) {
       setPhotosModified(true);
-      setPreUploadedMedia([]);
       setSelectedPhotos((prev) =>
         [...prev, ...validNewPreviews].slice(0, MAX_POST_PHOTOS - existingImageUrls.length)
       );
@@ -229,7 +221,6 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
       if (removed) URL.revokeObjectURL(removed.previewUrl);
       return prev.filter((_, i) => i !== index);
     });
-    setPreUploadedMedia([]);
     setPhotosModified(true);
     setPhotoError(null);
     setCanRetryUpload(false);
@@ -265,42 +256,9 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
     setLoading(true);
     setUploadProgress(null);
 
-    // Upload any newly selected photos to Cloudflare R2 FIRST so failed uploads never create incomplete posts
-    const filesToUpload = selectedPhotos.slice(0, MAX_POST_PHOTOS - existingImageUrls.length).map((p) => p.file);
-    let r2UploadedResults: R2UploadedMediaResult[] = preUploadedMedia;
-
-    if (filesToUpload.length > 0 && r2UploadedResults.length !== filesToUpload.length) {
-      setUploadStatus(`Uploading ${filesToUpload.length} photo${filesToUpload.length > 1 ? 's' : ''} to Cloudflare R2...`);
-      try {
-        r2UploadedResults = await uploadMultipleImagesToR2(filesToUpload, {
-          scope: 'posts',
-          entityId: activeEditingPost?.id || undefined,
-          maxCount: MAX_POST_PHOTOS - existingImageUrls.length,
-          onProgress: (prog) => {
-            setUploadProgress(prog);
-            if (prog.status === 'retrying') {
-              setUploadStatus(
-                `Retrying upload for photo ${prog.fileIndex + 1}/${prog.totalFiles} (attempt ${prog.attempt})...`
-              );
-            } else {
-              setUploadStatus(
-                `Uploading photo ${prog.fileIndex + 1}/${prog.totalFiles} (${prog.overallPercent}%)...`
-              );
-            }
-          },
-        });
-        setPreUploadedMedia(r2UploadedResults);
-      } catch (uploadErr: any) {
-        setLoading(false);
-        setUploadStatus(null);
-        setCanRetryUpload(true);
-        setErrorMessage(
-          uploadErr?.message ||
-            'Photo upload to Cloudflare R2 failed. Your post was not created—click Retry Upload to try again.'
-        );
-        return;
-      }
-    }
+    const filesToUpload = selectedPhotos
+      .slice(0, MAX_POST_PHOTOS - existingImageUrls.length)
+      .map((p) => p.file);
 
     if (activeEditingPost) {
       setUploadStatus('Updating post...');
@@ -318,23 +276,32 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
         return;
       }
 
-      if (photosModified || r2UploadedResults.length > 0) {
-        setUploadStatus('Saving post photos...');
+      if (photosModified || filesToUpload.length > 0) {
+        setUploadStatus(
+          filesToUpload.length > 0
+            ? `Uploading ${filesToUpload.length} photo${filesToUpload.length > 1 ? 's' : ''} to Supabase Storage...`
+            : 'Updating post photos...'
+        );
         const uploadRes = await uploadPlacePostImages(
           currentUser.id,
           activeEditingPost.id,
-          [],
+          filesToUpload,
           {
             replaceExisting: true,
             retainedUrls: existingImageUrls,
-            preUploadedMedia: r2UploadedResults,
+            onProgress: (prog) => {
+              setUploadProgress(prog);
+              setUploadStatus(
+                `Uploading photo ${prog.fileIndex + 1}/${prog.totalFiles} (${prog.overallPercent}%)...`
+              );
+            },
           }
         );
         if (!uploadRes.success) {
           setLoading(false);
           setUploadStatus(null);
           setCanRetryUpload(true);
-          setErrorMessage(uploadRes.error || 'Failed to save updated post photos.');
+          setErrorMessage(uploadRes.error || 'Failed to upload updated post photos.');
           return;
         }
       }
@@ -382,11 +349,23 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
         return;
       }
 
-      if (r2UploadedResults.length > 0) {
-        setUploadStatus('Attaching uploaded photos to post...');
-        const uploadRes = await uploadPlacePostImages(currentUser.id, res.data.id, [], {
-          preUploadedMedia: r2UploadedResults,
-        });
+      if (filesToUpload.length > 0) {
+        setUploadStatus(
+          `Uploading ${filesToUpload.length} photo${filesToUpload.length > 1 ? 's' : ''} to Supabase Storage...`
+        );
+        const uploadRes = await uploadPlacePostImages(
+          currentUser.id,
+          res.data.id,
+          filesToUpload,
+          {
+            onProgress: (prog) => {
+              setUploadProgress(prog);
+              setUploadStatus(
+                `Uploading photo ${prog.fileIndex + 1}/${prog.totalFiles} (${prog.overallPercent}%)...`
+              );
+            },
+          }
+        );
         if (!uploadRes.success) {
           // Roll back the incomplete post row so no broken/incomplete post remains
           await deleteUserPost(res.data.id).catch(() => {});
@@ -395,7 +374,7 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
           setCanRetryUpload(true);
           setErrorMessage(
             uploadRes.error ||
-              'Failed to link uploaded photos to your post. Post creation was rolled back—please retry.'
+              'Failed to upload photos to Supabase Storage. Post creation was rolled back—please retry.'
           );
           return;
         }

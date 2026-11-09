@@ -19,12 +19,10 @@ import {
   checkDuplicatePlacesAndSuggestions,
   DuplicatePlaceCandidate,
   getCurrentUser,
-} from '../services/supabase';
-import {
   MAX_POST_IMAGES,
-  R2UploadProgress,
+  StorageUploadProgress,
   validateImageFile,
-} from '../services/r2Storage';
+} from '../services/supabase';
 import { LocationPickerMap } from './LocationPickerMap';
 import { Coordinates, Place } from '../types/outera';
 import { PLACE_CATEGORY_OPTIONS } from '../services/discoveryEngine';
@@ -80,7 +78,7 @@ export const PlaceSuggestionModal: React.FC<PlaceSuggestionModalProps> = ({
   const [duplicateAcknowledged, setDuplicateAcknowledged] = useState(false);
 
   const [loading, setLoading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState<R2UploadProgress | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<StorageUploadProgress | null>(null);
   const [canRetryUpload, setCanRetryUpload] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -885,7 +883,7 @@ export const PlaceSuggestionModal: React.FC<PlaceSuggestionModalProps> = ({
                 <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.08] space-y-1.5">
                   <div className="flex items-center justify-between text-[11px] text-zinc-300">
                     <span className="truncate font-medium">
-                      Uploading {uploadProgress.fileName} ({uploadProgress.fileIndex + 1}/{uploadProgress.totalFiles}) to Cloudflare R2
+                      Uploading {uploadProgress.fileName} ({uploadProgress.fileIndex + 1}/{uploadProgress.totalFiles}) to Supabase Storage
                     </span>
                     <span className="font-mono font-bold text-[#ccff00] shrink-0">
                       {uploadProgress.overallPercent}%

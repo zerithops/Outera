@@ -48,37 +48,6 @@ function resolvePublicBucketUrl(storagePath?: string | null): string {
   if (trimmed.startsWith('https://')) return trimmed;
   if (trimmed.startsWith('http://')) return trimmed.replace(/^http:\/\//i, 'https://');
   if (trimmed.startsWith('/')) return `${OUTERA_PLACE_CANONICAL_ORIGIN}${trimmed}`;
-  const r2Base = (
-    process.env.VITE_R2_PUBLIC_URL ||
-    process.env.NEXT_PUBLIC_R2_PUBLIC_URL ||
-    process.env.R2_PUBLIC_URL ||
-    ''
-  )
-    .trim()
-    .replace(/\/+$/, '');
-  const cleanKey = trimmed
-    .replace(/^r2:\/+/i, '')
-    .replace(/^r2:/i, '')
-    .replace(/^\/+/, '')
-    .replace(/^outera-media\//i, '');
-  const isLegacySupabaseKey =
-    trimmed.includes('/storage/v1/object/public/community-review-media/') ||
-    trimmed.startsWith('community-review-media/') ||
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\//i.test(
-      cleanKey
-    );
-  const isR2Key =
-    trimmed.startsWith('r2:') ||
-    /^(posts|suggestions|avatars|places|reviews|uploads|media)\//i.test(cleanKey) ||
-    (!isLegacySupabaseKey && Boolean(r2Base));
-  if (isR2Key && r2Base) {
-    const encodedKey = cleanKey
-      .split('/')
-      .filter(Boolean)
-      .map((s) => encodeURIComponent(decodeURIComponent(s)))
-      .join('/');
-    return `${r2Base}/${encodedKey}`;
-  }
   const clean = trimmed.replace(/^\/+/, '').replace(/^community-review-media\//, '');
   return `${SUPABASE_URL}/storage/v1/object/public/community-review-media/${encodeURI(clean)}`;
 }
