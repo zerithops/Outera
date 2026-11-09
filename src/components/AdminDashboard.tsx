@@ -1149,7 +1149,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
         {loading ? (
           <div className="py-20 text-center space-y-3 bg-[#111317] border border-white/[0.08] rounded-2xl">
             <RefreshCw className="w-6 h-6 text-[#ccff00] animate-spin mx-auto" />
-            <p className="text-xs text-zinc-400 font-mono">Loading moderation queue from Supabase...</p>
+            <p className="text-xs text-zinc-400 font-mono">Loading moderation queue...</p>
           </div>
         ) : adminSection === 'posts' ? (
           posts.length === 0 ? (
@@ -2105,7 +2105,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                                   ) : (
                                     <span
                                       className="text-zinc-500 text-[11px]"
-                                      title="Auth email is stored in Supabase auth.users and only exposed when authorized"
+                                      title="Auth email is protected by row-level security and only exposed when authorized"
                                     >
                                       Protected by Auth RLS
                                     </span>
@@ -3069,7 +3069,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
             <div className="text-center space-y-1">
               <h3 className="text-base font-black text-white">Permanently Delete Post?</h3>
               <p className="text-xs text-zinc-400 leading-relaxed">
-                This will delete <span className="text-white font-semibold">"{deletingPost.title}"</span> from the Supabase database. This action cannot be reversed.
+                This will delete <span className="text-white font-semibold">"{deletingPost.title}"</span> permanently. This action cannot be reversed.
               </p>
             </div>
 

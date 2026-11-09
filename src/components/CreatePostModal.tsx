@@ -227,167 +227,179 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
   };
 
   const executeSubmit = async () => {
-    setErrorMessage(null);
-    setCanRetryUpload(false);
+    try {
+      setErrorMessage(null);
+      setCanRetryUpload(false);
 
-    const currentUser = await getCurrentUser();
-    if (!currentUser) {
-      if (onRequireAuth) {
-        onRequireAuth('share your community post');
-        return;
-      }
-      setErrorMessage('You must be signed in to submit a post.');
-      return;
-    }
-
-    if (!title.trim()) {
-      setErrorMessage('Please enter a title for your post.');
-      return;
-    }
-    if (!content.trim()) {
-      setErrorMessage('Please share your experience or review.');
-      return;
-    }
-    if (totalPhotoCount > MAX_POST_PHOTOS) {
-      setErrorMessage('Maximum 2 photos are allowed per community post.');
-      return;
-    }
-
-    setLoading(true);
-    setUploadProgress(null);
-
-    const filesToUpload = selectedPhotos
-      .slice(0, MAX_POST_PHOTOS - existingImageUrls.length)
-      .map((p) => p.file);
-
-    if (activeEditingPost) {
-      setUploadStatus('Updating post...');
-      const res = await updateUserPendingPost(activeEditingPost.id, {
-        title: title.trim(),
-        content: content.trim(),
-        rating,
-        is_visited: isVisited,
-      });
-
-      if (!res.success) {
-        setLoading(false);
-        setUploadStatus(null);
-        setErrorMessage(res.error || 'Failed to update post.');
-        return;
-      }
-
-      if (photosModified || filesToUpload.length > 0) {
-        setUploadStatus(
-          filesToUpload.length > 0
-            ? `Uploading ${filesToUpload.length} photo${filesToUpload.length > 1 ? 's' : ''} to Supabase Storage...`
-            : 'Updating post photos...'
-        );
-        const uploadRes = await uploadPlacePostImages(
-          currentUser.id,
-          activeEditingPost.id,
-          filesToUpload,
-          {
-            replaceExisting: true,
-            retainedUrls: existingImageUrls,
-            onProgress: (prog) => {
-              setUploadProgress(prog);
-              setUploadStatus(
-                `Uploading photo ${prog.fileIndex + 1}/${prog.totalFiles} (${prog.overallPercent}%)...`
-              );
-            },
-          }
-        );
-        if (!uploadRes.success) {
-          setLoading(false);
-          setUploadStatus(null);
-          setCanRetryUpload(true);
-          setErrorMessage(uploadRes.error || 'Failed to upload updated post photos.');
+      const currentUser = await getCurrentUser();
+      if (!currentUser) {
+        if (onRequireAuth) {
+          onRequireAuth('share your community post');
           return;
         }
+        setErrorMessage('You must be signed in to submit a post.');
+        return;
       }
 
-      setLoading(false);
-      setUploadStatus(null);
+      if (!title.trim()) {
+        setErrorMessage('Please enter a title for your post.');
+        return;
+      }
+      if (!content.trim()) {
+        setErrorMessage('Please share your experience or review.');
+        return;
+      }
+      if (totalPhotoCount > MAX_POST_PHOTOS) {
+        setErrorMessage('Maximum 2 photos are allowed per community post.');
+        return;
+      }
+
+      setLoading(true);
       setUploadProgress(null);
-      setSuccessNotice('Your community post has been updated and queued for moderation.');
-      setTimeout(() => {
-        if (onPostSubmitted) onPostSubmitted();
-        onClose();
-      }, 800);
-    } else {
-      const placeIdToUse = selectedPlaceId || defaultPlaceId;
-      if (!placeIdToUse) {
-        setLoading(false);
-        setUploadStatus(null);
-        setErrorMessage('Please select an existing place for your community post.');
-        return;
-      }
 
-      if (existingPlacePost) {
-        setLoading(false);
-        setUploadStatus(null);
-        setErrorMessage('You can only create 1 post/review per place. Click "Edit My Existing Post" above to update it.');
-        return;
-      }
+      const filesToUpload = selectedPhotos
+        .slice(0, MAX_POST_PHOTOS - existingImageUrls.length)
+        .map((p) => p.file);
 
-      setUploadStatus('Creating community post...');
-      const res = await createPlacePost({
-        place_id: placeIdToUse,
-        title: title.trim(),
-        content: content.trim(),
-        rating,
-        is_visited: isVisited,
-      });
+      if (activeEditingPost) {
+        setUploadStatus('Updating post...');
+        const res = await updateUserPendingPost(activeEditingPost.id, {
+          title: title.trim(),
+          content: content.trim(),
+          rating,
+          is_visited: isVisited,
+        });
 
-      if (!res.success || !res.data) {
-        setLoading(false);
-        setUploadStatus(null);
-        if (res.existingPost) {
-          setExistingPlacePost(res.existingPost);
-        }
-        setErrorMessage(res.error || 'Failed to submit post.');
-        return;
-      }
-
-      if (filesToUpload.length > 0) {
-        setUploadStatus(
-          `Uploading ${filesToUpload.length} photo${filesToUpload.length > 1 ? 's' : ''} to Supabase Storage...`
-        );
-        const uploadRes = await uploadPlacePostImages(
-          currentUser.id,
-          res.data.id,
-          filesToUpload,
-          {
-            onProgress: (prog) => {
-              setUploadProgress(prog);
-              setUploadStatus(
-                `Uploading photo ${prog.fileIndex + 1}/${prog.totalFiles} (${prog.overallPercent}%)...`
-              );
-            },
-          }
-        );
-        if (!uploadRes.success) {
-          // Roll back the incomplete post row so no broken/incomplete post remains
-          await deleteUserPost(res.data.id).catch(() => {});
+        if (!res.success) {
           setLoading(false);
           setUploadStatus(null);
-          setCanRetryUpload(true);
-          setErrorMessage(
-            uploadRes.error ||
-              'Failed to upload photos to Supabase Storage. Post creation was rolled back—please retry.'
+          setErrorMessage(res.error || 'Failed to update post.');
+          return;
+        }
+
+        if (photosModified || filesToUpload.length > 0) {
+          setUploadStatus(
+            filesToUpload.length > 0
+              ? `Uploading ${filesToUpload.length} photo${filesToUpload.length > 1 ? 's' : ''}...`
+              : 'Updating post photos...'
           );
+          const uploadRes = await uploadPlacePostImages(
+            currentUser.id,
+            activeEditingPost.id,
+            filesToUpload,
+            {
+              replaceExisting: true,
+              retainedUrls: existingImageUrls,
+              onProgress: (prog) => {
+                setUploadProgress(prog);
+                setUploadStatus(
+                  `Uploading photo ${prog.fileIndex + 1}/${prog.totalFiles} (${prog.overallPercent}%)...`
+                );
+              },
+            }
+          );
+          if (!uploadRes.success) {
+            setLoading(false);
+            setUploadStatus(null);
+            setCanRetryUpload(true);
+            setErrorMessage(uploadRes.error || 'Failed to upload updated post photos.');
+            return;
+          }
+        }
+
+        setLoading(false);
+        setUploadStatus(null);
+        setUploadProgress(null);
+        setSuccessNotice('Your community post has been updated and queued for moderation.');
+        setTimeout(() => {
+          if (onPostSubmitted) onPostSubmitted();
+          onClose();
+        }, 800);
+      } else {
+        const placeIdToUse = selectedPlaceId || defaultPlaceId;
+        if (!placeIdToUse) {
+          setLoading(false);
+          setUploadStatus(null);
+          setErrorMessage('Please select an existing place for your community post.');
           return;
         }
-      }
 
+        if (existingPlacePost) {
+          setLoading(false);
+          setUploadStatus(null);
+          setErrorMessage('You can only create 1 post/review per place. Click "Edit My Existing Post" above to update it.');
+          return;
+        }
+
+        setUploadStatus('Creating community post...');
+        const res = await createPlacePost({
+          place_id: placeIdToUse,
+          title: title.trim(),
+          content: content.trim(),
+          rating,
+          is_visited: isVisited,
+        });
+
+        if (!res.success || !res.data) {
+          setLoading(false);
+          setUploadStatus(null);
+          if (res.existingPost) {
+            setExistingPlacePost(res.existingPost);
+          }
+          setErrorMessage(res.error || 'Failed to submit post.');
+          return;
+        }
+
+        if (filesToUpload.length > 0) {
+          setUploadStatus(
+            `Uploading ${filesToUpload.length} photo${filesToUpload.length > 1 ? 's' : ''}...`
+          );
+          const uploadRes = await uploadPlacePostImages(
+            currentUser.id,
+            res.data.id,
+            filesToUpload,
+            {
+              onProgress: (prog) => {
+                setUploadProgress(prog);
+                setUploadStatus(
+                  `Uploading photo ${prog.fileIndex + 1}/${prog.totalFiles} (${prog.overallPercent}%)...`
+                );
+              },
+            }
+          );
+          if (!uploadRes.success) {
+            // Roll back the incomplete post row so no broken/incomplete post remains
+            await deleteUserPost(res.data.id).catch(() => {});
+            setLoading(false);
+            setUploadStatus(null);
+            setCanRetryUpload(true);
+            setErrorMessage(
+              uploadRes.error ||
+                'Failed to upload photos. Please check your connection and try again.'
+            );
+            return;
+          }
+        }
+
+        setLoading(false);
+        setUploadStatus(null);
+        setUploadProgress(null);
+        setSuccessNotice('Experience shared! Your post starts as Pending and becomes publicly visible once approved.');
+        setTimeout(() => {
+          if (onPostSubmitted) onPostSubmitted();
+          onClose();
+        }, 1200);
+      }
+    } catch (err: any) {
       setLoading(false);
       setUploadStatus(null);
-      setUploadProgress(null);
-      setSuccessNotice('Experience shared! Your post starts as Pending and becomes publicly visible once approved.');
-      setTimeout(() => {
-        if (onPostSubmitted) onPostSubmitted();
-        onClose();
-      }, 1200);
+      setCanRetryUpload(true);
+      const raw = err?.message || String(err || '');
+      if (raw.includes('Failed to fetch') || raw.includes('network') || raw.includes('NetworkError')) {
+        setErrorMessage('Network connection error. Please check your internet connection and try again.');
+      } else {
+        setErrorMessage(raw || 'An unexpected error occurred while saving your post. Please try again.');
+      }
     }
   };
 

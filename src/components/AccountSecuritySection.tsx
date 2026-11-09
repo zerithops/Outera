@@ -293,7 +293,7 @@ export const AccountSecuritySection: React.FC<AccountSecuritySectionProps> = ({
         <div>
           <h3 className="text-sm font-bold text-white tracking-tight">Change Email Address</h3>
           <p className="text-xs text-zinc-400 mt-0.5 leading-relaxed">
-            For account protection, Supabase sends a verification link to confirm your new email address before the change takes effect.
+            For account protection, a verification link is sent to confirm your new email address before the change takes effect.
           </p>
         </div>
 
@@ -521,7 +521,7 @@ export const AccountSecuritySection: React.FC<AccountSecuritySectionProps> = ({
         <div className="p-3.5 rounded-xl bg-white/[0.02] border border-white/[0.06] text-xs text-zinc-300 space-y-1">
           <p className="font-semibold text-white">Security Notification Policy</p>
           <p className="text-zinc-400 leading-relaxed">
-            Whenever your password or email address is modified, Supabase Auth dispatches a confirmation or security notice to your registered email address. Never share magic links or recovery URLs with anyone.
+            Whenever your password or email address is modified, a confirmation or security notice is dispatched to your registered email address. Never share magic links or recovery URLs with anyone.
           </p>
         </div>
 

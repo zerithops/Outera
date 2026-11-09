@@ -883,7 +883,7 @@ export const PlaceSuggestionModal: React.FC<PlaceSuggestionModalProps> = ({
                 <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.08] space-y-1.5">
                   <div className="flex items-center justify-between text-[11px] text-zinc-300">
                     <span className="truncate font-medium">
-                      Uploading {uploadProgress.fileName} ({uploadProgress.fileIndex + 1}/{uploadProgress.totalFiles}) to Supabase Storage
+                      Uploading {uploadProgress.fileName} ({uploadProgress.fileIndex + 1}/{uploadProgress.totalFiles})...
                     </span>
                     <span className="font-mono font-bold text-[#ccff00] shrink-0">
                       {uploadProgress.overallPercent}%

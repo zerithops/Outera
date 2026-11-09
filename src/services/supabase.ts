@@ -20,7 +20,7 @@ import { buildPlaceUniqueSlug, doesPlaceMatchRoute } from './placeUrl';
 
 export const SUPABASE_MEDIA_BUCKET = 'community-review-media';
 export const MAX_POST_IMAGES = 2;
-export const MAX_IMAGE_FILE_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
+export const MAX_IMAGE_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
 
 const ALLOWED_IMAGE_MIME_TYPES = new Set([
   'image/jpeg',
@@ -56,7 +56,7 @@ export function validateImageFile(file: File | null | undefined): {
     const sizeMb = (file.size / (1024 * 1024)).toFixed(2);
     return {
       valid: false,
-      error: `"${file.name}" (${sizeMb}MB) exceeds the 5MB maximum size limit per image.`,
+      error: `"${file.name}" (${sizeMb}MB) exceeds the 10MB maximum size limit per image.`,
     };
   }
 
@@ -220,6 +220,24 @@ export async function getCurrentSession(): Promise<Session | null> {
   try {
     const { data: { session }, error } = await supabase.auth.getSession();
     if (error) return null;
+    return session;
+  } catch {
+    return null;
+  }
+}
+
+export async function ensureFreshSession(): Promise<Session | null> {
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return null;
+    const expiresAt = session.expires_at ? session.expires_at * 1000 : 0;
+    // If token expires in less than 90 seconds, refresh it
+    if (expiresAt && expiresAt - Date.now() < 90000) {
+      const { data: refreshed, error: refreshErr } = await supabase.auth.refreshSession();
+      if (!refreshErr && refreshed?.session) {
+        return refreshed.session;
+      }
+    }
     return session;
   } catch {
     return null;
@@ -471,6 +489,206 @@ export async function upsertProfile(profile: {
   }
 }
 
+export function formatUploadErrorMessage(rawError?: any): string {
+  if (!rawError) return 'Failed to upload photo. Please check your connection and try again.';
+  const msg = typeof rawError === 'string' ? rawError : rawError.message || String(rawError);
+  const lower = msg.toLowerCase();
+  if (
+    lower.includes('failed to fetch') ||
+    lower.includes('network') ||
+    lower.includes('load failed') ||
+    lower.includes('abort') ||
+    lower.includes('timeout')
+  ) {
+    return 'Photo upload failed due to a network connection issue. Please check your internet connection and try again.';
+  }
+  if (lower.includes('supabase') || lower.includes('bucket')) {
+    return 'Unable to save photo at this moment. Please check your connection and try again.';
+  }
+  if (lower.includes('accessdenied') || lower.includes('row-level security') || lower.includes('policy')) {
+    return 'Your session may have expired. Please refresh the page or sign in again to upload photos.';
+  }
+  return msg;
+}
+
+/**
+ * Client-side photo downscaling/compression:
+ * Resizes photos to max 1920px (preserving aspect ratio) and quality 0.85.
+ * Shrinks raw 5MB-10MB camera photos to ~300KB-700KB, preventing network drops and timeouts.
+ */
+export async function compressImageForUpload(
+  file: File,
+  maxDimension = 1920,
+  quality = 0.85
+): Promise<File> {
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return file;
+  }
+  if (!file || file.size <= 400 * 1024) {
+    return file;
+  }
+
+  try {
+    let imgSource: CanvasImageSource | null = null;
+    let sourceWidth = 0;
+    let sourceHeight = 0;
+
+    if (typeof createImageBitmap !== 'undefined') {
+      try {
+        const bitmap = await createImageBitmap(file);
+        imgSource = bitmap;
+        sourceWidth = bitmap.width;
+        sourceHeight = bitmap.height;
+      } catch {
+        imgSource = null;
+      }
+    }
+
+    if (!imgSource) {
+      const img = new Image();
+      const objectUrl = URL.createObjectURL(file);
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = (e) => reject(e);
+        img.src = objectUrl;
+      });
+      URL.revokeObjectURL(objectUrl);
+      imgSource = img;
+      sourceWidth = img.naturalWidth || img.width;
+      sourceHeight = img.naturalHeight || img.height;
+    }
+
+    if (!imgSource || sourceWidth <= 0 || sourceHeight <= 0) {
+      return file;
+    }
+
+    let targetWidth = sourceWidth;
+    let targetHeight = sourceHeight;
+
+    if (targetWidth > maxDimension || targetHeight > maxDimension) {
+      if (targetWidth > targetHeight) {
+        targetHeight = Math.round((targetHeight * maxDimension) / targetWidth);
+        targetWidth = maxDimension;
+      } else {
+        targetWidth = Math.round((targetWidth * maxDimension) / targetHeight);
+        targetHeight = maxDimension;
+      }
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return file;
+
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(imgSource, 0, 0, targetWidth, targetHeight);
+
+    if (typeof (imgSource as any).close === 'function') {
+      try {
+        (imgSource as any).close();
+      } catch {}
+    }
+
+    const outputMime = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, outputMime, outputMime === 'image/png' ? undefined : quality)
+    );
+
+    if (!blob || blob.size >= file.size) {
+      return file;
+    }
+
+    const cleanName = file.name.replace(/\.[^.]+$/, outputMime === 'image/jpeg' ? '.jpg' : '.png');
+    return new File([blob], cleanName, {
+      type: outputMime,
+      lastModified: Date.now(),
+    });
+  } catch (err) {
+    console.warn('Image compression fallback to original file:', err);
+    return file;
+  }
+}
+
+/**
+ * Robust photo uploader with client-side compression, fresh auth session verification,
+ * primary SDK upload + fallback binary upload, and exponential backoff retry.
+ */
+export async function uploadStorageObjectWithRetry(
+  storagePath: string,
+  file: File,
+  contentType: string,
+  maxRetries = 3
+): Promise<{ success: boolean; path?: string; error?: string }> {
+  const preparedFile = await compressImageForUpload(file);
+  const resolvedContentType = contentType || preparedFile.type || 'image/jpeg';
+
+  let lastErrorMsg = '';
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      await ensureFreshSession();
+
+      const { data, error } = await supabase.storage
+        .from(SUPABASE_MEDIA_BUCKET)
+        .upload(storagePath, preparedFile, {
+          cacheControl: '3600',
+          upsert: true,
+          contentType: resolvedContentType,
+        });
+
+      if (!error && data?.path) {
+        return { success: true, path: data.path };
+      }
+
+      if (error) {
+        lastErrorMsg = error.message || 'Upload failed';
+      }
+    } catch (sdkThrown: any) {
+      lastErrorMsg = sdkThrown?.message || String(sdkThrown);
+    }
+
+    // Direct binary fetch fallback to bypass mobile FormData / stream issues
+    try {
+      const session = await ensureFreshSession();
+      const token = session?.access_token || SUPABASE_PUBLISHABLE_KEY;
+      const uploadUrl = `${SUPABASE_URL}/storage/v1/object/${SUPABASE_MEDIA_BUCKET}/${encodeURI(storagePath)}`;
+      const buffer = await preparedFile.arrayBuffer();
+
+      const directRes = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: {
+          apikey: SUPABASE_PUBLISHABLE_KEY,
+          Authorization: `Bearer ${token}`,
+          'Content-Type': resolvedContentType,
+          'cache-control': 'max-age=3600',
+          'x-upsert': 'true',
+        },
+        body: buffer,
+      });
+
+      if (directRes.ok) {
+        const json = await directRes.json().catch(() => ({}));
+        const returnedPath = json?.Key || storagePath;
+        const cleanPath = returnedPath.replace(new RegExp(`^${SUPABASE_MEDIA_BUCKET}/`), '');
+        return { success: true, path: cleanPath };
+      } else {
+        const errJson = await directRes.json().catch(() => ({}));
+        lastErrorMsg = errJson.message || `Upload failed (status ${directRes.status})`;
+      }
+    } catch (directErr: any) {
+      lastErrorMsg = directErr?.message || String(directErr);
+    }
+
+    if (attempt < maxRetries) {
+      await new Promise((resolve) => setTimeout(resolve, attempt * 600));
+    }
+  }
+
+  return { success: false, error: formatUploadErrorMessage(lastErrorMsg) };
+}
+
 export async function uploadUserProfileAvatar(
   file: File,
   onProgress?: (progress: StorageUploadProgress) => void
@@ -498,7 +716,7 @@ export async function uploadUserProfileAvatar(
       fileName: file.name,
       overallPercent: 25,
       status: 'uploading',
-      message: 'Uploading profile photo to Supabase Storage...',
+      message: 'Uploading profile photo...',
     });
 
     const existingProfile = await fetchProfile(user.id);
@@ -509,27 +727,25 @@ export async function uploadUserProfileAvatar(
     const cleanFileName = sanitizeStorageFileName(file.name, validation.extension || 'jpg');
     const storagePath = `${user.id}/avatars/avatar_${Date.now()}_${cleanFileName}`;
 
-    const { data: uploadData, error: uploadError } = await supabase.storage
-      .from(SUPABASE_MEDIA_BUCKET)
-      .upload(storagePath, file, {
-        cacheControl: '3600',
-        upsert: true,
-        contentType: validation.normalizedContentType || file.type || 'image/jpeg',
-      });
+    const uploadRes = await uploadStorageObjectWithRetry(
+      storagePath,
+      file,
+      validation.normalizedContentType || file.type || 'image/jpeg'
+    );
 
-    if (uploadError || !uploadData?.path) {
+    if (!uploadRes.success || !uploadRes.path) {
       return {
         success: false,
-        error: uploadError?.message || 'Failed to upload profile photo to Supabase Storage.',
+        error: uploadRes.error || 'Failed to upload profile photo. Please try again.',
       };
     }
 
-    // Remove previous avatar object from Supabase Storage if it belonged to this user
-    if (oldAvatarPath && oldAvatarPath !== uploadData.path && oldAvatarPath.startsWith(`${user.id}/`)) {
+    // Remove previous avatar object if it belonged to this user
+    if (oldAvatarPath && oldAvatarPath !== uploadRes.path && oldAvatarPath.startsWith(`${user.id}/`)) {
       await supabase.storage.from(SUPABASE_MEDIA_BUCKET).remove([oldAvatarPath]).catch(() => {});
     }
 
-    const publicUrl = getPublicStorageUrl(uploadData.path);
+    const publicUrl = getPublicStorageUrl(uploadRes.path);
 
     onProgress?.({
       fileIndex: 0,
@@ -541,19 +757,19 @@ export async function uploadUserProfileAvatar(
     });
 
     const updatedProfile = await upsertProfile({
-      avatar_url: publicUrl || uploadData.path,
+      avatar_url: publicUrl || uploadRes.path,
     });
 
     return {
       success: true,
-      avatarUrl: publicUrl || uploadData.path,
-      storagePath: uploadData.path,
+      avatarUrl: publicUrl || uploadRes.path,
+      storagePath: uploadRes.path,
       profile: updatedProfile,
     };
   } catch (err: any) {
     return {
       success: false,
-      error: err?.message || 'Failed to upload profile photo to Supabase Storage.',
+      error: formatUploadErrorMessage(err?.message) || 'Failed to upload profile photo. Please try again.',
     };
   }
 }
@@ -2485,15 +2701,13 @@ export async function uploadPlaceSuggestionImages(
     const cleanFileName = sanitizeStorageFileName(file.name, validation.extension || 'jpg');
     const storagePath = `${userId}/${suggestionId}/sugg_${Date.now()}_${i + 1}_${cleanFileName}`;
 
-    const { data: uploadData, error: uploadErr } = await supabase.storage
-      .from(SUPABASE_MEDIA_BUCKET)
-      .upload(storagePath, file, {
-        cacheControl: '3600',
-        upsert: true,
-        contentType: validation.normalizedContentType || file.type || 'image/jpeg',
-      });
+    const uploadRes = await uploadStorageObjectWithRetry(
+      storagePath,
+      file,
+      validation.normalizedContentType || file.type || 'image/jpeg'
+    );
 
-    if (uploadErr || !uploadData?.path) {
+    if (!uploadRes.success || !uploadRes.path) {
       if (uploadedPaths.length > 0) {
         await supabase.storage.from(SUPABASE_MEDIA_BUCKET).remove(uploadedPaths).catch(() => {});
       }
@@ -2501,11 +2715,11 @@ export async function uploadPlaceSuggestionImages(
         success: false,
         imageUrls: [],
         storagePaths: [],
-        error: uploadErr?.message || 'Failed to upload suggestion photo to Supabase Storage.',
+        error: uploadRes.error || 'Failed to upload suggestion photo. Please try again.',
       };
     }
 
-    const storedPath = uploadData.path;
+    const storedPath = uploadRes.path;
     const publicUrl = getPublicStorageUrl(storedPath);
 
     const extIns = await supabase.from('place_suggestion_images').insert({
@@ -2721,7 +2935,7 @@ export async function submitPlaceSuggestion(
         await supabase.from('place_suggestions').delete().eq('id', insertedRow.id);
         return {
           success: false,
-          error: saveImgRes.error || 'Failed to upload photos to Supabase Storage.',
+          error: saveImgRes.error || 'Failed to upload photos. Please try again.',
         };
       }
     }
@@ -4222,21 +4436,19 @@ export async function uploadPlacePostImages(
       fileName: file.name,
       overallPercent: Math.round(((i + 0.3) / filesToUpload.length) * 100),
       status: 'uploading',
-      message: `Uploading photo ${i + 1} of ${filesToUpload.length} to Supabase Storage...`,
+      message: `Uploading photo ${i + 1} of ${filesToUpload.length}...`,
     });
 
     const cleanFileName = sanitizeStorageFileName(file.name, validation.extension || 'jpg');
     const storagePath = `${userId}/${postId}/${Date.now()}_${orderIndex + 1}_${cleanFileName}`;
 
-    const { data: uploadData, error: uploadError } = await supabase.storage
-      .from(SUPABASE_MEDIA_BUCKET)
-      .upload(storagePath, file, {
-        cacheControl: '3600',
-        upsert: true,
-        contentType: validation.normalizedContentType || file.type || 'image/jpeg',
-      });
+    const uploadRes = await uploadStorageObjectWithRetry(
+      storagePath,
+      file,
+      validation.normalizedContentType || file.type || 'image/jpeg'
+    );
 
-    if (uploadError || !uploadData?.path) {
+    if (!uploadRes.success || !uploadRes.path) {
       if (newlyUploadedStoragePaths.length > 0) {
         await supabase.storage.from(SUPABASE_MEDIA_BUCKET).remove(newlyUploadedStoragePaths).catch(() => {});
       }
@@ -4245,12 +4457,12 @@ export async function uploadPlacePostImages(
         imagePaths: [],
         imageUrls: retainedUrls,
         error:
-          uploadError?.message ||
-          'Failed to upload photos to Supabase Storage. Please check your connection and try again.',
+          uploadRes.error ||
+          'Failed to upload photos. Please check your internet connection and try again.',
       };
     }
 
-    newlyUploadedStoragePaths.push(uploadData.path);
+    newlyUploadedStoragePaths.push(uploadRes.path);
 
     options?.onProgress?.({
       fileIndex: i,

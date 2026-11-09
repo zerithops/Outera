@@ -334,7 +334,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         setCanRetryAvatarUpload(true);
         setEditError(
           uploadRes.error ||
-            'Failed to upload profile photo to Supabase Storage. Click Retry to try again.'
+            'Failed to upload profile photo. Click Retry to try again.'
         );
         return;
       }
@@ -1176,7 +1176,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             )}
 
             <form onSubmit={handleSaveProfile} className="space-y-3.5">
-              {/* Profile Photo Upload (Supabase Storage) */}
+              {/* Profile Photo Upload */}
               <div className="flex items-center gap-3.5 p-3 rounded-xl bg-white/[0.03] border border-white/[0.08]">
                 <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-[#ccff00]/15 to-zinc-900 border border-[#ccff00]/30 flex items-center justify-center text-[#ccff00] font-extrabold text-base shrink-0 uppercase overflow-hidden">
                   {editAvatarPreview ? (
