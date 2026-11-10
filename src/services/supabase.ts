@@ -20,7 +20,7 @@ import { buildPlaceUniqueSlug, doesPlaceMatchRoute } from './placeUrl';
 
 export const SUPABASE_MEDIA_BUCKET = 'community-review-media';
 export const MAX_POST_IMAGES = 2;
-export const MAX_IMAGE_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
+export const MAX_IMAGE_FILE_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
 
 const ALLOWED_IMAGE_MIME_TYPES = new Set([
   'image/jpeg',
@@ -40,6 +40,40 @@ export interface StorageUploadProgress {
   message?: string;
 }
 
+export function detectImageFormatFromBytes(bytes: Uint8Array): {
+  mime: string;
+  ext: string;
+} | null {
+  if (!bytes || bytes.length < 12) return null;
+  // JPEG: FF D8 FF
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return { mime: 'image/jpeg', ext: 'jpg' };
+  }
+  // PNG: 89 50 4E 47 0D 0A 1A 0A
+  if (
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47
+  ) {
+    return { mime: 'image/png', ext: 'png' };
+  }
+  // WEBP: "RIFF" .... "WEBP"
+  if (
+    bytes[0] === 0x52 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x46 &&
+    bytes[8] === 0x57 &&
+    bytes[9] === 0x45 &&
+    bytes[10] === 0x42 &&
+    bytes[11] === 0x50
+  ) {
+    return { mime: 'image/webp', ext: 'webp' };
+  }
+  return null;
+}
+
 export function validateImageFile(file: File | null | undefined): {
   valid: boolean;
   error?: string;
@@ -56,7 +90,7 @@ export function validateImageFile(file: File | null | undefined): {
     const sizeMb = (file.size / (1024 * 1024)).toFixed(2);
     return {
       valid: false,
-      error: `"${file.name}" (${sizeMb}MB) exceeds the 10MB maximum size limit per image.`,
+      error: `"${file.name}" (${sizeMb}MB) exceeds the 5MB maximum size limit per image.`,
     };
   }
 
@@ -66,6 +100,8 @@ export function validateImageFile(file: File | null | undefined): {
 
   const mimeAllowed = ALLOWED_IMAGE_MIME_TYPES.has(rawType);
   const extAllowed = ALLOWED_IMAGE_EXTENSIONS.has(ext);
+  const isGenericAndroidStream =
+    rawType === 'application/octet-stream' || rawType === 'image/*';
 
   if (!mimeAllowed && !extAllowed) {
     return {
@@ -74,14 +110,14 @@ export function validateImageFile(file: File | null | undefined): {
     };
   }
 
-  if (rawType && !mimeAllowed) {
+  if (rawType && !mimeAllowed && !(extAllowed && isGenericAndroidStream)) {
     return {
       valid: false,
       error: `"${file.name}" has an unsupported file type (${rawType}). Only JPG, JPEG, PNG, and WEBP are allowed.`,
     };
   }
 
-  let normalizedContentType = rawType;
+  let normalizedContentType = mimeAllowed ? rawType : '';
   if (!normalizedContentType || normalizedContentType === 'image/jpg') {
     if (ext === 'png') normalizedContentType = 'image/png';
     else if (ext === 'webp') normalizedContentType = 'image/webp';
@@ -497,9 +533,10 @@ export function formatUploadErrorMessage(rawError?: any): string {
     lower.includes('notreadableerror') ||
     lower.includes('permission problems') ||
     lower.includes('could not be read') ||
-    lower.includes('after a reference to a file was acquired')
+    lower.includes('after a reference to a file was acquired') ||
+    lower.includes('err_upload_file_changed')
   ) {
-    return 'The selected photo could not be read because its temporary file permission expired on your device. Please re-select the photo from your gallery.';
+    return 'Unable to read the selected photo. If this photo is stored in cloud backup (such as Google Photos or Drive), please save it to your device first and select it again.';
   }
   if (
     lower.includes('failed to fetch') ||
@@ -519,72 +556,483 @@ export function formatUploadErrorMessage(rawError?: any): string {
   return msg;
 }
 
+function attachDetachedBufferMetadata(fileObj: File, buffer: ArrayBuffer): File {
+  try {
+    Object.defineProperty(fileObj, '__outeraDetachedMemoryFile', {
+      value: true,
+      enumerable: false,
+      configurable: true,
+    });
+    Object.defineProperty(fileObj, '__outeraArrayBuffer', {
+      value: buffer,
+      enumerable: false,
+      configurable: true,
+    });
+  } catch {
+    (fileObj as any).__outeraDetachedMemoryFile = true;
+    (fileObj as any).__outeraArrayBuffer = buffer;
+  }
+  return fileObj;
+}
+
+function normalizeIngestedMimeAndName(
+  originalName: string,
+  originalType: string,
+  bytes?: Uint8Array | null
+): { mime: string; ext: string; fileName: string } {
+  const magic = bytes ? detectImageFormatFromBytes(bytes) : null;
+  const rawType = (originalType || '').toLowerCase().trim();
+  const extMatch = (originalName || '').toLowerCase().match(/\.([a-z0-9]+)$/);
+  const rawExt = extMatch ? extMatch[1] : '';
+
+  let mime = magic?.mime || '';
+  if (!mime) {
+    if (rawType === 'image/png' || rawExt === 'png') mime = 'image/png';
+    else if (rawType === 'image/webp' || rawExt === 'webp') mime = 'image/webp';
+    else mime = 'image/jpeg';
+  }
+
+  const ext =
+    magic?.ext ||
+    (mime === 'image/png' ? 'png' : mime === 'image/webp' ? 'webp' : 'jpg');
+
+  const baseName = (originalName || 'photo')
+    .replace(/\.[^/.]+$/, '')
+    .replace(/[^a-zA-Z0-9_-]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '')
+    .slice(0, 40) || `photo_${Date.now()}`;
+
+  return {
+    mime,
+    ext,
+    fileName: `${baseName}.${ext}`,
+  };
+}
+
 /**
- * Safely ingests a file from an <input type="file"> immediately upon selection,
- * reading its bytes into browser memory (ArrayBuffer -> in-memory File)
- * before mobile OS (Android/iOS) content URI grants or temp file handles expire.
- * This completely prevents:
- * "NotReadableError: The requested file could not be read, typically due to permission problems that have occurred after a reference to a file was acquired."
+ * Reads a File/Blob via ReadableStream chunk-by-chunk.
+ * On Android 12-15, MediaProvider redacts EXIF GPS tags on-the-fly from content:// URIs,
+ * making the streamed byte count slightly smaller than OpenableColumns.SIZE (`file.size`).
+ * While `FileReader` and `file.arrayBuffer()` discard the buffer and throw `NotReadableError`
+ * at EOF when `bytes_read != file.size`, reading the stream chunk-by-chunk preserves all
+ * image bytes delivered before the EOF check.
  */
-export async function ingestSelectedFileSafely(file: File): Promise<File> {
-  if (typeof window === 'undefined') return file;
+async function readViaReadableStream(blob: Blob): Promise<Uint8Array | null> {
+  if (typeof blob.stream !== 'function') return null;
+  const chunks: Uint8Array[] = [];
+  let totalLength = 0;
 
   try {
-    // 1. Immediately read bytes into memory while Android/iOS content URI is fresh
-    const buffer = await new Promise<ArrayBuffer>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        if (reader.result instanceof ArrayBuffer) {
-          resolve(reader.result);
-        } else {
-          reject(new Error('Failed to read file buffer'));
+    const stream = blob.stream();
+    if (!stream || typeof stream.getReader !== 'function') return null;
+    const reader = stream.getReader();
+
+    while (true) {
+      try {
+        const { done, value } = await reader.read();
+        if (value && value.byteLength > 0) {
+          const copy = new Uint8Array(value.byteLength);
+          copy.set(value);
+          chunks.push(copy);
+          totalLength += copy.byteLength;
         }
-      };
-      reader.onerror = () => {
-        reject(reader.error || new Error('The selected photo could not be read from your device.'));
-      };
-      reader.readAsArrayBuffer(file);
-    });
+        if (done) break;
+      } catch (chunkErr) {
+        // If Android MediaProvider reached real EOF slightly before `file.size` due to EXIF redaction,
+        // keep all chunks read so far if they contain valid image data.
+        break;
+      }
+    }
+    try {
+      reader.releaseLock();
+    } catch {}
+  } catch {
+    // Fall through to check accumulated chunks
+  }
 
-    // 2. Create detached in-memory File backed by ArrayBuffer
-    const inMemoryFile = new File([buffer], file.name, {
-      type: file.type || 'image/jpeg',
-      lastModified: file.lastModified || Date.now(),
-    });
+  if (totalLength <= 0) return null;
+  const combined = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    combined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return combined;
+}
 
-    // 3. Compress / downscale immediately (shrink 5-10MB to ~300KB-600KB)
-    const optimized = await compressImageForUpload(inMemoryFile);
-    return optimized;
-  } catch (err: any) {
-    console.warn('ingestSelectedFileSafely error:', err);
-    const msg = err?.message || String(err || '');
-    if (
-      msg.includes('permission') ||
-      msg.includes('NotReadableError') ||
-      msg.includes('could not be read')
-    ) {
-      throw new Error(
-        'The selected photo could not be read because its temporary permission expired on your device. Please choose the photo directly from your gallery.'
+/**
+ * Progressive slice reader for Android content:// URIs where EXIF GPS redaction
+ * causes the actual readable stream length to be slightly smaller than `file.size`.
+ */
+async function readViaProgressiveSlices(file: Blob): Promise<Uint8Array | null> {
+  const reportedSize = file.size;
+  if (!reportedSize || reportedSize <= 0) return null;
+
+  const CHUNK_SIZE = 256 * 1024; // 256KB
+  const chunks: Uint8Array[] = [];
+  let offset = 0;
+
+  const readSliceBuffer = async (start: number, end: number): Promise<Uint8Array | null> => {
+    const slice = file.slice(start, end);
+    try {
+      if (typeof slice.arrayBuffer === 'function') {
+        const buf = await slice.arrayBuffer();
+        if (buf && buf.byteLength > 0) return new Uint8Array(buf);
+      }
+    } catch {}
+    try {
+      const buf = await new Promise<ArrayBuffer>((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () =>
+          r.result instanceof ArrayBuffer ? resolve(r.result) : reject(new Error('Empty'));
+        r.onerror = () => reject(r.error || new Error('Slice read failed'));
+        r.readAsArrayBuffer(slice);
+      });
+      if (buf && buf.byteLength > 0) return new Uint8Array(buf);
+    } catch {}
+    return null;
+  };
+
+  while (offset < reportedSize) {
+    const targetEnd = Math.min(offset + CHUNK_SIZE, reportedSize);
+    const fullChunk = await readSliceBuffer(offset, targetEnd);
+    if (fullChunk && fullChunk.byteLength === targetEnd - offset) {
+      chunks.push(fullChunk);
+      offset = targetEnd;
+      continue;
+    }
+
+    // Tail chunk hit EOF before `reportedSize` (e.g., EXIF GPS redaction on Android content:// URI).
+    // Binary-search the exact remaining readable byte count from `offset`.
+    let low = 1;
+    let high = targetEnd - offset;
+    let bestTail: Uint8Array | null = null;
+
+    while (low <= high) {
+      const mid = Math.floor((low + high) / 2);
+      const candidate = await readSliceBuffer(offset, offset + mid);
+      if (candidate && candidate.byteLength === mid) {
+        bestTail = candidate;
+        low = mid + 1;
+      } else {
+        high = mid - 1;
+      }
+    }
+
+    if (bestTail && bestTail.byteLength > 0) {
+      chunks.push(bestTail);
+    }
+    break;
+  }
+
+  let totalLength = 0;
+  for (const c of chunks) totalLength += c.byteLength;
+  if (totalLength <= 0) return null;
+
+  const combined = new Uint8Array(totalLength);
+  let pos = 0;
+  for (const c of chunks) {
+    combined.set(c, pos);
+    pos += c.byteLength;
+  }
+  return combined;
+}
+
+/**
+ * Decodes an image via createImageBitmap or HTMLImageElement onto a canvas
+ * and exports a clean, detached in-memory Uint8Array preserving JPG, PNG, or WEBP.
+ */
+async function decodeImageViaCanvasToBytes(
+  file: File,
+  existingObjectUrl: string | null
+): Promise<{ bytes: Uint8Array; mime: string } | null> {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return null;
+
+  let imgSource: CanvasImageSource | null = null;
+  let width = 0;
+  let height = 0;
+
+  if (typeof createImageBitmap !== 'undefined') {
+    try {
+      const bmp = await createImageBitmap(file);
+      imgSource = bmp;
+      width = bmp.width;
+      height = bmp.height;
+    } catch {
+      imgSource = null;
+    }
+  }
+
+  if (!imgSource) {
+    let localUrl: string | null = null;
+    const urlToUse =
+      existingObjectUrl ||
+      (() => {
+        try {
+          localUrl = URL.createObjectURL(file);
+          return localUrl;
+        } catch {
+          return null;
+        }
+      })();
+
+    if (urlToUse) {
+      try {
+        const img = new Image();
+        await new Promise<void>((resolve, reject) => {
+          img.onload = () => resolve();
+          img.onerror = () => reject(new Error('Image load failed'));
+          img.src = urlToUse;
+        });
+        imgSource = img;
+        width = img.naturalWidth || img.width;
+        height = img.naturalHeight || img.height;
+      } catch {
+        imgSource = null;
+      } finally {
+        if (localUrl) {
+          try {
+            URL.revokeObjectURL(localUrl);
+          } catch {}
+        }
+      }
+    }
+  }
+
+  if (!imgSource || width <= 0 || height <= 0) return null;
+
+  try {
+    let targetW = width;
+    let targetH = height;
+    const maxDim = 2048;
+    if (targetW > maxDim || targetH > maxDim) {
+      if (targetW > targetH) {
+        targetH = Math.round((targetH * maxDim) / targetW);
+        targetW = maxDim;
+      } else {
+        targetW = Math.round((targetW * maxDim) / targetH);
+        targetH = maxDim;
+      }
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = targetW;
+    canvas.height = targetH;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(imgSource, 0, 0, targetW, targetH);
+
+    const { mime } = normalizeIngestedMimeAndName(file.name, file.type, null);
+    let blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, mime, mime === 'image/png' ? undefined : 0.9)
+    );
+    let finalMime = mime;
+    if (!blob && mime !== 'image/jpeg') {
+      finalMime = 'image/jpeg';
+      blob = await new Promise<Blob | null>((resolve) =>
+        canvas.toBlob(resolve, 'image/jpeg', 0.9)
       );
     }
-    throw err;
+    if (!blob) return null;
+
+    const ab = await blob.arrayBuffer();
+    return { bytes: new Uint8Array(ab), mime: blob.type || finalMime };
+  } finally {
+    if (typeof (imgSource as any)?.close === 'function') {
+      try {
+        (imgSource as any).close();
+      } catch {}
+    }
+  }
+}
+
+/**
+ * Safely ingests a file from an <input type="file"> immediately upon selection,
+ * reading its bytes into a detached browser memory ArrayBuffer/Blob/File
+ * before Android Photo Picker `content://` URI grants expire.
+ */
+export async function ingestSelectedFileSafely(file: File): Promise<File> {
+  if (!file) return file;
+
+  // If already converted into a detached in-memory File, return immediately
+  if (
+    (file as any).__outeraDetachedMemoryFile === true &&
+    (file as any).__outeraArrayBuffer instanceof ArrayBuffer
+  ) {
+    return file;
+  }
+
+  // SYNCHRONOUS TICK 0: Immediately initiate reads and acquire handles before any await!
+  const syncArrayBufferPromise: Promise<ArrayBuffer | null> | null =
+    typeof file.arrayBuffer === 'function'
+      ? file.arrayBuffer().catch(() => null)
+      : null;
+
+  let slicedBlob: Blob = file;
+  try {
+    slicedBlob = file.slice(0, file.size, file.type || 'image/jpeg');
+  } catch {}
+
+  let tempObjectUrl: string | null = null;
+  try {
+    tempObjectUrl = URL.createObjectURL(file);
+  } catch {}
+
+  try {
+    let rawBytes: Uint8Array | null = null;
+
+    // Strategy 1: Direct synchronous file.arrayBuffer()
+    if (syncArrayBufferPromise) {
+      const buf = await syncArrayBufferPromise;
+      if (buf && buf.byteLength > 0) {
+        rawBytes = new Uint8Array(buf);
+      }
+    }
+
+    // Strategy 2: ReadableStream chunk reader (captures full image even if Android EXIF redaction alters EOF size)
+    if (!rawBytes || rawBytes.byteLength === 0) {
+      rawBytes = await readViaReadableStream(file);
+    }
+
+    // Strategy 3: Response(slicedBlob).arrayBuffer()
+    if ((!rawBytes || rawBytes.byteLength === 0) && typeof Response !== 'undefined') {
+      try {
+        const buf = await new Response(slicedBlob).arrayBuffer();
+        if (buf && buf.byteLength > 0) {
+          rawBytes = new Uint8Array(buf);
+        }
+      } catch {}
+    }
+
+    // Strategy 4: fetch(tempObjectUrl) via Chromium BlobURLLoader
+    if ((!rawBytes || rawBytes.byteLength === 0) && tempObjectUrl) {
+      try {
+        const res = await fetch(tempObjectUrl);
+        if (res.ok) {
+          const buf = await res.arrayBuffer();
+          if (buf && buf.byteLength > 0) {
+            rawBytes = new Uint8Array(buf);
+          }
+        }
+      } catch {}
+    }
+
+    // Strategy 5: FileReader.readAsArrayBuffer & FileReader.readAsDataURL
+    if (!rawBytes || rawBytes.byteLength === 0) {
+      try {
+        const buf = await new Promise<ArrayBuffer>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () =>
+            reader.result instanceof ArrayBuffer
+              ? resolve(reader.result)
+              : reject(new Error('Invalid buffer'));
+          reader.onerror = () => reject(reader.error || new Error('FileReader failed'));
+          reader.readAsArrayBuffer(slicedBlob);
+        });
+        if (buf && buf.byteLength > 0) {
+          rawBytes = new Uint8Array(buf);
+        }
+      } catch {}
+    }
+
+    if (!rawBytes || rawBytes.byteLength === 0) {
+      try {
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () =>
+            typeof reader.result === 'string'
+              ? resolve(reader.result)
+              : reject(new Error('Invalid data URL'));
+          reader.onerror = () => reject(reader.error || new Error('DataURL read failed'));
+          reader.readAsDataURL(file);
+        });
+        const commaIdx = dataUrl.indexOf(',');
+        if (commaIdx !== -1) {
+          const base64 = dataUrl.slice(commaIdx + 1);
+          const binaryStr = atob(base64);
+          const arr = new Uint8Array(binaryStr.length);
+          for (let i = 0; i < binaryStr.length; i++) {
+            arr[i] = binaryStr.charCodeAt(i);
+          }
+          if (arr.byteLength > 0) {
+            rawBytes = arr;
+          }
+        }
+      } catch {}
+    }
+
+    // Strategy 6: Progressive slice reader (binary-searches exact post-EXIF-redaction EOF on Android content://)
+    if (!rawBytes || rawBytes.byteLength === 0) {
+      rawBytes = await readViaProgressiveSlices(file);
+    }
+
+    // Strategy 7: Image decoder + Canvas re-encode fallback
+    let canvasMimeOverride: string | null = null;
+    if (!rawBytes || rawBytes.byteLength === 0) {
+      const decoded = await decodeImageViaCanvasToBytes(file, tempObjectUrl);
+      if (decoded && decoded.bytes.byteLength > 0) {
+        rawBytes = decoded.bytes;
+        canvasMimeOverride = decoded.mime;
+      }
+    }
+
+    if (!rawBytes || rawBytes.byteLength === 0) {
+      throw new Error(
+        'Unable to read the selected photo. If this photo is stored in cloud backup (such as Google Photos or Drive), please download it to your device first and try again.'
+      );
+    }
+
+    // Copy into an independent ArrayBuffer in JS heap memory (zero reference to Android content:// URI)
+    const detachedBuffer = new ArrayBuffer(rawBytes.byteLength);
+    const detachedView = new Uint8Array(detachedBuffer);
+    detachedView.set(rawBytes);
+
+    const { mime, fileName } = normalizeIngestedMimeAndName(
+      file.name,
+      canvasMimeOverride || file.type,
+      detachedView
+    );
+
+    const memoryBlob = new Blob([detachedBuffer], { type: mime });
+    let memoryFile = new File([memoryBlob], fileName, {
+      type: mime,
+      lastModified: Date.now(),
+    });
+    attachDetachedBufferMetadata(memoryFile, detachedBuffer);
+
+    // If the file is larger than 1.8MB or exceeds 5MB, optimize dimensions while preserving JPG/PNG/WEBP
+    if (memoryFile.size > 1.8 * 1024 * 1024) {
+      memoryFile = await compressImageForUpload(memoryFile);
+    }
+
+    return memoryFile;
+  } finally {
+    // Always revoke temporary content:// object URL immediately so no stale URI reference remains
+    if (tempObjectUrl) {
+      try {
+        URL.revokeObjectURL(tempObjectUrl);
+      } catch {}
+    }
   }
 }
 
 /**
  * Client-side photo downscaling/compression:
- * Resizes photos to max 1920px (preserving aspect ratio) and quality 0.85.
- * Shrinks raw 5MB-10MB camera photos to ~300KB-700KB, preventing network drops and timeouts.
+ * Resizes large photos to max 1920px (preserving aspect ratio) while preserving JPG, PNG, and WEBP.
  */
 export async function compressImageForUpload(
   file: File,
   maxDimension = 1920,
-  quality = 0.85
+  quality = 0.86
 ): Promise<File> {
   if (typeof window === 'undefined' || typeof document === 'undefined') {
     return file;
   }
-  if (!file || file.size <= 400 * 1024) {
+  if (!file || file.size <= 500 * 1024) {
     return file;
   }
 
@@ -607,15 +1055,18 @@ export async function compressImageForUpload(
     if (!imgSource) {
       const img = new Image();
       const objectUrl = URL.createObjectURL(file);
-      await new Promise<void>((resolve, reject) => {
-        img.onload = () => resolve();
-        img.onerror = (e) => reject(e);
-        img.src = objectUrl;
-      });
-      URL.revokeObjectURL(objectUrl);
-      imgSource = img;
-      sourceWidth = img.naturalWidth || img.width;
-      sourceHeight = img.naturalHeight || img.height;
+      try {
+        await new Promise<void>((resolve, reject) => {
+          img.onload = () => resolve();
+          img.onerror = (e) => reject(e);
+          img.src = objectUrl;
+        });
+        imgSource = img;
+        sourceWidth = img.naturalWidth || img.width;
+        sourceHeight = img.naturalHeight || img.height;
+      } finally {
+        URL.revokeObjectURL(objectUrl);
+      }
     }
 
     if (!imgSource || sourceWidth <= 0 || sourceHeight <= 0) {
@@ -651,28 +1102,44 @@ export async function compressImageForUpload(
       } catch {}
     }
 
-    const outputMime = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+    // Preserve JPG, PNG, and WEBP formats
+    const rawType = (file.type || '').toLowerCase();
+    const outputMime =
+      rawType === 'image/png'
+        ? 'image/png'
+        : rawType === 'image/webp'
+        ? 'image/webp'
+        : 'image/jpeg';
+
     const blob = await new Promise<Blob | null>((resolve) =>
       canvas.toBlob(resolve, outputMime, outputMime === 'image/png' ? undefined : quality)
     );
 
-    if (!blob || blob.size >= file.size) {
+    if (!blob || (blob.size >= file.size && file.size <= MAX_IMAGE_FILE_SIZE_BYTES)) {
       return file;
     }
 
-    const cleanName = file.name.replace(/\.[^.]+$/, outputMime === 'image/jpeg' ? '.jpg' : '.png');
-    return new File([blob], cleanName, {
+    const ext =
+      outputMime === 'image/png'
+        ? '.png'
+        : outputMime === 'image/webp'
+        ? '.webp'
+        : '.jpg';
+    const cleanName = file.name.replace(/\.[^.]+$/, '') + ext;
+    const buffer = await blob.arrayBuffer();
+    const outFile = new File([buffer], cleanName, {
       type: outputMime,
       lastModified: Date.now(),
     });
+    return attachDetachedBufferMetadata(outFile, buffer);
   } catch (err) {
-    console.warn('Image compression fallback to original file:', err);
+    console.warn('Image compression fallback to in-memory file:', err);
     return file;
   }
 }
 
 /**
- * Robust photo uploader with client-side compression, fresh auth session verification,
+ * Robust photo uploader with detached in-memory buffer support, fresh auth session verification,
  * primary SDK upload + fallback binary upload, and exponential backoff retry.
  */
 export async function uploadStorageObjectWithRetry(
@@ -681,9 +1148,22 @@ export async function uploadStorageObjectWithRetry(
   contentType: string,
   maxRetries = 3
 ): Promise<{ success: boolean; path?: string; error?: string }> {
-  const preparedFile = await compressImageForUpload(file);
+  // Ensure file is detached in memory before async operations
+  const safeMemoryFile = await ingestSelectedFileSafely(file);
+  const preparedFile =
+    safeMemoryFile.size > 1.8 * 1024 * 1024
+      ? await compressImageForUpload(safeMemoryFile)
+      : safeMemoryFile;
+
   const resolvedContentType = contentType || preparedFile.type || 'image/jpeg';
 
+  // Extract raw ArrayBuffer once so retries never re-query a file handle
+  const cachedBuffer: ArrayBuffer =
+    (preparedFile as any).__outeraArrayBuffer instanceof ArrayBuffer
+      ? (preparedFile as any).__outeraArrayBuffer
+      : await preparedFile.arrayBuffer();
+
+  const uploadBlob = new Blob([cachedBuffer], { type: resolvedContentType });
   let lastErrorMsg = '';
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -692,7 +1172,7 @@ export async function uploadStorageObjectWithRetry(
 
       const { data, error } = await supabase.storage
         .from(SUPABASE_MEDIA_BUCKET)
-        .upload(storagePath, preparedFile, {
+        .upload(storagePath, uploadBlob, {
           cacheControl: '3600',
           upsert: true,
           contentType: resolvedContentType,
@@ -709,12 +1189,11 @@ export async function uploadStorageObjectWithRetry(
       lastErrorMsg = sdkThrown?.message || String(sdkThrown);
     }
 
-    // Direct binary fetch fallback to bypass mobile FormData / stream issues
+    // Direct binary fetch fallback using the in-memory ArrayBuffer
     try {
       const session = await ensureFreshSession();
       const token = session?.access_token || SUPABASE_PUBLISHABLE_KEY;
       const uploadUrl = `${SUPABASE_URL}/storage/v1/object/${SUPABASE_MEDIA_BUCKET}/${encodeURI(storagePath)}`;
-      const buffer = await preparedFile.arrayBuffer();
 
       const directRes = await fetch(uploadUrl, {
         method: 'POST',
@@ -725,7 +1204,7 @@ export async function uploadStorageObjectWithRetry(
           'cache-control': 'max-age=3600',
           'x-upsert': 'true',
         },
-        body: buffer,
+        body: cachedBuffer,
       });
 
       if (directRes.ok) {

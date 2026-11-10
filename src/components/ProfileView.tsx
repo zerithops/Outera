@@ -271,31 +271,42 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   };
 
   const handleAvatarFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    setEditError(null);
-    setCanRetryAvatarUpload(false);
-    const file = e.target.files?.[0];
+    const inputEl = e.target;
+    const file = inputEl.files?.[0];
     if (!file) return;
 
-    const check = validateImageFile(file);
-    if (!check.valid) {
-      setEditError(check.error || 'Invalid profile image.');
-      e.target.value = '';
-      return;
-    }
+    // Synchronously start reading the selected file on Tick 0 before any React state updates
+    const ingestPromise = ingestSelectedFileSafely(file);
+
+    setEditError(null);
+    setCanRetryAvatarUpload(false);
 
     try {
-      const safeFile = await ingestSelectedFileSafely(file);
+      const safeFile = await ingestPromise;
+      const check = validateImageFile(safeFile);
+      if (!check.valid) {
+        setEditError(check.error || 'Invalid profile image.');
+        return;
+      }
+
       if (editAvatarPreview && editAvatarPreview.startsWith('blob:')) {
         URL.revokeObjectURL(editAvatarPreview);
       }
       setEditAvatarFile(safeFile);
       setEditAvatarPreview(URL.createObjectURL(safeFile));
     } catch (readErr: any) {
-      setEditError(
-        readErr?.message || 'Unable to read avatar photo from your device. Please pick directly from gallery.'
-      );
+      const preCheck = validateImageFile(file);
+      if (!preCheck.valid) {
+        setEditError(preCheck.error || 'Invalid profile image.');
+      } else {
+        setEditError(
+          readErr?.message || 'Unable to read avatar photo from your device. Please choose the photo again from your gallery.'
+        );
+      }
     } finally {
-      e.target.value = '';
+      if (inputEl) {
+        inputEl.value = '';
+      }
     }
   };
 
@@ -1206,7 +1217,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                     <span>{editAvatarPreview ? 'Change Photo' : 'Upload Photo'}</span>
                     <input
                       type="file"
-                      accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
+                      accept="image/jpeg,image/png,image/webp"
                       onChange={handleAvatarFileSelect}
                       className="hidden"
                     />

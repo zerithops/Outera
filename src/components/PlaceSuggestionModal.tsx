@@ -190,11 +190,9 @@ export const PlaceSuggestionModal: React.FC<PlaceSuggestionModalProps> = ({
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    // Synchronously capture files and start reading on Tick 0 before any React state updates
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
-
-    setErrorMessage(null);
-    setCanRetryUpload(false);
 
     if (selectedFiles.length >= MAX_PHOTOS) {
       setErrorMessage('Maximum 2 photos allowed per place suggestion. Remove a photo to select another.');
@@ -203,29 +201,41 @@ export const PlaceSuggestionModal: React.FC<PlaceSuggestionModalProps> = ({
     }
 
     const remainingSlots = MAX_PHOTOS - selectedFiles.length;
-    if (files.length > remainingSlots) {
-      setErrorMessage(`You can only upload up to 2 photos total (${remainingSlots} slot remaining).`);
-    }
-
     const filesToProcess = files.slice(0, remainingSlots);
+    const ingestionTasks = filesToProcess.map((rawFile) => ({
+      rawFile,
+      promise: ingestSelectedFileSafely(rawFile),
+    }));
+
+    setErrorMessage(
+      files.length > remainingSlots
+        ? `You can only upload up to 2 photos total (${remainingSlots} slot remaining).`
+        : null
+    );
+    setCanRetryUpload(false);
     setProcessingPhotos(true);
     const validNewFiles: File[] = [];
 
     try {
-      for (const file of filesToProcess) {
-        const check = validateImageFile(file);
-        if (!check.valid) {
-          setErrorMessage(check.error || 'Invalid image file.');
-          continue;
-        }
+      for (const task of ingestionTasks) {
         try {
           // Immediately read into memory buffer so device permissions cannot expire
-          const safeFile = await ingestSelectedFileSafely(file);
+          const safeFile = await task.promise;
+          const check = validateImageFile(safeFile);
+          if (!check.valid) {
+            setErrorMessage(check.error || 'Invalid image file.');
+            continue;
+          }
           validNewFiles.push(safeFile);
         } catch (readErr: any) {
-          setErrorMessage(
-            readErr?.message || 'Could not read photo from device. Please pick directly from gallery.'
-          );
+          const preCheck = validateImageFile(task.rawFile);
+          if (!preCheck.valid) {
+            setErrorMessage(preCheck.error || 'Invalid image file.');
+          } else {
+            setErrorMessage(
+              readErr?.message || 'Could not read photo from device. Please choose the photo again from your gallery.'
+            );
+          }
         }
       }
 
@@ -829,7 +839,7 @@ export const PlaceSuggestionModal: React.FC<PlaceSuggestionModalProps> = ({
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
+                accept="image/jpeg,image/png,image/webp"
                 multiple
                 onChange={handleFileChange}
                 className="hidden"

@@ -69,6 +69,7 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
   const [existingImageUrls, setExistingImageUrls] = useState<string[]>([]);
   const [photosModified, setPhotosModified] = useState(false);
   const [selectedPhotos, setSelectedPhotos] = useState<PhotoPreview[]>([]);
+  const selectedPhotosRef = useRef<PhotoPreview[]>([]);
   const [photoError, setPhotoError] = useState<string | null>(null);
   const [processingPhotos, setProcessingPhotos] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -79,6 +80,10 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
   const [canRetryUpload, setCanRetryUpload] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    selectedPhotosRef.current = selectedPhotos;
+  }, [selectedPhotos]);
 
   useEffect(() => {
     if (isOpen) {
@@ -100,6 +105,7 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
         setExistingImageUrls([]);
       }
       setPhotosModified(false);
+      selectedPhotosRef.current.forEach((p) => URL.revokeObjectURL(p.previewUrl));
       setSelectedPhotos([]);
       setPhotoError(null);
       setErrorMessage(null);
@@ -141,12 +147,12 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
     };
   }, [isOpen, selectedPlaceId, defaultPlaceId, activeEditingPost]);
 
-  // Clean up object URLs on unmount/change
+  // Clean up object URLs only on unmount
   useEffect(() => {
     return () => {
-      selectedPhotos.forEach((p) => URL.revokeObjectURL(p.previewUrl));
+      selectedPhotosRef.current.forEach((p) => URL.revokeObjectURL(p.previewUrl));
     };
-  }, [selectedPhotos]);
+  }, []);
 
   if (!isOpen) return null;
 
@@ -167,9 +173,9 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    setPhotoError(null);
-    setErrorMessage(null);
-    setCanRetryUpload(false);
+    // CRITICAL FOR ANDROID PHOTO PICKER:
+    // Grab File references and initiate in-memory ingestion synchronously on Tick 0
+    // BEFORE any React state updates or async boundaries so temporary content:// URI grants cannot expire.
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
 
@@ -180,36 +186,48 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
       return;
     }
 
-    if (files.length > remainingSlots) {
-      setPhotoError(
-        `Maximum 2 photos allowed per post. Only the first ${remainingSlots} photo${remainingSlots > 1 ? 's' : ''} can be added.`
-      );
-    }
-
     const filesToProcess = files.slice(0, remainingSlots);
+    // Start reading all selected files in parallel on Tick 0 immediately
+    const ingestionTasks = filesToProcess.map((rawFile) => ({
+      rawFile,
+      promise: ingestSelectedFileSafely(rawFile),
+    }));
+
+    setPhotoError(
+      files.length > remainingSlots
+        ? `Maximum 2 photos allowed per post. Only the first ${remainingSlots} photo${remainingSlots > 1 ? 's' : ''} can be added.`
+        : null
+    );
+    setErrorMessage(null);
+    setCanRetryUpload(false);
     setProcessingPhotos(true);
+
     const validNewPreviews: PhotoPreview[] = [];
 
     try {
-      for (const file of filesToProcess) {
-        const check = validateImageFile(file);
-        if (!check.valid) {
-          setPhotoError(check.error || 'Invalid image file.');
-          continue;
-        }
-
+      for (const task of ingestionTasks) {
         try {
-          // Immediately read into memory buffer so mobile OS permissions cannot expire
-          const safeFile = await ingestSelectedFileSafely(file);
+          const safeFile = await task.promise;
+          const check = validateImageFile(safeFile);
+          if (!check.valid) {
+            setPhotoError(check.error || 'Invalid image file.');
+            continue;
+          }
+
           validNewPreviews.push({
             file: safeFile,
             previewUrl: URL.createObjectURL(safeFile),
           });
         } catch (readErr: any) {
-          setPhotoError(
-            readErr?.message ||
-              'Unable to read the selected photo from your device. Please pick the photo directly from your gallery.'
-          );
+          const preCheck = validateImageFile(task.rawFile);
+          if (!preCheck.valid) {
+            setPhotoError(preCheck.error || 'Invalid image file.');
+          } else {
+            setPhotoError(
+              readErr?.message ||
+                'Unable to read the selected photo from your device. Please choose the photo again from your gallery.'
+            );
+          }
         }
       }
 
@@ -586,7 +604,7 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
               ref={fileInputRef}
               type="file"
               multiple
-              accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp,image/jpg"
+              accept="image/jpeg,image/png,image/webp"
               onChange={handleFileChange}
               className="hidden"
             />
@@ -683,7 +701,7 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
                         : 'Add Photo 2 (Secondary Image)'}
                     </span>
                     <span className="text-[10px] text-zinc-500 font-mono">
-                      (JPG, PNG, WEBP · up to 10MB)
+                      (JPG, PNG, WEBP · max 5MB)
                     </span>
                   </>
                 )}
