@@ -19,9 +19,10 @@ export const OUTERA_DEFAULT_SEO_DESCRIPTION =
   'Discover verified places, cafes, nature spots, community reviews, and live turn-by-turn routes across Bangladesh on OUTERA. Find something worth going out for.';
 export const OUTERA_DEFAULT_OG_IMAGE_URL = `${OUTERA_CANONICAL_ORIGIN}/assets/aistudio/Neon_Lime_OUTERA_Tech_Logo_8daa6fb0.png`;
 
-// Routes that must NEVER be indexed by Google or other search engines (Requirement 5)
+// Routes that must NEVER be indexed by Google or other search engines
 const NOINDEX_PATH_PREFIXES = [
   '/admin',
+  '/dashboard',
   '/login',
   '/signup',
   '/Signin',

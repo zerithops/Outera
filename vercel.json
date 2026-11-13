@@ -5,6 +5,17 @@
   "cleanUrls": true,
   "redirects": [
     {
+      "source": "/:path*",
+      "has": [
+        {
+          "type": "host",
+          "value": "www.outerabd.buzz"
+        }
+      ],
+      "destination": "https://outerabd.buzz/:path*",
+      "permanent": true
+    },
+    {
       "source": "/places/:slug",
       "destination": "/place/:slug",
       "permanent": true
@@ -12,7 +23,33 @@
   ],
   "headers": [
     {
-      "source": "/(admin.*|login|signup|forgot-password|reset-password|auth/.*|profile|saved|api/.*)",
+      "source": "/sitemap.xml",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "application/xml; charset=utf-8"
+        },
+        {
+          "key": "Cache-Control",
+          "value": "public, s-maxage=900, stale-while-revalidate=3600"
+        }
+      ]
+    },
+    {
+      "source": "/robots.txt",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "text/plain; charset=utf-8"
+        },
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=3600"
+        }
+      ]
+    },
+    {
+      "source": "/(admin.*|dashboard.*|login|register|signup|forgot-password|reset-password|auth/.*|profile|saved|api/.*)",
       "headers": [
         {
           "key": "X-Robots-Tag",
@@ -31,6 +68,10 @@
     }
   ],
   "rewrites": [
+    {
+      "source": "/robots.txt",
+      "destination": "/robots.txt"
+    },
     {
       "source": "/sitemap.xml",
       "destination": "/api/sitemap"
@@ -60,9 +101,8 @@
       "destination": "/api/place-share?slug=:slug"
     },
     {
-      "source": "/(.*)",
+      "source": "/((?!robots\\.txt|sitemap\\.xml|api/).*)",
       "destination": "/index.html"
     }
   ]
 }
-

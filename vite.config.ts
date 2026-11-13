@@ -232,9 +232,11 @@ function outeraPostSeoPlugin(): Plugin {
             cleanRoute === '/reset-password' ||
             cleanRoute.startsWith('/auth/') ||
             cleanRoute === '/login' ||
+            cleanRoute === '/register' ||
             cleanRoute === '/signup' ||
             cleanRoute === '/profile' ||
             cleanRoute === '/saved' ||
+            cleanRoute.startsWith('/dashboard') ||
             cleanRoute.startsWith('/admin');
 
           if (!isKnownAppRoute) {
@@ -268,8 +270,12 @@ function outeraPostSeoPlugin(): Plugin {
           )};\n`;
           fs.writeFileSync(apiTemplatePath, jsContent, 'utf-8');
         }
-        const distSitemapPath = path.resolve(__dirname, 'dist', 'sitemap.xml');
         const { xml: sitemapXml } = await generateDynamicSitemapXml();
+        const publicSitemapPath = path.resolve(__dirname, 'public', 'sitemap.xml');
+        if (fs.existsSync(path.resolve(__dirname, 'public'))) {
+          fs.writeFileSync(publicSitemapPath, sitemapXml, 'utf-8');
+        }
+        const distSitemapPath = path.resolve(__dirname, 'dist', 'sitemap.xml');
         if (fs.existsSync(path.resolve(__dirname, 'dist'))) {
           fs.writeFileSync(distSitemapPath, sitemapXml, 'utf-8');
         }

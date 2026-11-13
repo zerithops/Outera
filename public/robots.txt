@@ -1,27 +1,15 @@
 User-agent: *
 Allow: /
-Allow: /place/
-Allow: /p/
-Allow: /explore
-Allow: /surprise
-Allow: /trips
-Allow: /bangladesh
-Allow: /location/
-
 Disallow: /admin
-Disallow: /admin/
-Disallow: /api/
-Disallow: /auth/
+Disallow: /dashboard
 Disallow: /login
+Disallow: /register
 Disallow: /signup
 Disallow: /forgot-password
 Disallow: /reset-password
+Disallow: /auth
 Disallow: /profile
 Disallow: /saved
-Disallow: /*?token=
-Disallow: /*?code=
-Disallow: /*?access_token=
-Disallow: /*?type=recovery
+Disallow: /api
 
 Sitemap: https://outerabd.buzz/sitemap.xml
-Host: https://outerabd.buzz
