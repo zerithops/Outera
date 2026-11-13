@@ -10,6 +10,8 @@ CREATE TABLE IF NOT EXISTS public.transport_routes (
   destination_district text NOT NULL,
   destination_place_id text,
   destination_place_name text,
+  from_location text,
+  to_location text,
   transport_type text NOT NULL,
   distance_km double precision,
   estimated_duration_min integer NOT NULL,
@@ -20,6 +22,10 @@ CREATE TABLE IF NOT EXISTS public.transport_routes (
   created_at timestamptz DEFAULT now(),
   updated_at timestamptz DEFAULT now()
 );
+
+ALTER TABLE public.transport_routes
+  ADD COLUMN IF NOT EXISTS from_location text,
+  ADD COLUMN IF NOT EXISTS to_location text;
 
 -- 2. Create transport_fares table
 CREATE TABLE IF NOT EXISTS public.transport_fares (

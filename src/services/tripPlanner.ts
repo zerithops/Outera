@@ -21,8 +21,7 @@ import { supabase, getCurrentUser } from './supabase';
 import {
   getTransportOptionsForPlace,
   fetchPlaceNearbyServices,
-  SEED_TRANSPORT_ROUTES,
-  getCustomTransportRoutes,
+  fetchActiveDatabaseTransportRoutes,
   inferFareUnit,
 } from './transport';
 import { BANGLADESH_DIVISIONS } from '../data/bangladeshLocations';
@@ -824,46 +823,37 @@ export async function getTripTransportOptions(params: {
     if (placeOpts.length > 0) return placeOpts;
   }
 
-  // Also check district-level routes directly from custom + seed routes
+  // Check active district-level routes directly from Supabase transport_routes + transport_fares
   const origLower = (originDistrict || originName || '').trim().toLowerCase();
   const destLower = destinationDistrict.trim().toLowerCase();
   const matched: TransportOption[] = [];
 
-  for (const cr of getCustomTransportRoutes()) {
+  const activeDbRoutes = await fetchActiveDatabaseTransportRoutes();
+  for (const dbr of activeDbRoutes) {
     if (
-      cr.active &&
-      cr.originDistrict.toLowerCase() === origLower &&
-      cr.destinationDistrict.toLowerCase() === destLower
+      dbr.active &&
+      !dbr.isArchived &&
+      dbr.originDistrict.toLowerCase() === origLower &&
+      dbr.destinationDistrict.toLowerCase() === destLower
     ) {
       matched.push({
-        id: cr.id,
-        transportType: cr.transportType,
-        fromName: cr.fromLocation || cr.originDistrict,
-        toName: cr.toLocation || cr.destinationDistrict,
-        minFare: (cr as any).minFare || 100,
-        maxFare: (cr as any).maxFare || 200,
-        fareUnit: inferFareUnit(cr.transportType, cr.notes),
+        id: dbr.id,
+        transportType: dbr.transportType,
+        fromName: dbr.fromName || dbr.originDistrict,
+        toName: dbr.toName || dbr.destinationDistrict,
+        minFare: dbr.minFare,
+        maxFare: dbr.maxFare,
+        fareUnit: dbr.fareUnit || inferFareUnit(dbr.transportType, dbr.notes),
         currency: 'BDT',
-        estimatedDurationMin: cr.estimatedDurationMin,
-        distanceKm: cr.distanceKm,
-        sourceType: 'OFFICIAL',
-        confidence: 'High',
-        lastUpdated: '2026-11-02',
-        notes: cr.notes,
-        isMultiLeg: cr.isMultiLeg,
-        legs: cr.legs,
-      });
-    }
-  }
-
-  for (const seed of SEED_TRANSPORT_ROUTES) {
-    if (
-      seed.originDistrict.toLowerCase() === origLower &&
-      seed.destinationDistrict.toLowerCase() === destLower
-    ) {
-      matched.push({
-        ...seed,
-        fareUnit: seed.fareUnit || inferFareUnit(seed.transportType, seed.notes),
+        estimatedDurationMin: dbr.estimatedDurationMin,
+        distanceKm: dbr.distanceKm,
+        sourceType: dbr.sourceType || 'OFFICIAL',
+        sourceReference: dbr.sourceReference,
+        confidence: dbr.confidence || 'High',
+        lastUpdated: dbr.lastUpdated,
+        notes: dbr.notes,
+        isMultiLeg: dbr.isMultiLeg,
+        legs: dbr.legs,
       });
     }
   }

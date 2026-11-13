@@ -64,9 +64,11 @@ import {
   isProtectedMainAdmin,
 } from '../services/adminUsers';
 import {
-  fetchAdminTransportRoutes,
+  fetchAdminTransportRoutesWithDetails,
   saveAdminTransportRoute,
+  setAdminTransportRouteActive,
   deleteAdminTransportRoute,
+  subscribeToTransportRouteChanges,
   fetchAllCommunityFareReports,
   moderateCommunityFareReport,
   deleteCommunityFareReport,
@@ -113,14 +115,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
 
   // Transport & Fares State
   const [transportRoutes, setTransportRoutes] = useState<AdminTransportItem[]>([]);
+  const [transportRoutesError, setTransportRoutesError] = useState<string | null>(null);
+  const [routeStatusFilter, setRouteStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [routeSearchQuery, setRouteSearchQuery] = useState<string>('');
   const [fareReports, setFareReports] = useState<CommunityFareReport[]>([]);
   const [localContacts, setLocalContacts] = useState<LocalTransportContact[]>([]);
   const [nearbyServices, setNearbyServices] = useState<NearbyServiceItem[]>([]);
   const [transportSubTab, setTransportSubTab] = useState<'routes' | 'reports' | 'contacts' | 'nearby'>('routes');
   const [showAddRouteModal, setShowAddRouteModal] = useState<boolean>(false);
+  const [editingRouteId, setEditingRouteId] = useState<string | null>(null);
+  const [deletingRouteTarget, setDeletingRouteTarget] = useState<AdminTransportItem | null>(null);
   const [expandedRouteId, setExpandedRouteId] = useState<string | null>(null);
+  const [routeSaving, setRouteSaving] = useState<boolean>(false);
+  const [routeFormError, setRouteFormError] = useState<string | null>(null);
 
-  // New Route Form State
+  // Add / Edit Route Form State
   const [newRouteOriginDistrict, setNewRouteOriginDistrict] = useState('Dhaka');
   const [newRouteDestDistrict, setNewRouteDestDistrict] = useState("Cox's Bazar");
   const [newRouteDestPlaceName, setNewRouteDestPlaceName] = useState('');
@@ -135,6 +144,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
   const [newRouteSourceType, setNewRouteSourceType] = useState<FareSourceType>('OFFICIAL');
   const [newRouteSourceRef, setNewRouteSourceRef] = useState('');
   const [newRouteNotes, setNewRouteNotes] = useState('');
+  const [newRouteActive, setNewRouteActive] = useState<boolean>(true);
   const [newRouteIsMultiLeg, setNewRouteIsMultiLeg] = useState(false);
   const [newRouteLegs, setNewRouteLegs] = useState<
     {
@@ -215,6 +225,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
     return authorized;
   }, []);
 
+  const refreshTransportRoutes = useCallback(async () => {
+    const res = await fetchAdminTransportRoutesWithDetails();
+    setTransportRoutes(res.routes);
+    setTransportRoutesError(res.error || null);
+    return res;
+  }, []);
+
   const loadData = useCallback(async () => {
     setLoading(true);
     const isAuth = await checkAdminStatus();
@@ -228,7 +245,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
         overviewStats,
         fetchedPosts,
         fetchedSuggestions,
-        fetchedRoutes,
+        routesDetails,
         fetchedFareReports,
         fetchedContacts,
         fetchedNearby,
@@ -237,7 +254,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
         fetchAdminOverviewStats(),
         fetchAdminPlacePosts(activeTab),
         fetchAdminPlaceSuggestions(activeTab),
-        fetchAdminTransportRoutes(),
+        fetchAdminTransportRoutesWithDetails(),
         fetchAllCommunityFareReports(),
         fetchAdminLocalTransportContacts(),
         fetchAdminNearbyServices(),
@@ -252,7 +269,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
       });
       setPosts(fetchedPosts);
       setSuggestions(fetchedSuggestions);
-      setTransportRoutes(fetchedRoutes);
+      setTransportRoutes(routesDetails.routes);
+      setTransportRoutesError(routesDetails.error || null);
       setFareReports(fetchedFareReports);
       setLocalContacts(fetchedContacts);
       setNearbyServices(fetchedNearby);
@@ -269,6 +287,55 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
       setLoading(false);
     }
   }, [activeTab, checkAdminStatus]);
+
+  // Dynamic counts derived directly from actual database records (excluding inactive/archived from active count)
+  const activeTransportRoutes = React.useMemo(
+    () => transportRoutes.filter((r) => r.active !== false && !r.isArchived),
+    [transportRoutes]
+  );
+
+  const inactiveTransportRoutes = React.useMemo(
+    () => transportRoutes.filter((r) => r.active === false || Boolean(r.isArchived)),
+    [transportRoutes]
+  );
+
+  const activeRoutesCount = activeTransportRoutes.length;
+  const inactiveRoutesCount = inactiveTransportRoutes.length;
+  const totalRoutesCount = transportRoutes.length;
+
+  const coveredDistrictsCount = React.useMemo(
+    () =>
+      new Set(
+        activeTransportRoutes
+          .flatMap((r) => [r.originDistrict, r.destinationDistrict])
+          .map((d) => (d || '').trim())
+          .filter(Boolean)
+      ).size,
+    [activeTransportRoutes]
+  );
+
+  const filteredTransportRoutes = React.useMemo(() => {
+    const q = routeSearchQuery.trim().toLowerCase();
+    return transportRoutes.filter((route) => {
+      const isRouteActive = route.active !== false && !route.isArchived;
+      if (routeStatusFilter === 'active' && !isRouteActive) return false;
+      if (routeStatusFilter === 'inactive' && isRouteActive) return false;
+      if (!q) return true;
+      const haystack = [
+        route.originDistrict,
+        route.destinationDistrict,
+        route.fromName,
+        route.toName,
+        route.transportType,
+        ...(route.destinationPlaceNames || []),
+        route.sourceReference || '',
+        route.notes || '',
+      ]
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [transportRoutes, routeStatusFilter, routeSearchQuery]);
 
   // Execute confirmed user management action (role update or suspend/reactivate)
   const handleConfirmUserManagementAction = async (e: React.FormEvent) => {
@@ -368,19 +435,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
     loadData();
   }, [loadData]);
 
-  // Keep admin view in sync with real-time post changes
+  // Keep admin view in sync with real-time post and transport route changes
   useEffect(() => {
-    const unsubscribe = subscribeToPostChanges((event) => {
+    const unsubscribePosts = subscribeToPostChanges((event) => {
       if (event.type === 'deleted') {
         setPosts((prev) => prev.filter((p) => p.id !== event.postId));
       }
       loadData();
     });
 
+    const unsubscribeRoutes = subscribeToTransportRouteChanges(() => {
+      refreshTransportRoutes();
+    });
+
     return () => {
-      unsubscribe();
+      unsubscribePosts();
+      unsubscribeRoutes();
     };
-  }, [loadData]);
+  }, [loadData, refreshTransportRoutes]);
 
   // Handle APPROVE POST
   const handleApprove = async (post: PlacePost) => {
@@ -570,30 +642,107 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
     }
   };
 
-  // Handle Transport Routes & Fares Actions
+  // Handle Transport Routes & Fares Actions (Add, Edit, Activate/Deactivate, Delete)
+  const resetRouteForm = () => {
+    setEditingRouteId(null);
+    setNewRouteOriginDistrict('Dhaka');
+    setNewRouteDestDistrict("Cox's Bazar");
+    setNewRouteDestPlaceName('');
+    setNewRouteFromName('');
+    setNewRouteToName('');
+    setNewRouteTransportType('Bus');
+    setNewRouteMinFare(500);
+    setNewRouteMaxFare(800);
+    setNewRouteDurationMin(360);
+    setNewRouteDistanceKm(300);
+    setNewRouteConfidence('High');
+    setNewRouteSourceType('OFFICIAL');
+    setNewRouteSourceRef('');
+    setNewRouteNotes('');
+    setNewRouteActive(true);
+    setNewRouteIsMultiLeg(false);
+    setNewRouteLegs([]);
+    setRouteFormError(null);
+  };
+
+  const openAddRouteModal = () => {
+    resetRouteForm();
+    setShowAddRouteModal(true);
+  };
+
+  const openEditRouteModal = (route: AdminTransportItem) => {
+    setEditingRouteId(route.id);
+    setNewRouteOriginDistrict(route.originDistrict || 'Dhaka');
+    setNewRouteDestDistrict(route.destinationDistrict || "Cox's Bazar");
+    setNewRouteDestPlaceName((route.destinationPlaceNames || []).join(', '));
+    setNewRouteFromName(route.fromName || '');
+    setNewRouteToName(route.toName || '');
+    setNewRouteTransportType(route.transportType || 'Bus');
+    setNewRouteMinFare(Math.max(1, Number(route.minFare) || 100));
+    setNewRouteMaxFare(Math.max(1, Number(route.maxFare) || Number(route.minFare) || 200));
+    setNewRouteDurationMin(Math.max(5, Number(route.estimatedDurationMin) || 60));
+    setNewRouteDistanceKm(Math.max(1, Number(route.distanceKm) || 10));
+    setNewRouteConfidence(route.confidence || 'High');
+    setNewRouteSourceType(route.sourceType || 'OFFICIAL');
+    setNewRouteSourceRef(route.sourceReference || '');
+    setNewRouteNotes(route.notes || '');
+    setNewRouteActive(route.active !== false && !route.isArchived);
+    const hasLegs = Boolean(route.isMultiLeg && route.legs && route.legs.length > 0);
+    setNewRouteIsMultiLeg(hasLegs);
+    setNewRouteLegs(
+      hasLegs && route.legs
+        ? route.legs.map((leg) => ({
+            fromLocation: leg.fromLocation,
+            toLocation: leg.toLocation,
+            transportType: leg.transportType,
+            minFare: leg.minFare,
+            maxFare: leg.maxFare,
+            estimatedDurationMin: leg.estimatedDurationMin,
+            distanceKm: leg.distanceKm,
+            notes: leg.notes,
+          }))
+        : []
+    );
+    setRouteFormError(null);
+    setShowAddRouteModal(true);
+  };
+
   const handleSaveRoute = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newRouteFromName || !newRouteToName) {
-      showToast('Please specify Origin and Destination location names');
+    setRouteFormError(null);
+
+    if (!newRouteFromName.trim() || !newRouteToName.trim()) {
+      const msg = 'Please specify Origin and Destination location names.';
+      setRouteFormError(msg);
+      showToast(msg);
       return;
     }
     if (newRouteMinFare <= 0 || newRouteMaxFare < newRouteMinFare) {
-      showToast('Please enter valid minimum and maximum fare amounts');
+      const msg = 'Please enter valid minimum and maximum fare amounts (Max Fare >= Min Fare).';
+      setRouteFormError(msg);
+      showToast(msg);
       return;
     }
 
+    setRouteSaving(true);
+    const placeNamesList = newRouteDestPlaceName
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+
     const res = await saveAdminTransportRoute({
+      id: editingRouteId || undefined,
       transportType: newRouteTransportType,
       originDistrict: newRouteOriginDistrict,
       destinationDistrict: newRouteDestDistrict,
-      destinationPlaceNames: newRouteDestPlaceName.trim() ? [newRouteDestPlaceName.trim()] : undefined,
+      destinationPlaceNames: placeNamesList.length > 0 ? placeNamesList : undefined,
       fromName: newRouteFromName.trim(),
       toName: newRouteToName.trim(),
       minFare: Math.round(newRouteMinFare),
       maxFare: Math.round(newRouteMaxFare),
       currency: 'BDT',
       estimatedDurationMin: Math.max(5, Math.round(newRouteDurationMin)),
-      distanceKm: Math.max(1, Math.round(newRouteDistanceKm)),
+      distanceKm: Math.max(1, Math.round(newRouteDistanceKm * 10) / 10),
       sourceType: newRouteSourceType,
       sourceReference: newRouteSourceRef.trim() || undefined,
       confidence: newRouteConfidence,
@@ -601,35 +750,68 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
       notes: newRouteNotes.trim() || undefined,
       isMultiLeg: newRouteIsMultiLeg && newRouteLegs.length > 0,
       legs: newRouteIsMultiLeg ? newRouteLegs : undefined,
+      active: newRouteActive,
     });
+    setRouteSaving(false);
 
     if (res.success) {
-      showToast('Transport route successfully added/updated!');
+      showToast(
+        editingRouteId
+          ? 'Transit corridor & route updated in database!'
+          : 'New transit corridor & route saved to database!'
+      );
       setShowAddRouteModal(false);
-      // Reset form
-      setNewRouteFromName('');
-      setNewRouteToName('');
-      setNewRouteNotes('');
-      setNewRouteDestPlaceName('');
-      setNewRouteLegs([]);
-      setNewRouteIsMultiLeg(false);
-      loadData();
+      resetRouteForm();
+      await refreshTransportRoutes();
     } else {
-      showToast(`Error: ${res.error || 'Failed to save route'}`);
+      const errMsg = res.error || 'Failed to save transport route.';
+      setRouteFormError(errMsg);
+      showToast(`Error: ${errMsg}`);
     }
   };
 
-  const handleDeleteRoute = async (routeId: string) => {
-    if (confirmingAdminDeleteId !== `route-${routeId}`) {
-      setConfirmingAdminDeleteId(`route-${routeId}`);
-      showToast('Tap Delete Route again to confirm removal.');
-      return;
-    }
-    setConfirmingAdminDeleteId(null);
-    const res = await deleteAdminTransportRoute(routeId);
+  const handleToggleRouteActive = async (route: AdminTransportItem) => {
+    const nextActive = !(route.active !== false && !route.isArchived);
+    setActionLoadingId(route.id);
+
+    // Optimistic update for instant feedback
+    setTransportRoutes((prev) =>
+      prev.map((r) =>
+        r.id === route.id ? { ...r, active: nextActive, isArchived: !nextActive } : r
+      )
+    );
+
+    const res = await setAdminTransportRouteActive(route.id, nextActive);
+    setActionLoadingId(null);
+
     if (res.success) {
-      showToast('Route removed.');
-      loadData();
+      showToast(
+        nextActive
+          ? `Route "${route.originDistrict} → ${route.destinationDistrict}" activated.`
+          : `Route "${route.originDistrict} → ${route.destinationDistrict}" deactivated.`
+      );
+      await refreshTransportRoutes();
+    } else {
+      showToast(`Error: ${res.error || 'Failed to update route status'}`);
+      await refreshTransportRoutes();
+    }
+  };
+
+  const handleConfirmDeleteRoute = async () => {
+    if (!deletingRouteTarget) return;
+    const target = deletingRouteTarget;
+    setActionLoadingId(target.id);
+
+    const res = await deleteAdminTransportRoute(target.id);
+    setActionLoadingId(null);
+    setDeletingRouteTarget(null);
+
+    if (res.success) {
+      setTransportRoutes((prev) => prev.filter((r) => r.id !== target.id));
+      showToast(
+        `Route "${target.originDistrict} → ${target.destinationDistrict}" permanently deleted from database.`
+      );
+      await refreshTransportRoutes();
     } else {
       showToast(`Error: ${res.error || 'Failed to delete route'}`);
     }
@@ -889,8 +1071,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
           >
             <Bus className="w-3.5 h-3.5" />
             <span>Transport & Fares</span>
-            <span className="text-[10px] px-1.5 py-0.2 rounded-full font-mono bg-white/[0.08] text-zinc-300 font-bold">
-              {transportRoutes.length}
+            <span
+              className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
+                adminSection === 'transport'
+                  ? 'bg-black/20 text-black'
+                  : 'bg-white/[0.08] text-zinc-300'
+              }`}
+              title={`${activeRoutesCount} active / ${inactiveRoutesCount} inactive transit routes`}
+            >
+              {activeRoutesCount}
             </span>
           </button>
 
@@ -978,7 +1167,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
       ) : adminSection === 'transport' ? (
         /* Transport Sub-Navigation Bar */
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-1.5 rounded-2xl bg-white/[0.02] border border-white/[0.06]">
-          <div className="flex p-1 bg-white/[0.03] rounded-xl border border-white/[0.06] w-fit overflow-x-auto no-scrollbar">
+          <div className="flex p-1 bg-white/[0.03] rounded-xl border border-white/[0.06] w-full sm:w-fit overflow-x-auto no-scrollbar">
             <button
               type="button"
               onClick={() => setTransportSubTab('routes')}
@@ -989,7 +1178,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
               }`}
             >
               <Route className="w-3.5 h-3.5" />
-              <span>Verified Routes ({transportRoutes.length})</span>
+              <span>
+                Transit Routes ({activeRoutesCount} Active
+                {inactiveRoutesCount > 0 ? ` · ${inactiveRoutesCount} Inactive` : ''})
+              </span>
             </button>
             <button
               type="button"
@@ -1031,7 +1223,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
 
           <button
             type="button"
-            onClick={() => setShowAddRouteModal(true)}
+            onClick={openAddRouteModal}
             className="h-9 px-4 rounded-xl bg-[#ccff00] hover:bg-[#d8ff33] text-black font-extrabold text-xs flex items-center justify-center gap-1.5 transition-all shadow-md shadow-[#ccff00]/15 cursor-pointer shrink-0"
           >
             <Plus className="w-4 h-4 stroke-[3]" />
@@ -1590,166 +1782,356 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
           /* TRANSPORT & FARES SECTION */
           <div className="space-y-4">
             {transportSubTab === 'routes' ? (
-              /* Routes List */
-              transportRoutes.length === 0 ? (
-                <div className="py-20 text-center space-y-2 bg-[#111317] border border-white/[0.08] rounded-2xl p-6">
-                  <Route className="w-8 h-8 text-[#ccff00]/60 mx-auto mb-1" />
-                  <h3 className="text-sm font-bold text-white">No Transport Routes Configured</h3>
-                  <p className="text-xs text-zinc-400 max-w-sm mx-auto leading-relaxed">
-                    Add inter-district or regional transit options with realistic fares and durations for OUTERA destinations.
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between text-xs text-zinc-400 px-1">
-                    <span>Showing {transportRoutes.length} active transit corridors & routes</span>
-                    <span className="font-mono text-[#ccff00]">64 Districts Covered</span>
+              /* Routes Management Section */
+              <div className="space-y-3">
+                {/* Dynamic Summary & Filter Bar */}
+                <div className="p-3.5 rounded-2xl bg-[#111317] border border-white/[0.08] space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-zinc-200 font-semibold">
+                        Showing {activeRoutesCount} active transit{' '}
+                        {activeRoutesCount === 1 ? 'corridor & route' : 'corridors & routes'}
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-mono text-[10px] font-bold">
+                        {activeRoutesCount} Active
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full bg-zinc-500/15 text-zinc-300 border border-white/[0.1] font-mono text-[10px] font-bold">
+                        {inactiveRoutesCount} Inactive
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 font-mono text-[11px]">
+                      <span className="text-[#ccff00]">
+                        {coveredDistrictsCount}{' '}
+                        {coveredDistrictsCount === 1 ? 'District' : 'Districts'} Covered
+                      </span>
+                      <span className="text-zinc-600">·</span>
+                      <span className="text-zinc-400">
+                        {totalRoutesCount} Total in Database
+                      </span>
+                    </div>
                   </div>
 
-                  {transportRoutes.map((route) => {
-                    const isExpanded = expandedRouteId === route.id;
-                    return (
-                      <div
-                        key={route.id}
-                        className="p-5 rounded-2xl bg-[#111317] border border-white/[0.08] hover:border-white/[0.14] transition-all space-y-3"
-                      >
-                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-                          <div className="flex items-start gap-3">
-                            <div className="w-10 h-10 rounded-xl bg-[#ccff00]/10 border border-[#ccff00]/20 flex items-center justify-center text-sm font-bold text-[#ccff00] shrink-0">
-                              <Bus className="w-5 h-5" />
-                            </div>
-                            <div>
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className="text-xs font-black text-black bg-[#ccff00] px-2 py-0.5 rounded-full uppercase tracking-wider">
-                                  {route.transportType}
-                                </span>
-                                <h3 className="text-sm font-black text-white">
-                                  {route.originDistrict} → {route.destinationDistrict}
-                                </h3>
-                                {route.destinationPlaceNames && route.destinationPlaceNames.length > 0 && (
-                                  <span className="text-[10px] font-bold text-[#ccff00] bg-[#ccff00]/10 px-2 py-0.5 rounded-full border border-[#ccff00]/20">
-                                    {route.destinationPlaceNames.join(', ')}
+                  {/* Filter Tabs & Search Input */}
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 pt-2 border-t border-white/[0.06]">
+                    <div className="flex p-1 bg-white/[0.03] rounded-xl border border-white/[0.06] w-full sm:w-fit overflow-x-auto no-scrollbar">
+                      {(
+                        [
+                          { id: 'all', label: `All (${totalRoutesCount})` },
+                          { id: 'active', label: `Active (${activeRoutesCount})` },
+                          { id: 'inactive', label: `Inactive (${inactiveRoutesCount})` },
+                        ] as const
+                      ).map((tab) => (
+                        <button
+                          key={tab.id}
+                          type="button"
+                          onClick={() => setRouteStatusFilter(tab.id)}
+                          className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
+                            routeStatusFilter === tab.id
+                              ? 'bg-[#ccff00] text-black font-extrabold'
+                              : 'text-zinc-400 hover:text-white'
+                          }`}
+                        >
+                          {tab.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="relative flex-1 sm:max-w-xs">
+                      <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <input
+                        type="text"
+                        value={routeSearchQuery}
+                        onChange={(e) => setRouteSearchQuery(e.target.value)}
+                        placeholder="Search district, stop, or vehicle..."
+                        className="w-full h-9 pl-8 pr-7 rounded-xl bg-white/[0.04] border border-white/[0.08] text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#ccff00]"
+                      />
+                      {routeSearchQuery && (
+                        <button
+                          type="button"
+                          onClick={() => setRouteSearchQuery('')}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white text-xs cursor-pointer"
+                          aria-label="Clear search"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {transportRoutesError && (
+                  <div className="p-4 rounded-2xl bg-red-500/10 border border-red-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-red-200">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+                      <span>Database sync error: {transportRoutesError}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => refreshTransportRoutes()}
+                      className="h-8 px-3 rounded-lg bg-red-500/20 hover:bg-red-500/30 text-white font-bold text-xs shrink-0 cursor-pointer"
+                    >
+                      Retry Sync
+                    </button>
+                  </div>
+                )}
+
+                {totalRoutesCount === 0 ? (
+                  <div className="py-16 text-center space-y-3 bg-[#111317] border border-white/[0.08] rounded-2xl p-6">
+                    <Route className="w-9 h-9 text-[#ccff00]/60 mx-auto mb-1" />
+                    <div className="space-y-1">
+                      <h3 className="text-sm font-bold text-white">
+                        No Transit Corridors or Routes in Database (0 Active)
+                      </h3>
+                      <p className="text-xs text-zinc-400 max-w-md mx-auto leading-relaxed">
+                        There are currently 0 transport routes stored in Supabase. Add verified inter-district or regional transit corridors with accurate fares and durations.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={openAddRouteModal}
+                      className="h-9 px-4 rounded-xl bg-[#ccff00] hover:bg-[#d8ff33] text-black font-extrabold text-xs inline-flex items-center gap-1.5 transition-all cursor-pointer"
+                    >
+                      <Plus className="w-4 h-4 stroke-[3]" />
+                      <span>Add First Transport Route</span>
+                    </button>
+                  </div>
+                ) : filteredTransportRoutes.length === 0 ? (
+                  <div className="py-14 text-center space-y-3 bg-[#111317] border border-white/[0.08] rounded-2xl p-6">
+                    <Search className="w-7 h-7 text-zinc-500 mx-auto" />
+                    <div className="space-y-1">
+                      <h3 className="text-sm font-bold text-white">No Matching Transit Routes</h3>
+                      <p className="text-xs text-zinc-400 max-w-sm mx-auto">
+                        No routes match the current filter ({routeStatusFilter}) or search query.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRouteStatusFilter('all');
+                        setRouteSearchQuery('');
+                      }}
+                      className="h-8 px-3.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] text-xs font-bold text-white cursor-pointer"
+                    >
+                      Reset Filters
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {filteredTransportRoutes.map((route) => {
+                      const isExpanded = expandedRouteId === route.id;
+                      const isRouteActive = route.active !== false && !route.isArchived;
+                      const isActing = actionLoadingId === route.id;
+
+                      return (
+                        <div
+                          key={route.id}
+                          className={`p-4 sm:p-5 rounded-2xl bg-[#111317] border transition-all space-y-3 ${
+                            isRouteActive
+                              ? 'border-white/[0.08] hover:border-white/[0.14]'
+                              : 'border-amber-500/20 bg-[#111317]/75 opacity-85'
+                          }`}
+                        >
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                            <div className="flex items-start gap-3">
+                              <div
+                                className={`w-10 h-10 rounded-xl flex items-center justify-center text-sm font-bold shrink-0 border ${
+                                  isRouteActive
+                                    ? 'bg-[#ccff00]/10 border-[#ccff00]/20 text-[#ccff00]'
+                                    : 'bg-zinc-800/60 border-white/[0.08] text-zinc-400'
+                                }`}
+                              >
+                                <Bus className="w-5 h-5" />
+                              </div>
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span
+                                    className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border ${
+                                      isRouteActive
+                                        ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                                        : 'bg-zinc-500/20 text-zinc-300 border-zinc-500/30'
+                                    }`}
+                                  >
+                                    {isRouteActive ? 'Active' : 'Inactive'}
                                   </span>
-                                )}
+                                  <span className="text-xs font-black text-black bg-[#ccff00] px-2 py-0.5 rounded-full uppercase tracking-wider">
+                                    {route.transportType}
+                                  </span>
+                                  <h3 className="text-sm font-black text-white">
+                                    {route.originDistrict} → {route.destinationDistrict}
+                                  </h3>
+                                  {route.destinationPlaceNames && route.destinationPlaceNames.length > 0 && (
+                                    <span className="text-[10px] font-bold text-[#ccff00] bg-[#ccff00]/10 px-2 py-0.5 rounded-full border border-[#ccff00]/20">
+                                      {route.destinationPlaceNames.join(', ')}
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-xs text-zinc-300 font-medium mt-1 break-words">
+                                  {route.fromName} → {route.toName}
+                                </p>
                               </div>
-                              <p className="text-xs text-zinc-300 font-medium mt-1">
-                                {route.fromName} → {route.toName}
-                              </p>
+                            </div>
+
+                            {/* Fare & Duration Pill */}
+                            <div className="flex sm:flex-col items-center sm:items-end justify-between gap-1 shrink-0 bg-white/[0.03] sm:bg-transparent p-2.5 sm:p-0 rounded-xl">
+                              <span className="text-sm sm:text-base font-black text-[#ccff00] font-mono">
+                                ৳{route.minFare} – ৳{route.maxFare} ({route.fareUnit || 'per person'})
+                              </span>
+                              <span className="text-[11px] text-zinc-400 font-mono">
+                                ~{Math.floor(route.estimatedDurationMin / 60)}h {route.estimatedDurationMin % 60}m
+                                {route.distanceKm ? ` · ${route.distanceKm} km` : ''}
+                              </span>
                             </div>
                           </div>
 
-                          {/* Fare & Duration Pill */}
-                          <div className="flex sm:flex-col items-center sm:items-end justify-between gap-1 shrink-0 bg-white/[0.03] sm:bg-transparent p-2 sm:p-0 rounded-xl">
-                            <span className="text-base font-black text-[#ccff00] font-mono">
-                              ৳{route.minFare} – ৳{route.maxFare} ({route.fareUnit || 'per person'})
-                            </span>
-                            <span className="text-[11px] text-zinc-400 font-mono">
-                              ~{Math.floor(route.estimatedDurationMin / 60)}h {route.estimatedDurationMin % 60}m · {route.distanceKm} km
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Badges Strip */}
-                        <div className="flex flex-wrap items-center gap-2 pt-1 text-[10px] font-bold">
-                          <span
-                            className={`px-2 py-0.5 rounded-full border ${
-                              route.confidence === 'High'
-                                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                                : 'bg-amber-500/10 text-amber-300 border-amber-500/30'
-                            }`}
-                          >
-                            {route.confidence} Confidence
-                          </span>
-                          <span className="px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-300 border border-blue-500/30 uppercase tracking-wider">
-                            Source: {route.sourceType}
-                          </span>
-                          {route.sourceReference && (
-                            <span className="px-2 py-0.5 rounded-full bg-white/[0.04] text-zinc-400 border border-white/[0.08]">
-                              {route.sourceReference}
-                            </span>
-                          )}
-                          {route.isOutdated && (
-                            <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 flex items-center gap-1">
-                              <AlertTriangle className="w-3 h-3" />
-                              <span>May be outdated (&gt;180d)</span>
-                            </span>
-                          )}
-                          {route.isMultiLeg && (
-                            <span className="px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-300 border border-purple-500/30">
-                              Multi-Leg ({route.legs?.length || 2} steps)
-                            </span>
-                          )}
-                          {route.isCustom && (
-                            <span className="px-2 py-0.5 rounded-full bg-[#ccff00]/10 text-[#ccff00] border border-[#ccff00]/30">
-                              Custom Admin Route
-                            </span>
-                          )}
-                        </div>
-
-                        {/* Notes */}
-                        {route.notes && (
-                          <p className="text-xs text-zinc-400 italic bg-white/[0.01] p-2.5 rounded-xl border border-white/[0.04]">
-                            "{route.notes}"
-                          </p>
-                        )}
-
-                        {/* Multi-leg step breakdown toggle */}
-                        {route.isMultiLeg && route.legs && route.legs.length > 0 && (
-                          <div className="pt-1">
-                            <button
-                              type="button"
-                              onClick={() => setExpandedRouteId(isExpanded ? null : route.id)}
-                              className="text-xs font-bold text-[#ccff00] hover:text-[#d8ff33] flex items-center gap-1.5 transition-colors"
+                          {/* Badges Strip */}
+                          <div className="flex flex-wrap items-center gap-2 pt-1 text-[10px] font-bold">
+                            <span
+                              className={`px-2 py-0.5 rounded-full border ${
+                                route.confidence === 'High'
+                                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                                  : 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                              }`}
                             >
-                              <span>{isExpanded ? 'Hide Step Breakdown' : `Show Step Breakdown (${route.legs.length} legs)`}</span>
-                              {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                            </button>
-
-                            {isExpanded && (
-                              <div className="mt-2.5 p-3 rounded-xl bg-white/[0.02] border border-white/[0.06] space-y-2">
-                                {route.legs.map((leg, idx) => (
-                                  <div key={idx} className="flex items-center justify-between text-xs p-2 rounded-lg bg-white/[0.02]">
-                                    <div className="flex items-center gap-2">
-                                      <span className="w-5 h-5 rounded-full bg-white/[0.08] font-mono text-[10px] font-bold text-white flex items-center justify-center">
-                                        {idx + 1}
-                                      </span>
-                                      <span className="text-white font-semibold">
-                                        {leg.fromLocation} → {leg.toLocation}
-                                      </span>
-                                      <span className="text-[10px] px-1.5 py-0.2 rounded bg-[#ccff00]/10 text-[#ccff00] font-bold">
-                                        {leg.transportType}
-                                      </span>
-                                    </div>
-                                    <div className="text-right font-mono">
-                                      <span className="text-[#ccff00] font-bold">৳{leg.minFare}–{leg.maxFare}</span>
-                                      <span className="text-zinc-500 text-[11px] ml-2">~{Math.round(leg.estimatedDurationMin)}m</span>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
+                              {route.confidence} Confidence
+                            </span>
+                            <span className="px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-300 border border-blue-500/30 uppercase tracking-wider">
+                              Source: {route.sourceType}
+                            </span>
+                            {route.sourceReference && (
+                              <span className="px-2 py-0.5 rounded-full bg-white/[0.04] text-zinc-400 border border-white/[0.08]">
+                                {route.sourceReference}
+                              </span>
+                            )}
+                            {route.isOutdated && (
+                              <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                                <AlertTriangle className="w-3 h-3" />
+                                <span>May be outdated (&gt;180d)</span>
+                              </span>
+                            )}
+                            {route.isMultiLeg && (
+                              <span className="px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-300 border border-purple-500/30">
+                                Multi-Leg ({route.legs?.length || 2} steps)
+                              </span>
                             )}
                           </div>
-                        )}
 
-                        {/* Action Footer */}
-                        <div className="pt-2 border-t border-white/[0.06] flex items-center justify-between text-[11px] text-zinc-500 font-mono">
-                          <span>Updated: {route.lastUpdated}</span>
-                          {route.isCustom && (
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteRoute(route.id)}
-                              className="px-2.5 py-1 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 text-xs font-bold transition-all flex items-center gap-1"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                              <span>Delete Route</span>
-                            </button>
+                          {/* Notes */}
+                          {route.notes && (
+                            <p className="text-xs text-zinc-400 italic bg-white/[0.01] p-2.5 rounded-xl border border-white/[0.04]">
+                              "{route.notes}"
+                            </p>
                           )}
+
+                          {/* Multi-leg step breakdown toggle */}
+                          {route.isMultiLeg && route.legs && route.legs.length > 0 && (
+                            <div className="pt-1">
+                              <button
+                                type="button"
+                                onClick={() => setExpandedRouteId(isExpanded ? null : route.id)}
+                                className="text-xs font-bold text-[#ccff00] hover:text-[#d8ff33] flex items-center gap-1.5 transition-colors cursor-pointer"
+                              >
+                                <span>
+                                  {isExpanded
+                                    ? 'Hide Step Breakdown'
+                                    : `Show Step Breakdown (${route.legs.length} legs)`}
+                                </span>
+                                {isExpanded ? (
+                                  <ChevronUp className="w-3.5 h-3.5" />
+                                ) : (
+                                  <ChevronDown className="w-3.5 h-3.5" />
+                                )}
+                              </button>
+
+                              {isExpanded && (
+                                <div className="mt-2.5 p-3 rounded-xl bg-white/[0.02] border border-white/[0.06] space-y-2">
+                                  {route.legs.map((leg, idx) => (
+                                    <div
+                                      key={idx}
+                                      className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 text-xs p-2 rounded-lg bg-white/[0.02]"
+                                    >
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <span className="w-5 h-5 rounded-full bg-white/[0.08] font-mono text-[10px] font-bold text-white flex items-center justify-center shrink-0">
+                                          {idx + 1}
+                                        </span>
+                                        <span className="text-white font-semibold">
+                                          {leg.fromLocation} → {leg.toLocation}
+                                        </span>
+                                        <span className="text-[10px] px-1.5 py-0.2 rounded bg-[#ccff00]/10 text-[#ccff00] font-bold">
+                                          {leg.transportType}
+                                        </span>
+                                      </div>
+                                      <div className="text-left sm:text-right font-mono pl-7 sm:pl-0">
+                                        <span className="text-[#ccff00] font-bold">
+                                          ৳{leg.minFare}–{leg.maxFare}
+                                        </span>
+                                        <span className="text-zinc-500 text-[11px] ml-2">
+                                          ~{Math.round(leg.estimatedDurationMin)}m
+                                        </span>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Responsive Management Footer: Edit, Activate/Deactivate, Delete */}
+                          <div className="pt-2.5 border-t border-white/[0.06] flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                            <span className="text-[11px] text-zinc-500 font-mono">
+                              Updated: {route.lastUpdated}
+                            </span>
+
+                            <div className="flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                disabled={isActing}
+                                onClick={() => openEditRouteModal(route)}
+                                className="h-8 px-3 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] text-white border border-white/[0.1] text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                              >
+                                <Edit3 className="w-3.5 h-3.5 text-[#ccff00]" />
+                                <span>Edit</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                disabled={isActing}
+                                onClick={() => handleToggleRouteActive(route)}
+                                className={`h-8 px-3 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50 border ${
+                                  isRouteActive
+                                    ? 'bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border-amber-500/30'
+                                    : 'bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border-emerald-500/30'
+                                }`}
+                              >
+                                {isRouteActive ? (
+                                  <>
+                                    <EyeOff className="w-3.5 h-3.5" />
+                                    <span>Deactivate</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <CheckCircle className="w-3.5 h-3.5" />
+                                    <span>Activate</span>
+                                  </>
+                                )}
+                              </button>
+
+                              <button
+                                type="button"
+                                disabled={isActing}
+                                onClick={() => setDeletingRouteTarget(route)}
+                                className="h-8 px-3 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                <span>Delete</span>
+                              </button>
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             ) : transportSubTab === 'reports' ? (
               /* Community Fare Reports List */
               fareReports.length === 0 ? (
@@ -3093,6 +3475,62 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
         </div>
       )}
 
+      {/* Permanent Delete Transport Route Confirmation Modal */}
+      {deletingRouteTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="w-full max-w-md bg-[#111317] border border-red-500/30 rounded-2xl p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-red-500/15 border border-red-500/30 text-red-400 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-white tracking-tight">Delete Transit Route Permanently?</h3>
+                <p className="text-[11px] text-zinc-400">
+                  This action permanently removes the route and fare record from the database.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/[0.08] space-y-1">
+              <div className="flex items-center gap-2 text-xs font-bold text-white">
+                <span>{deletingRouteTarget.originDistrict}</span>
+                <span className="text-zinc-500">→</span>
+                <span className="text-[#ccff00]">{deletingRouteTarget.destinationDistrict}</span>
+                {deletingRouteTarget.destinationPlaceNames && deletingRouteTarget.destinationPlaceNames.length > 0 && (
+                  <span className="text-[10px] text-emerald-300">({deletingRouteTarget.destinationPlaceNames.join(', ')})</span>
+                )}
+              </div>
+              <p className="text-[11px] text-zinc-400">
+                {deletingRouteTarget.fromName} → {deletingRouteTarget.toName} • {deletingRouteTarget.transportType} (৳{deletingRouteTarget.minFare}–৳{deletingRouteTarget.maxFare})
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2.5 pt-2">
+              <button
+                type="button"
+                disabled={actionLoadingId === deletingRouteTarget.id}
+                onClick={() => setDeletingRouteTarget(null)}
+                className="flex-1 h-10 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] text-zinc-300 text-xs font-bold transition-all disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={actionLoadingId === deletingRouteTarget.id}
+                onClick={handleConfirmDeleteRoute}
+                className="flex-1 h-10 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-extrabold uppercase tracking-wider transition-all shadow-lg shadow-red-600/20 disabled:opacity-50"
+              >
+                {actionLoadingId === deletingRouteTarget.id ? 'Deleting...' : 'Delete Permanently'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Add / Edit Transport Route Modal */}
       {showAddRouteModal && (
         <div
@@ -3106,16 +3544,29 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                 <div className="w-7 h-7 rounded-lg bg-[#ccff00]/10 text-[#ccff00] flex items-center justify-center">
                   <Bus className="w-4 h-4" />
                 </div>
-                <h3 className="text-base font-black text-white tracking-tight">Add Transport Route & Fare</h3>
+                <h3 className="text-base font-black text-white tracking-tight">
+                  {editingRouteId ? 'Edit Transport Route & Fare' : 'Add Transport Route & Fare'}
+                </h3>
               </div>
               <button
                 type="button"
-                onClick={() => setShowAddRouteModal(false)}
+                onClick={() => {
+                  setShowAddRouteModal(false);
+                  setEditingRouteId(null);
+                  setRouteFormError(null);
+                }}
                 className="text-zinc-400 hover:text-white text-xs font-mono"
               >
                 ✕
               </button>
             </div>
+
+            {routeFormError && (
+              <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/30 flex items-start gap-2.5">
+                <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                <p className="text-xs text-red-200 font-medium">{routeFormError}</p>
+              </div>
+            )}
 
             <form onSubmit={handleSaveRoute} className="space-y-4">
               {/* Origin & Destination Districts */}
@@ -3342,6 +3793,27 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                 </div>
               </div>
 
+              {/* Route Active Status Toggle */}
+              <div className="p-3.5 rounded-xl bg-white/[0.02] border border-white/[0.06] flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold text-white">Active Corridor Status</p>
+                  <p className="text-[11px] text-zinc-400">
+                    Active routes are included in the active count and visible in trip planning.
+                  </p>
+                </div>
+                <label className="inline-flex items-center gap-2 cursor-pointer shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={newRouteActive}
+                    onChange={(e) => setNewRouteActive(e.target.checked)}
+                    className="rounded text-[#ccff00] focus:ring-0"
+                  />
+                  <span className={`text-xs font-extrabold uppercase tracking-wider ${newRouteActive ? 'text-emerald-400' : 'text-amber-400'}`}>
+                    {newRouteActive ? 'Active' : 'Inactive'}
+                  </span>
+                </label>
+              </div>
+
               {/* Multi-Leg Route Toggle */}
               <div className="p-3.5 rounded-xl bg-white/[0.02] border border-white/[0.06] space-y-3">
                 <label className="flex items-center gap-2 text-xs font-bold text-white cursor-pointer">
@@ -3501,16 +3973,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
               <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-white/[0.08]">
                 <button
                   type="button"
-                  onClick={() => setShowAddRouteModal(false)}
-                  className="px-4 py-2.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] text-xs font-semibold text-zinc-300 transition-all"
+                  disabled={routeSaving}
+                  onClick={() => {
+                    setShowAddRouteModal(false);
+                    setEditingRouteId(null);
+                    setRouteFormError(null);
+                  }}
+                  className="px-4 py-2.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] text-xs font-semibold text-zinc-300 transition-all disabled:opacity-50"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2.5 rounded-xl bg-[#ccff00] hover:bg-[#d8ff33] text-black font-extrabold text-xs uppercase tracking-wider transition-all shadow-md shadow-[#ccff00]/15"
+                  disabled={routeSaving}
+                  className="px-5 py-2.5 rounded-xl bg-[#ccff00] hover:bg-[#d8ff33] text-black font-extrabold text-xs uppercase tracking-wider transition-all shadow-md shadow-[#ccff00]/15 disabled:opacity-50"
                 >
-                  Save Transport Route
+                  {routeSaving
+                    ? 'Saving...'
+                    : editingRouteId
+                    ? 'Update Transport Route'
+                    : 'Save Transport Route'}
                 </button>
               </div>
             </form>
@@ -3520,3 +4002,4 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
     </div>
   );
 };
+

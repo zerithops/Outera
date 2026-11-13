@@ -50,416 +50,16 @@ export function inferFareUnit(transportType: TransportType, notes?: string): Far
 }
 
 // -------------------------------------------------------------
-// VERIFIED BUILT-IN SEED ROUTES & FARES FOR BANGLADESH
-// Covers major tourist corridors, coastal, riverine, and hill destinations
+// DATABASE-DRIVEN TRANSPORT ROUTES & FARES
+// Never hardcode or assume a fixed count of routes (e.g. 15).
+// All transit corridors and routes come directly from public.transport_routes
+// and public.transport_fares in Supabase.
 // -------------------------------------------------------------
 export const SEED_TRANSPORT_ROUTES: (TransportOption & {
   originDistrict: string;
   destinationDistrict: string;
   destinationPlaceNames?: string[];
-})[] = [
-  // Dhaka -> Cox's Bazar
-  {
-    id: 'route-dhaka-cox-bus-ac',
-    transportType: 'Bus',
-    originDistrict: 'Dhaka',
-    destinationDistrict: "Cox's Bazar",
-    fromName: 'Dhaka (Sayedabad / Arambagh)',
-    toName: "Cox's Bazar (Kolatoli / Laboni Beach)",
-    minFare: 1400,
-    maxFare: 2200,
-    fareUnit: 'per person',
-    currency: 'BDT',
-    estimatedDurationMin: 540, // 9 hours
-    distanceKm: 395,
-    sourceType: 'OPERATOR',
-    sourceReference: 'Green Line, Hanif, Shohagh AC Bus Operators',
-    confidence: 'High',
-    lastUpdated: '2026-10-15',
-    notes: 'Premium Scania / Hyundai sleeper & business class coaches. Includes rest stops.',
-  },
-  {
-    id: 'route-dhaka-cox-bus-nonac',
-    transportType: 'Bus',
-    originDistrict: 'Dhaka',
-    destinationDistrict: "Cox's Bazar",
-    fromName: 'Dhaka (Sayedabad)',
-    toName: "Cox's Bazar (Jhawtola)",
-    minFare: 850,
-    maxFare: 1100,
-    fareUnit: 'per person',
-    currency: 'BDT',
-    estimatedDurationMin: 600, // 10 hours
-    distanceKm: 395,
-    sourceType: 'COMMUNITY',
-    sourceReference: 'Shyamoli, S. Alam community reports',
-    confidence: 'High',
-    lastUpdated: '2026-10-25',
-    notes: 'Regular economy non-AC highway service.',
-  },
-  {
-    id: 'route-dhaka-cox-train',
-    transportType: 'Train',
-    originDistrict: 'Dhaka',
-    destinationDistrict: "Cox's Bazar",
-    fromName: 'Dhaka (Kamalapur Railway Station)',
-    toName: "Cox's Bazar Iconic Railway Station",
-    minFare: 695,
-    maxFare: 1530,
-    fareUnit: 'per person',
-    currency: 'BDT',
-    estimatedDurationMin: 480, // 8 hours
-    distanceKm: 410,
-    sourceType: 'OFFICIAL',
-    sourceReference: 'Bangladesh Railway Official Schedule (Coxsbazar Express & Parjatak Express)',
-    confidence: 'High',
-    lastUpdated: '2026-09-01',
-    notes: 'Shovon Chair: ৳695, Snigdha AC: ৳1,325, AC Berth: ৳1,530. Book 10 days in advance.',
-  },
-
-  // Dhaka -> Kuakata (Multi-Leg via Launch & Padma Bridge Bus)
-  {
-    id: 'route-dhaka-kuakata-multileg-launch',
-    transportType: 'Launch / Boat',
-    originDistrict: 'Dhaka',
-    destinationDistrict: 'Patuakhali',
-    destinationPlaceNames: ['Kuakata Beach', 'Kuakata Sea Beach', 'Lebur Char', 'Fatrar Char'],
-    fromName: 'Dhaka (Sadarghat Launch Terminal)',
-    toName: 'Kuakata Beach via Barishal / Patuakhali',
-    minFare: 750,
-    maxFare: 1750,
-    fareUnit: 'per person',
-    currency: 'BDT',
-    estimatedDurationMin: 660, // 11 hours total
-    distanceKm: 290,
-    sourceType: 'COMMUNITY',
-    sourceReference: 'Overnight Launch + Connecting Bus consensus',
-    confidence: 'High',
-    lastUpdated: '2026-10-20',
-    isMultiLeg: true,
-    legs: [
-      {
-        fromLocation: 'Dhaka Sadarghat',
-        toLocation: 'Barishal Launch Ghat',
-        transportType: 'Launch / Boat',
-        minFare: 450,
-        maxFare: 1300,
-        estimatedDurationMin: 480, // 8h overnight
-        distanceKm: 180,
-        notes: 'Deck fare: ৳450–550; Single AC Cabin: ৳1,100–1,300. Night departure around 8:30 PM.',
-      },
-      {
-        fromLocation: 'Barishal Rupatali Bus Stand',
-        toLocation: 'Kuakata Beach',
-        transportType: 'Bus',
-        minFare: 300,
-        maxFare: 450,
-        estimatedDurationMin: 180, // 3h
-        distanceKm: 110,
-        notes: 'Direct coastal express via Payra Bridge. Departs every 30 minutes.',
-      },
-    ],
-    notes: 'Scenic overnight river voyage through Padma & Meghna rivers, arriving at sunrise for connecting bus.',
-  },
-  {
-    id: 'route-dhaka-kuakata-direct-bus',
-    transportType: 'Bus',
-    originDistrict: 'Dhaka',
-    destinationDistrict: 'Patuakhali',
-    destinationPlaceNames: ['Kuakata Beach', 'Kuakata Sea Beach'],
-    fromName: 'Dhaka (Gabtoli / Sayedabad)',
-    toName: 'Kuakata Zero Point',
-    minFare: 800,
-    maxFare: 1200,
-    fareUnit: 'per person',
-    currency: 'BDT',
-    estimatedDurationMin: 390, // 6.5 hours
-    distanceKm: 285,
-    sourceType: 'OPERATOR',
-    sourceReference: 'Sakura Paribahan, Green St. Martin',
-    confidence: 'High',
-    lastUpdated: '2026-10-10',
-    notes: 'Express route via Padma Bridge and Payra Bridge. No ferry delays.',
-  },
-
-  // Barishal -> Kuakata
-  {
-    id: 'route-barishal-kuakata-bus',
-    transportType: 'Bus',
-    originDistrict: 'Barishal',
-    destinationDistrict: 'Patuakhali',
-    destinationPlaceNames: ['Kuakata Beach', 'Kuakata Sea Beach'],
-    fromName: 'Barishal (Rupatali Bus Stand)',
-    toName: 'Kuakata Zero Point Beach Road',
-    minFare: 280,
-    maxFare: 380,
-    fareUnit: 'per person',
-    currency: 'BDT',
-    estimatedDurationMin: 160,
-    distanceKm: 108,
-    sourceType: 'COMMUNITY',
-    sourceReference: 'Rupatali transport counter records',
-    confidence: 'High',
-    lastUpdated: '2026-10-18',
-    notes: 'Smooth highway over Payra Bridge and Lebukhali.',
-  },
-
-  // Dhaka -> Sylhet / Sreemangal
-  {
-    id: 'route-dhaka-sylhet-bus',
-    transportType: 'Bus',
-    originDistrict: 'Dhaka',
-    destinationDistrict: 'Sylhet',
-    fromName: 'Dhaka (Sayedabad / Fakirapool)',
-    toName: 'Sylhet (Kadamtali Bus Terminal)',
-    minFare: 550,
-    maxFare: 950,
-    fareUnit: 'per person',
-    currency: 'BDT',
-    estimatedDurationMin: 330, // 5.5h
-    distanceKm: 240,
-    sourceType: 'OPERATOR',
-    sourceReference: 'Ena, Hanif, Green Line',
-    confidence: 'High',
-    lastUpdated: '2026-10-22',
-    notes: 'Non-AC: ৳550–650, AC Chair Coach: ৳850–950.',
-  },
-  {
-    id: 'route-dhaka-sylhet-train',
-    transportType: 'Train',
-    originDistrict: 'Dhaka',
-    destinationDistrict: 'Sylhet',
-    fromName: 'Dhaka (Kamalapur Station)',
-    toName: 'Sylhet Railway Station',
-    minFare: 345,
-    maxFare: 890,
-    fareUnit: 'per person',
-    currency: 'BDT',
-    estimatedDurationMin: 390, // 6.5h
-    distanceKm: 310,
-    sourceType: 'OFFICIAL',
-    sourceReference: 'Bangladesh Railway (Parabat & Upaban Express)',
-    confidence: 'High',
-    lastUpdated: '2026-08-15',
-    notes: 'Shovon: ৳345, Snigdha AC: ৳665, AC Berth: ৳890. Passes through scenic Lawachara forest.',
-  },
-  {
-    id: 'route-dhaka-sreemangal-train',
-    transportType: 'Train',
-    originDistrict: 'Dhaka',
-    destinationDistrict: 'Moulvibazar',
-    destinationPlaceNames: ['Lawachara National Park', 'Madhabpur Lake', 'Tea Gardens', 'Sreemangal'],
-    fromName: 'Dhaka (Kamalapur)',
-    toName: 'Sreemangal Railway Station',
-    minFare: 260,
-    maxFare: 650,
-    fareUnit: 'per person',
-    currency: 'BDT',
-    estimatedDurationMin: 270, // 4.5h
-    distanceKm: 195,
-    sourceType: 'OFFICIAL',
-    sourceReference: 'Bangladesh Railway Official',
-    confidence: 'High',
-    lastUpdated: '2026-08-15',
-    notes: 'Stops right at Sreemangal town center, 10 minutes from premier eco-resorts.',
-  },
-
-  // Dhaka -> Sajek Valley (Multi-Leg via Khagrachari)
-  {
-    id: 'route-dhaka-sajek-multileg',
-    transportType: 'Private Car',
-    originDistrict: 'Dhaka',
-    destinationDistrict: 'Rangamati',
-    destinationPlaceNames: ['Sajek Valley', 'Konglak Para', 'Ruilui Para', 'Helipad Viewpoint'],
-    fromName: 'Dhaka (Arambagh / Sayedabad)',
-    toName: 'Sajek Valley (Ruilui Para Helipad)',
-    minFare: 1600,
-    maxFare: 2600,
-    fareUnit: 'per person',
-    currency: 'BDT',
-    estimatedDurationMin: 690, // 11.5 hours
-    distanceKm: 345,
-    sourceType: 'COMMUNITY',
-    sourceReference: 'Sajek Chander Gari Association consensus',
-    confidence: 'High',
-    lastUpdated: '2026-10-05',
-    isMultiLeg: true,
-    legs: [
-      {
-        fromLocation: 'Dhaka (Sayedabad)',
-        toLocation: 'Khagrachari Town / Shanti Nagar',
-        transportType: 'Bus',
-        minFare: 800,
-        maxFare: 1300,
-        estimatedDurationMin: 480, // 8h
-        distanceKm: 275,
-        notes: 'Shanti, Shyamoli, Saint Martin AC/Non-AC overnight coaches.',
-      },
-      {
-        fromLocation: 'Khagrachari Town',
-        toLocation: 'Sajek Valley (Ruilui Para)',
-        transportType: 'Private Car',
-        minFare: 800,
-        maxFare: 1300,
-        estimatedDurationMin: 210, // 3.5h
-        distanceKm: 70,
-        notes: '4x4 Open Jeep (Chander Gari) shared seat: ৳800–1,200 roundtrip; Reserve full jeep: ৳8,500–10,500.',
-      },
-    ],
-    notes: 'Must travel under Army Security Escort convoys (departs Dighinala at 10:00 AM and 3:00 PM daily).',
-  },
-
-  // Dhaka -> Bandarban
-  {
-    id: 'route-dhaka-bandarban-bus',
-    transportType: 'Bus',
-    originDistrict: 'Dhaka',
-    destinationDistrict: 'Bandarban',
-    fromName: 'Dhaka (Sayedabad / Arambagh)',
-    toName: 'Bandarban Town (Bypass / Bottoli)',
-    minFare: 850,
-    maxFare: 1500,
-    fareUnit: 'per person',
-    currency: 'BDT',
-    estimatedDurationMin: 510, // 8.5h
-    distanceKm: 360,
-    sourceType: 'OPERATOR',
-    sourceReference: 'Saint Martin Paribahan, Shyamoli, Unique',
-    confidence: 'High',
-    lastUpdated: '2026-09-28',
-    notes: 'Direct overnight mountain highway service.',
-  },
-
-  // Chattogram -> Cox's Bazar
-  {
-    id: 'route-ctg-cox-bus',
-    transportType: 'Bus',
-    originDistrict: 'Chattogram',
-    destinationDistrict: "Cox's Bazar",
-    fromName: 'Chattogram (Dampara / Cinema Palace)',
-    toName: "Cox's Bazar (Kolatoli)",
-    minFare: 350,
-    maxFare: 550,
-    fareUnit: 'per person',
-    currency: 'BDT',
-    estimatedDurationMin: 180, // 3h
-    distanceKm: 152,
-    sourceType: 'COMMUNITY',
-    sourceReference: 'Local Chattogram commuter verified',
-    confidence: 'High',
-    lastUpdated: '2026-10-28',
-    notes: 'Purbani, Hanif, and S. Alam hourly shuttle buses.',
-  },
-  {
-    id: 'route-ctg-cox-train',
-    transportType: 'Train',
-    originDistrict: 'Chattogram',
-    destinationDistrict: "Cox's Bazar",
-    fromName: 'Chattogram Old Station / Sholoshohor',
-    toName: "Cox's Bazar Iconic Station",
-    minFare: 250,
-    maxFare: 580,
-    fareUnit: 'per person',
-    currency: 'BDT',
-    estimatedDurationMin: 140, // 2h 20m
-    distanceKm: 150,
-    sourceType: 'OFFICIAL',
-    sourceReference: 'Bangladesh Railway Official Fare Chart',
-    confidence: 'High',
-    lastUpdated: '2026-09-10',
-    notes: 'Fast, smooth rail link across Karnaphuli and Dohazari.',
-  },
-
-  // Dhaka -> Sonargaon / Panam Nagar Heritage City
-  {
-    id: 'route-dhaka-panam-multileg',
-    transportType: 'CNG / Auto',
-    originDistrict: 'Dhaka',
-    destinationDistrict: 'Narayanganj',
-    destinationPlaceNames: ['Panam Nagar', 'Sonargaon Folk Art Village', 'Sonargaon'],
-    fromName: 'Dhaka (Gulistan / Jatrabari)',
-    toName: 'Panam Nagar Heritage City',
-    minFare: 110,
-    maxFare: 190,
-    fareUnit: 'per person',
-    currency: 'BDT',
-    estimatedDurationMin: 70,
-    distanceKm: 29,
-    sourceType: 'COMMUNITY',
-    sourceReference: 'Weekend day-tripper community consensus',
-    confidence: 'High',
-    lastUpdated: '2026-10-14',
-    isMultiLeg: true,
-    legs: [
-      {
-        fromLocation: 'Gulistan (Underpass bus stand)',
-        toLocation: 'Mograpara Crossing (Sonargaon Highway)',
-        transportType: 'Bus',
-        minFare: 65,
-        maxFare: 85,
-        estimatedDurationMin: 45,
-        distanceKm: 24,
-        notes: 'Borak or Sonargaon Express along Dhaka-Chittagong expressway.',
-      },
-      {
-        fromLocation: 'Mograpara Crossing',
-        toLocation: 'Panam Nagar Gate',
-        transportType: 'Easy Bike / E-bike',
-        minFare: 45,
-        maxFare: 80,
-        estimatedDurationMin: 25,
-        distanceKm: 5,
-        notes: 'Electric auto / rickshaw directly to ancient brick street entrance.',
-      },
-    ],
-    notes: 'Popular half-day heritage escape from Dhaka. Cheap and scenic.',
-  },
-
-  // Dhaka -> Saint Martin Island (Multi-Leg via Teknaf)
-  {
-    id: 'route-dhaka-saintmartin-multileg',
-    transportType: 'Launch / Boat',
-    originDistrict: 'Dhaka',
-    destinationDistrict: "Cox's Bazar",
-    destinationPlaceNames: ['Saint Martin Island', "St. Martin's Island", 'Chera Dwip'],
-    fromName: 'Dhaka (Sayedabad / Fakirapool)',
-    toName: 'Saint Martin Island Jetty',
-    minFare: 2100,
-    maxFare: 3600,
-    fareUnit: 'per person',
-    currency: 'BDT',
-    estimatedDurationMin: 720, // 12h
-    distanceKm: 440,
-    sourceType: 'OPERATOR',
-    sourceReference: 'BIWTA & Sea Cruise Operators Association (Seasonal: Nov–March)',
-    confidence: 'High',
-    lastUpdated: '2026-10-30',
-    isMultiLeg: true,
-    legs: [
-      {
-        fromLocation: 'Dhaka',
-        toLocation: 'Teknaf Marine Jetty',
-        transportType: 'Bus',
-        minFare: 1150,
-        maxFare: 1900,
-        estimatedDurationMin: 570, // 9.5h
-        distanceKm: 415,
-        notes: 'Overnight bus via Chittagong and Coxsbazar to Teknaf Ghat.',
-      },
-      {
-        fromLocation: 'Teknaf Jetty',
-        toLocation: 'Saint Martin Island',
-        transportType: 'Launch / Boat',
-        minFare: 950,
-        maxFare: 1700,
-        estimatedDurationMin: 150, // 2.5h
-        distanceKm: 25,
-        notes: 'Keari Sindbad, Bay Cruiser, Atlantic Cruise roundtrip ticket.',
-      },
-    ],
-    notes: 'Permits required. Operates exclusively between November and late March during calm seas.',
-  },
-];
+})[] = [];
 
 // -------------------------------------------------------------
 // LOCAL STORAGE PERSISTENCE HELPERS
@@ -763,53 +363,45 @@ export async function getTransportOptionsForPlace(
   const placeNameLower = (place.name || '').toLowerCase();
 
   const results: TransportOption[] = [];
-  const customRoutes = getCustomTransportRoutes();
 
-  // 1. Check Custom Admin Routes first
-  for (const cr of customRoutes) {
-    if (!cr.active) continue;
-    const matchOrigin = cr.originDistrict.toLowerCase() === originDistrict;
-    const matchDest =
-      cr.destinationDistrict.toLowerCase() === destDistrict ||
-      (cr.destinationPlaceId && cr.destinationPlaceId === place.id) ||
-      (cr.destinationPlaceName && placeNameLower.includes(cr.destinationPlaceName.toLowerCase()));
+  // 1. Query Active Database Routes directly from Supabase (public.transport_routes + public.transport_fares)
+  const dbActiveRoutes = await fetchActiveDatabaseTransportRoutes();
+  for (const dbr of dbActiveRoutes) {
+    if (!dbr.active || dbr.isArchived) continue;
+    const matchOrigin =
+      dbr.originDistrict.toLowerCase() === originDistrict ||
+      originDistrict.includes(dbr.originDistrict.toLowerCase());
+    const matchDestDistrict =
+      Boolean(destDistrict) && dbr.destinationDistrict.toLowerCase() === destDistrict;
+    const matchDestPlaceId = Boolean(dbr.destinationPlaceId && dbr.destinationPlaceId === place.id);
+    const matchDestPlaceName = Boolean(
+      dbr.destinationPlaceNames &&
+        dbr.destinationPlaceNames.some(
+          (dp) =>
+            placeNameLower.includes(dp.toLowerCase()) ||
+            dp.toLowerCase().includes(placeNameLower)
+        )
+    );
 
-    if (matchOrigin && matchDest) {
+    if (matchOrigin && (matchDestDistrict || matchDestPlaceId || matchDestPlaceName)) {
       results.push({
-        id: cr.id,
-        transportType: cr.transportType,
-        fromName: origin.name || cr.originDistrict,
-        toName: place.name || cr.destinationDistrict,
-        minFare: (cr as any).minFare || 100,
-        maxFare: (cr as any).maxFare || 200,
-        fareUnit: inferFareUnit(cr.transportType, cr.notes),
+        id: dbr.id,
+        transportType: dbr.transportType,
+        fromName: dbr.fromName || origin.name || dbr.originDistrict,
+        toName: dbr.toName || place.name || dbr.destinationDistrict,
+        minFare: dbr.minFare,
+        maxFare: dbr.maxFare,
+        fareUnit: dbr.fareUnit || inferFareUnit(dbr.transportType, dbr.notes),
         currency: 'BDT',
-        estimatedDurationMin: cr.estimatedDurationMin,
-        distanceKm: cr.distanceKm,
-        sourceType: 'OFFICIAL',
-        confidence: 'High',
-        lastUpdated: '2026-11-02',
-        notes: cr.notes,
-        isMultiLeg: cr.isMultiLeg,
-        legs: cr.legs,
-      });
-    }
-  }
-
-  // 2. Check Built-in Verified Seed Routes
-  for (const seed of SEED_TRANSPORT_ROUTES) {
-    const matchOrigin = seed.originDistrict.toLowerCase() === originDistrict;
-    const matchDestDistrict = seed.destinationDistrict.toLowerCase() === destDistrict;
-    const matchDestPlace =
-      seed.destinationPlaceNames &&
-      seed.destinationPlaceNames.some((dp) => placeNameLower.includes(dp.toLowerCase()));
-
-    if (matchOrigin && (matchDestDistrict || matchDestPlace)) {
-      results.push({
-        ...seed,
-        fareUnit: seed.fareUnit || inferFareUnit(seed.transportType, seed.notes),
-        fromName: `${origin.name || seed.originDistrict}`,
-        toName: place.name,
+        estimatedDurationMin: dbr.estimatedDurationMin,
+        distanceKm: dbr.distanceKm,
+        sourceType: dbr.sourceType || 'OFFICIAL',
+        sourceReference: dbr.sourceReference,
+        confidence: dbr.confidence || 'High',
+        lastUpdated: dbr.lastUpdated,
+        notes: dbr.notes,
+        isMultiLeg: dbr.isMultiLeg,
+        legs: dbr.legs,
       });
     }
   }
@@ -1976,9 +1568,11 @@ export function getWhileYouAreHerePlaces(
 // -------------------------------------------------------------
 export interface AdminTransportItem {
   id: string;
+  fareId?: string;
   transportType: TransportType;
   originDistrict: string;
   destinationDistrict: string;
+  destinationPlaceId?: string;
   destinationPlaceNames?: string[];
   fromName: string;
   toName: string;
@@ -1992,6 +1586,8 @@ export interface AdminTransportItem {
   sourceReference?: string;
   confidence: FareConfidence;
   lastUpdated: string;
+  createdAt?: string;
+  updatedAt?: string;
   isOutdated?: boolean;
   notes?: string;
   isMultiLeg?: boolean;
@@ -2005,102 +1601,639 @@ export interface AdminTransportItem {
     distanceKm?: number;
     notes?: string;
   }[];
+  active: boolean;
+  isArchived?: boolean;
   isCustom?: boolean;
 }
 
-export async function fetchAdminTransportRoutes(): Promise<AdminTransportItem[]> {
-  const custom = getCustomTransportRoutes();
-  const seedItems: AdminTransportItem[] = SEED_TRANSPORT_ROUTES.map((s) => ({
-    ...s,
-    isCustom: false,
-  }));
-
-  const customItems: AdminTransportItem[] = custom.map((c) => ({
-    id: c.id,
-    transportType: c.transportType,
-    originDistrict: c.originDistrict,
-    destinationDistrict: c.destinationDistrict,
-    destinationPlaceNames: c.destinationPlaceName ? [c.destinationPlaceName] : undefined,
-    fromName: c.fromLocation || `${c.originDistrict} Station`,
-    toName: c.toLocation || `${c.destinationDistrict} Point`,
-    minFare: (c as any).minFare || 100,
-    maxFare: (c as any).maxFare || 250,
-    fareUnit: inferFareUnit(c.transportType, c.notes),
-    currency: 'BDT',
-    estimatedDurationMin: c.estimatedDurationMin || 60,
-    distanceKm: c.distanceKm || 10,
-    sourceType: 'OFFICIAL',
-    sourceReference: 'Admin entry',
-    confidence: 'High',
-    lastUpdated: '2026-11-02',
-    isOutdated: false,
-    notes: c.notes,
-    isMultiLeg: c.isMultiLeg,
-    legs: c.legs,
-    isCustom: true,
-  }));
-
-  return [...customItems, ...seedItems];
+export interface AdminTransportRoutesResult {
+  routes: AdminTransportItem[];
+  activeRoutes: AdminTransportItem[];
+  inactiveRoutes: AdminTransportItem[];
+  activeCount: number;
+  inactiveCount: number;
+  totalCount: number;
+  coveredDistrictsCount: number;
+  error?: string;
 }
 
-export async function saveAdminTransportRoute(item: Omit<AdminTransportItem, 'id'> & { id?: string }): Promise<{ success: boolean; error?: string }> {
+function getRouteDuplicateSignature(item: {
+  originDistrict: string;
+  destinationDistrict: string;
+  transportType: string;
+  fromName: string;
+  toName: string;
+  destinationPlaceName?: string | null;
+}): string {
+  return [
+    (item.originDistrict || '').trim().toLowerCase(),
+    (item.destinationDistrict || '').trim().toLowerCase(),
+    (item.transportType || '').trim().toLowerCase(),
+    (item.fromName || '').trim().toLowerCase(),
+    (item.toName || '').trim().toLowerCase(),
+    (item.destinationPlaceName || '').trim().toLowerCase(),
+  ].join('||');
+}
+
+function parseRouteLegs(rawLegs: any): AdminTransportItem['legs'] {
+  if (!rawLegs) return undefined;
+  let parsed = rawLegs;
+  if (typeof rawLegs === 'string') {
+    try {
+      parsed = JSON.parse(rawLegs);
+    } catch {
+      return undefined;
+    }
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) return undefined;
+  return parsed
+    .map((leg: any) => ({
+      fromLocation: String(leg.fromLocation || leg.from_location || '').trim(),
+      toLocation: String(leg.toLocation || leg.to_location || '').trim(),
+      transportType: (leg.transportType || leg.transport_type || 'Bus') as TransportType,
+      minFare: Math.max(0, Number(leg.minFare ?? leg.min_fare) || 0),
+      maxFare: Math.max(0, Number(leg.maxFare ?? leg.max_fare) || 0),
+      estimatedDurationMin: Math.max(1, Number(leg.estimatedDurationMin ?? leg.estimated_duration_min) || 30),
+      distanceKm:
+        typeof (leg.distanceKm ?? leg.distance_km) === 'number'
+          ? Number(leg.distanceKm ?? leg.distance_km)
+          : undefined,
+      notes: leg.notes ? String(leg.notes).trim() : undefined,
+    }))
+    .filter((leg) => leg.fromLocation || leg.toLocation);
+}
+
+function mapDatabaseRowToAdminTransportItem(row: any, linkedFares?: any[]): AdminTransportItem {
+  const rawFares: any[] = Array.isArray(linkedFares)
+    ? linkedFares
+    : Array.isArray(row.transport_fares)
+    ? row.transport_fares
+    : row.transport_fares
+    ? [row.transport_fares]
+    : [];
+
+  const sortedFares = [...rawFares].sort((a, b) => {
+    const tA = new Date(a?.updated_at || a?.created_at || 0).getTime();
+    const tB = new Date(b?.updated_at || b?.created_at || 0).getTime();
+    return tB - tA;
+  });
+
+  const unarchivedFares = sortedFares.filter((f) => f && f.is_archived !== true);
+  const primaryFare = unarchivedFares[0] || sortedFares[0] || null;
+  const hasOnlyArchivedFares = sortedFares.length > 0 && unarchivedFares.length === 0;
+
+  const isRouteActive = row.active !== false && !hasOnlyArchivedFares;
+  const legs = parseRouteLegs(row.legs);
+
+  let minFare = 0;
+  let maxFare = 0;
+  if (primaryFare && primaryFare.min_fare !== undefined && primaryFare.min_fare !== null) {
+    minFare = Math.round(Number(primaryFare.min_fare) || 0);
+    maxFare = Math.round(Number(primaryFare.max_fare ?? primaryFare.min_fare) || minFare);
+  } else if (legs && legs.length > 0) {
+    minFare = legs.reduce((acc, l) => acc + (Number(l.minFare) || 0), 0);
+    maxFare = legs.reduce((acc, l) => acc + (Number(l.maxFare) || 0), 0);
+  }
+
+  const transportType = (row.transport_type || primaryFare?.transport_type || 'Bus') as TransportType;
+  const fareUnit =
+    (primaryFare?.fare_unit as FareUnit) || inferFareUnit(transportType, row.notes || primaryFare?.notes);
+  const sourceType = (primaryFare?.source_type as FareSourceType) || 'OFFICIAL';
+  const sourceReference = primaryFare?.source_reference || undefined;
+  const confidence = (primaryFare?.confidence as FareConfidence) || 'High';
+
+  const updatedIso =
+    row.updated_at || primaryFare?.updated_at || row.created_at || new Date().toISOString();
+  const lastUpdated = String(updatedIso).split('T')[0];
+  const updatedTime = new Date(updatedIso).getTime();
+  const halfYearMs = 180 * 24 * 60 * 60 * 1000;
+  const isOutdated = !isNaN(updatedTime) && Date.now() - updatedTime > halfYearMs;
+
+  const placeNames =
+    typeof row.destination_place_name === 'string' && row.destination_place_name.trim()
+      ? row.destination_place_name
+          .split(',')
+          .map((s: string) => s.trim())
+          .filter(Boolean)
+      : undefined;
+
+  return {
+    id: String(row.id),
+    fareId: primaryFare?.id ? String(primaryFare.id) : undefined,
+    transportType,
+    originDistrict: String(row.origin_district || '').trim(),
+    destinationDistrict: String(row.destination_district || '').trim(),
+    destinationPlaceId: row.destination_place_id ? String(row.destination_place_id) : undefined,
+    destinationPlaceNames: placeNames && placeNames.length > 0 ? placeNames : undefined,
+    fromName: String(row.from_location || '').trim() || String(row.origin_district || '').trim(),
+    toName: String(row.to_location || '').trim() || String(row.destination_district || '').trim(),
+    minFare,
+    maxFare: Math.max(minFare, maxFare),
+    fareUnit,
+    currency: primaryFare?.currency || 'BDT',
+    estimatedDurationMin: Math.max(1, Number(row.estimated_duration_min) || 60),
+    distanceKm:
+      typeof row.distance_km === 'number' && !isNaN(row.distance_km)
+        ? Number(row.distance_km)
+        : undefined,
+    sourceType,
+    sourceReference,
+    confidence,
+    lastUpdated,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    isOutdated,
+    notes: row.notes || primaryFare?.notes || undefined,
+    isMultiLeg: Boolean(row.is_multi_leg && legs && legs.length > 0),
+    legs,
+    active: isRouteActive,
+    isArchived: hasOnlyArchivedFares,
+    isCustom: true,
+  };
+}
+
+/**
+ * Fetches all transit routes and fares directly from Supabase (`public.transport_routes` + `public.transport_fares`),
+ * computing accurate active and inactive counts without any hardcoded numbers or fake seed routes.
+ */
+export async function fetchAdminTransportRoutesWithDetails(): Promise<AdminTransportRoutesResult> {
+  // Remove any legacy browser-only custom route cache so counts always match the database
+  if (typeof window !== 'undefined') {
+    try {
+      window.localStorage.removeItem(CUSTOM_ROUTES_KEY);
+      window.localStorage.removeItem(CUSTOM_FARES_KEY);
+    } catch {}
+  }
+
   try {
-    const id = item.id || `custom-route-${Date.now()}`;
-    const newRoute: TransportRoute & { minFare?: number; maxFare?: number } = {
-      id,
-      originDistrict: item.originDistrict,
-      destinationDistrict: item.destinationDistrict,
-      destinationPlaceName: item.destinationPlaceNames?.[0],
-      fromLocation: item.fromName,
-      toLocation: item.toName,
+    const { data, error } = await supabase
+      .from('transport_routes')
+      .select('*, transport_fares(*)')
+      .order('created_at', { ascending: false });
+
+    let mappedRoutes: AdminTransportItem[] = [];
+
+    if (!error && Array.isArray(data)) {
+      const seenIds = new Set<string>();
+      for (const row of data) {
+        if (!row || !row.id || seenIds.has(String(row.id))) continue;
+        seenIds.add(String(row.id));
+        mappedRoutes.push(mapDatabaseRowToAdminTransportItem(row));
+      }
+    } else {
+      // Fallback: fetch transport_routes and transport_fares separately and join by route_id
+      const [routesRes, faresRes] = await Promise.all([
+        supabase.from('transport_routes').select('*').order('created_at', { ascending: false }),
+        supabase.from('transport_fares').select('*').order('created_at', { ascending: false }),
+      ]);
+
+      if (routesRes.error) {
+        return {
+          routes: [],
+          activeRoutes: [],
+          inactiveRoutes: [],
+          activeCount: 0,
+          inactiveCount: 0,
+          totalCount: 0,
+          coveredDistrictsCount: 0,
+          error: routesRes.error.message || 'Failed to fetch transit routes from database.',
+        };
+      }
+
+      const faresByRouteId = new Map<string, any[]>();
+      for (const f of faresRes.data || []) {
+        if (!f?.route_id) continue;
+        const key = String(f.route_id);
+        if (!faresByRouteId.has(key)) faresByRouteId.set(key, []);
+        faresByRouteId.get(key)!.push(f);
+      }
+
+      const seenIds = new Set<string>();
+      for (const row of routesRes.data || []) {
+        if (!row || !row.id || seenIds.has(String(row.id))) continue;
+        seenIds.add(String(row.id));
+        mappedRoutes.push(
+          mapDatabaseRowToAdminTransportItem(row, faresByRouteId.get(String(row.id)) || [])
+        );
+      }
+    }
+
+    const activeRoutes = mappedRoutes.filter((r) => r.active === true && !r.isArchived);
+    const inactiveRoutes = mappedRoutes.filter((r) => !r.active || r.isArchived);
+    const coveredDistrictsCount = new Set(
+      activeRoutes
+        .flatMap((r) => [r.originDistrict, r.destinationDistrict])
+        .map((d) => (d || '').trim())
+        .filter(Boolean)
+    ).size;
+
+    return {
+      routes: mappedRoutes,
+      activeRoutes,
+      inactiveRoutes,
+      activeCount: activeRoutes.length,
+      inactiveCount: inactiveRoutes.length,
+      totalCount: mappedRoutes.length,
+      coveredDistrictsCount,
+    };
+  } catch (err: any) {
+    return {
+      routes: [],
+      activeRoutes: [],
+      inactiveRoutes: [],
+      activeCount: 0,
+      inactiveCount: 0,
+      totalCount: 0,
+      coveredDistrictsCount: 0,
+      error: err?.message || 'Unexpected error loading transit routes.',
+    };
+  }
+}
+
+export async function fetchAdminTransportRoutes(): Promise<AdminTransportItem[]> {
+  const result = await fetchAdminTransportRoutesWithDetails();
+  return result.routes;
+}
+
+/**
+ * Fetches only active, non-archived transport routes from Supabase for public trip planning & place pages.
+ */
+export async function fetchActiveDatabaseTransportRoutes(): Promise<AdminTransportItem[]> {
+  try {
+    const { data, error } = await supabase
+      .from('transport_routes')
+      .select('*, transport_fares(*)')
+      .eq('active', true)
+      .order('created_at', { ascending: false });
+
+    if (error || !Array.isArray(data)) return [];
+
+    const seenIds = new Set<string>();
+    const activeItems: AdminTransportItem[] = [];
+    for (const row of data) {
+      if (!row || !row.id || row.active === false || seenIds.has(String(row.id))) continue;
+      seenIds.add(String(row.id));
+      const mapped = mapDatabaseRowToAdminTransportItem(row);
+      if (mapped.active && !mapped.isArchived) {
+        activeItems.push(mapped);
+      }
+    }
+    return activeItems;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Creates or updates a transit corridor & route in `public.transport_routes` and `public.transport_fares`.
+ * Enforces administrator authorization and duplicate route prevention.
+ */
+export async function saveAdminTransportRoute(
+  item: Omit<AdminTransportItem, 'id' | 'active'> & { id?: string; active?: boolean }
+): Promise<{ success: boolean; route?: AdminTransportItem; error?: string }> {
+  try {
+    const user = await getCurrentUser();
+    const isAdmin = await isCurrentUserAdmin();
+    if (!user || !isAdmin) {
+      return {
+        success: false,
+        error: 'Unauthorized: Administrator privileges are required to manage transit routes.',
+      };
+    }
+
+    const originDistrict = (item.originDistrict || '').trim();
+    const destinationDistrict = (item.destinationDistrict || '').trim();
+    const fromName = (item.fromName || '').trim();
+    const toName = (item.toName || '').trim();
+
+    if (!originDistrict || !destinationDistrict) {
+      return { success: false, error: 'Origin district and destination district are required.' };
+    }
+    if (!fromName || !toName) {
+      return { success: false, error: 'Origin terminal/stop and destination drop-off point are required.' };
+    }
+
+    const minFare = Math.round(Number(item.minFare) || 0);
+    const maxFare = Math.round(Number(item.maxFare) || 0);
+    if (minFare <= 0 || maxFare < minFare) {
+      return {
+        success: false,
+        error: 'Please enter valid minimum and maximum fare amounts (Max Fare must be >= Min Fare).',
+      };
+    }
+
+    const estimatedDurationMin = Math.max(1, Math.round(Number(item.estimatedDurationMin) || 60));
+    const distanceKm =
+      typeof item.distanceKm === 'number' && !isNaN(item.distanceKm) && item.distanceKm > 0
+        ? Math.round(item.distanceKm * 10) / 10
+        : null;
+
+    const destinationPlaceName =
+      item.destinationPlaceNames && item.destinationPlaceNames.length > 0
+        ? item.destinationPlaceNames
+            .map((s) => s.trim())
+            .filter(Boolean)
+            .join(', ') || null
+        : null;
+
+    const candidateSignature = getRouteDuplicateSignature({
+      originDistrict,
+      destinationDistrict,
       transportType: item.transportType,
-      distanceKm: item.distanceKm,
-      estimatedDurationMin: item.estimatedDurationMin,
-      isMultiLeg: Boolean(item.isMultiLeg && item.legs && item.legs.length > 0),
-      legs: item.legs,
-      active: true,
-      notes: item.notes,
-      minFare: item.minFare,
-      maxFare: item.maxFare,
+      fromName,
+      toName,
+      destinationPlaceName,
+    });
+
+    // Check for duplicate routes in Supabase
+    const { data: existingCandidates, error: dupCheckErr } = await supabase
+      .from('transport_routes')
+      .select('id, origin_district, destination_district, transport_type, from_location, to_location, destination_place_name')
+      .ilike('origin_district', originDistrict)
+      .ilike('destination_district', destinationDistrict);
+
+    if (!dupCheckErr && Array.isArray(existingCandidates)) {
+      const duplicate = existingCandidates.find((row: any) => {
+        if (item.id && String(row.id) === String(item.id)) return false;
+        const rowSig = getRouteDuplicateSignature({
+          originDistrict: row.origin_district,
+          destinationDistrict: row.destination_district,
+          transportType: row.transport_type,
+          fromName: row.from_location || row.origin_district,
+          toName: row.to_location || row.destination_district,
+          destinationPlaceName: row.destination_place_name,
+        });
+        return rowSig === candidateSignature;
+      });
+
+      if (duplicate) {
+        return {
+          success: false,
+          error: 'Duplicate route: A transit route with the same corridor, transport type, and terminals already exists.',
+        };
+      }
+    }
+
+    const nowIso = new Date().toISOString();
+    const isMultiLeg = Boolean(item.isMultiLeg && item.legs && item.legs.length > 0);
+    const sanitizedLegs = isMultiLeg && item.legs ? item.legs : [];
+    const isActive = item.active !== undefined ? Boolean(item.active) : true;
+    const fareUnit = item.fareUnit || inferFareUnit(item.transportType, item.notes);
+
+    const routePayload = {
+      origin_district: originDistrict,
+      destination_district: destinationDistrict,
+      destination_place_id: item.destinationPlaceId || null,
+      destination_place_name: destinationPlaceName,
+      from_location: fromName,
+      to_location: toName,
+      transport_type: item.transportType,
+      distance_km: distanceKm,
+      estimated_duration_min: estimatedDurationMin,
+      is_multi_leg: isMultiLeg,
+      legs: sanitizedLegs,
+      notes: item.notes?.trim() || null,
+      active: isActive,
+      updated_at: nowIso,
     };
 
-    saveCustomTransportRoute(newRoute as any);
+    let savedRouteRow: any = null;
 
-    try {
-      await supabase.from('transport_routes').upsert({
-        id,
-        origin_district: item.originDistrict,
-        destination_district: item.destinationDistrict,
-        from_location: item.fromName,
-        to_location: item.toName,
-        transport_type: item.transportType,
-        distance_km: item.distanceKm,
-        estimated_duration_min: item.estimatedDurationMin,
-        is_multi_leg: Boolean(item.isMultiLeg),
-        legs: item.legs || [],
-        active: true,
-        notes: item.notes || null,
-        updated_at: new Date().toISOString(),
-      });
-    } catch (e) {
-      console.warn('Supabase transport_routes sync notice:', e);
+    if (item.id) {
+      // Update existing route in public.transport_routes
+      const { data: updatedRoute, error: updateErr } = await supabase
+        .from('transport_routes')
+        .update(routePayload)
+        .eq('id', item.id)
+        .select('*')
+        .maybeSingle();
+
+      if (updateErr) {
+        return { success: false, error: updateErr.message || 'Failed to update transit route.' };
+      }
+      if (!updatedRoute) {
+        return {
+          success: false,
+          error: 'Transit route could not be updated (record not found or permission denied).',
+        };
+      }
+      savedRouteRow = updatedRoute;
+    } else {
+      // Insert new route into public.transport_routes (UUID generated by Postgres)
+      const { data: insertedRoute, error: insertErr } = await supabase
+        .from('transport_routes')
+        .insert({
+          ...routePayload,
+          created_at: nowIso,
+        })
+        .select('*')
+        .single();
+
+      if (insertErr || !insertedRoute) {
+        return {
+          success: false,
+          error: insertErr?.message || 'Failed to create transit route in database.',
+        };
+      }
+      savedRouteRow = insertedRoute;
+    }
+
+    const routeId = String(savedRouteRow.id);
+
+    // Upsert corresponding fare record in public.transport_fares
+    const farePayload = {
+      route_id: routeId,
+      transport_type: item.transportType,
+      min_fare: minFare,
+      max_fare: maxFare,
+      currency: item.currency || 'BDT',
+      fare_unit: fareUnit,
+      source_type: item.sourceType || 'OFFICIAL',
+      source_reference: item.sourceReference?.trim() || null,
+      confidence: item.confidence || 'High',
+      verified_at: nowIso,
+      notes: item.notes?.trim() || null,
+      is_archived: !isActive,
+      updated_at: nowIso,
+    };
+
+    const { data: existingFares } = await supabase
+      .from('transport_fares')
+      .select('id')
+      .eq('route_id', routeId)
+      .order('created_at', { ascending: false });
+
+    let savedFareRow: any = null;
+
+    if (Array.isArray(existingFares) && existingFares.length > 0) {
+      const primaryFareId = existingFares[0].id;
+      const { data: updatedFare, error: fareUpdateErr } = await supabase
+        .from('transport_fares')
+        .update(farePayload)
+        .eq('id', primaryFareId)
+        .select('*')
+        .maybeSingle();
+
+      if (fareUpdateErr) {
+        return { success: false, error: fareUpdateErr.message || 'Failed to update route fare details.' };
+      }
+      savedFareRow = updatedFare;
+
+      // Clean up any redundant duplicate fare rows for the same route_id
+      if (existingFares.length > 1) {
+        const extraIds = existingFares.slice(1).map((f: any) => f.id);
+        await supabase.from('transport_fares').delete().in('id', extraIds);
+      }
+    } else {
+      const { data: insertedFare, error: fareInsertErr } = await supabase
+        .from('transport_fares')
+        .insert({
+          ...farePayload,
+          created_at: nowIso,
+        })
+        .select('*')
+        .single();
+
+      if (fareInsertErr) {
+        if (!item.id) {
+          // Roll back route creation if initial fare creation failed
+          await supabase.from('transport_routes').delete().eq('id', routeId);
+        }
+        return {
+          success: false,
+          error: fareInsertErr.message || 'Failed to save fare details for transit route.',
+        };
+      }
+      savedFareRow = insertedFare;
+    }
+
+    const mapped = mapDatabaseRowToAdminTransportItem(
+      savedRouteRow,
+      savedFareRow ? [savedFareRow] : []
+    );
+
+    return { success: true, route: mapped };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to save transport route.' };
+  }
+}
+
+/**
+ * Activates or deactivates an individual transit corridor/route in Supabase.
+ */
+export async function setAdminTransportRouteActive(
+  routeId: string,
+  active: boolean
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    if (!routeId) {
+      return { success: false, error: 'Route ID is required.' };
+    }
+
+    const user = await getCurrentUser();
+    const isAdmin = await isCurrentUserAdmin();
+    if (!user || !isAdmin) {
+      return {
+        success: false,
+        error: 'Unauthorized: Administrator privileges are required to update route status.',
+      };
+    }
+
+    const nowIso = new Date().toISOString();
+    const { data, error } = await supabase
+      .from('transport_routes')
+      .update({
+        active: Boolean(active),
+        updated_at: nowIso,
+      })
+      .eq('id', routeId)
+      .select('id, active')
+      .maybeSingle();
+
+    if (error) {
+      return { success: false, error: error.message || 'Failed to update route status.' };
+    }
+    if (!data) {
+      return { success: false, error: 'Route not found in database or permission denied.' };
+    }
+
+    // Keep linked transport_fares archive status synchronized
+    await supabase
+      .from('transport_fares')
+      .update({
+        is_archived: !active,
+        updated_at: nowIso,
+      })
+      .eq('route_id', routeId);
+
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to update route status.' };
+  }
+}
+
+/**
+ * Permanently deletes a transit corridor/route and its fares from Supabase.
+ */
+export async function deleteAdminTransportRoute(
+  routeId: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    if (!routeId) {
+      return { success: false, error: 'Route ID is required.' };
+    }
+
+    const user = await getCurrentUser();
+    const isAdmin = await isCurrentUserAdmin();
+    if (!user || !isAdmin) {
+      return {
+        success: false,
+        error: 'Unauthorized: Administrator privileges are required to delete transit routes.',
+      };
+    }
+
+    deleteCustomTransportRoute(routeId);
+
+    // Delete linked fares and the route itself from Supabase
+    await supabase.from('transport_fares').delete().eq('route_id', routeId);
+
+    const { error } = await supabase.from('transport_routes').delete().eq('id', routeId);
+    if (error) {
+      return { success: false, error: error.message || 'Failed to delete route from database.' };
     }
 
     return { success: true };
   } catch (err: any) {
-    return { success: false, error: err?.message || 'Failed to save transport route' };
+    return { success: false, error: err?.message || 'Failed to delete route.' };
   }
 }
 
-export async function deleteAdminTransportRoute(routeId: string): Promise<{ success: boolean; error?: string }> {
+/**
+ * Subscribes to real-time changes on `public.transport_routes` and `public.transport_fares`.
+ */
+export function subscribeToTransportRouteChanges(onChange: () => void): () => void {
   try {
-    deleteCustomTransportRoute(routeId);
-    try {
-      await supabase.from('transport_routes').delete().eq('id', routeId);
-    } catch {}
-    return { success: true };
-  } catch (err: any) {
-    return { success: false, error: err?.message || 'Failed to delete route' };
+    const channel = supabase
+      .channel(`outera_transport_routes_sync_${Date.now()}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'transport_routes' },
+        () => onChange()
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'transport_fares' },
+        () => onChange()
+      )
+      .subscribe();
+
+    return () => {
+      try {
+        supabase.removeChannel(channel);
+      } catch {}
+    };
+  } catch {
+    return () => {};
   }
 }
 
